@@ -12,6 +12,15 @@
 
 namespace sprout {
 
+namespace detail {
+/// Turns any number into a color channel (0 - 255). It lives outside Color and
+/// before it, so some compilers (Clang) can use it at compile time inside Color.
+template <class T>
+constexpr unsigned char toColorByte(T value) {
+    return static_cast<unsigned char>(clamp(static_cast<float>(value), 0.0f, 255.0f));
+}
+} // namespace detail
+
 struct Color {
     unsigned char r = 255;
     unsigned char g = 255;
@@ -23,7 +32,8 @@ struct Color {
     /// Color{red, green, blue} or Color{red, green, blue, alpha}. Each is 0 - 255.
     template <detail::Number R, detail::Number G, detail::Number B, detail::Number A = int>
     constexpr Color(R red, G green, B blue, A alpha = 255)
-        : r(toByte(red)), g(toByte(green)), b(toByte(blue)), a(toByte(alpha)) {}
+        : r(detail::toColorByte(red)), g(detail::toColorByte(green)), b(detail::toColorByte(blue)),
+          a(detail::toColorByte(alpha)) {}
 
     /// A copy of this color with a different see-through amount (0.0 = invisible, 1.0 = solid).
     constexpr Color withAlpha(float alpha) const {
@@ -58,11 +68,6 @@ struct Color {
     static const Color Purple, Violet, DarkPurple, Magenta;
     static const Color Beige, Brown, DarkBrown, OffWhite;
 
-private:
-    template <class T>
-    static constexpr unsigned char toByte(T value) {
-        return static_cast<unsigned char>(clamp(static_cast<float>(value), 0.0f, 255.0f));
-    }
 };
 
 inline constexpr Color Color::White{255, 255, 255};
