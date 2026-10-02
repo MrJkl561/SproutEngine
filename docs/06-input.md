@@ -155,8 +155,10 @@ int main() {
 
 Now `isActionDown("shoot")` is true while any of those four is held.
 
-- Actions are shared by the whole game and kept when scenes change. The best
-  place to set them up is `main()`, once, before `game.run`.
+- Actions are shared by the whole game and kept when scenes change. A good
+  place to set them up is `main()`, before `game.run`. Adding the same key to the
+  same action twice does nothing, so binding keys in a scene's `start()` is fine
+  too (even though `restartScene()` runs `start()` again).
 - You can also add keys to the ready-made actions:
   `bindAction("jump", Key::W);` makes W jump too.
 - `clearAction("jump")` removes **every** key and button from an action, so you

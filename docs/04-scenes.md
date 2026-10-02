@@ -291,32 +291,82 @@ A few new things in there:
 
 ### When two scenes need each other
 
+This is the most common C++ puzzle when making a game with several scenes, so
+let's look at it closely.
+
 C++ reads your file **from top to bottom**, and you can only use a struct after
-it has been written. That's a problem here:
+it has been written. Now imagine a title screen that switches to the level, and
+a level that switches back to the title:
 
-- `PlayScene` switches to `GameOverScene`, so `GameOverScene` must come first...
-- ...but `GameOverScene` switches back to `PlayScene`, so `PlayScene` must come first!
+```cpp
+struct Title : Scene {
+    void update(float) override {
+        if (isKeyPressed(Key::Space)) changeScene<Level>(); // Level isn't written yet!
+    }
+};
 
-The fix is to split one function in two parts:
+struct Level : Scene {
+    void update(float) override {
+        if (isKeyPressed(Key::Backspace)) changeScene<Title>();
+    }
+};
+```
 
-1. **Inside** the struct, only *announce* the function (end it with `;` instead
-   of `{ ... }`):
+The compiler stops at the first `changeScene<Level>()` with an error like:
 
-   ```cpp
-   void update(float dt) override; // written further down
-   ```
+```
+error: 'Level' was not declared in this scope            (GCC)
+error: use of undeclared identifier 'Level'              (Clang, Xcode)
+error C2065: 'Level': undeclared identifier              (Visual Studio)
+```
 
-2. **Below** all the scenes, write the function's body. Put the struct's name
-   and `::` in front of the function name, so C++ knows whose function it is (and
-   leave out `override` this time):
+Swapping the two structs doesn't help, because then `Level` would use `Title`
+before *it* is written. The fix is to split one function into two parts:
 
-   ```cpp
-   void PlayScene::update(float dt) {
-       // ... can use GameOverScene here, because it's written above ...
-   }
-   ```
+1. **Inside** the struct, only *announce* the function: end it with `;` instead
+   of `{ ... }`.
+2. **Below both scenes**, write the function's body. Put the struct's name and
+   `::` in front of the function name, so C++ knows whose function it is (and
+   leave out `override` there).
 
-The same trick works for any function, in scenes or entities.
+Here's the complete, working version:
+
+```cpp
+#include <sprout/sprout.hpp>
+
+using namespace sprout;
+
+struct Title : Scene {
+    void update(float dt) override; // just announced here - the body is further down
+    void drawUI() override {
+        drawTextCentered("Press Space to play", screenCenter(), 30);
+    }
+};
+
+struct Level : Scene {
+    void update(float) override {
+        if (isKeyPressed(Key::Backspace)) changeScene<Title>(); // fine: Title is above
+    }
+    void drawUI() override {
+        drawTextCentered("Playing! Backspace goes back", screenCenter(), 30);
+    }
+};
+
+// Now that both scenes exist, Title's update can switch to Level.
+void Title::update(float) {
+    if (isKeyPressed(Key::Space)) changeScene<Level>();
+}
+
+int main() {
+    Game game("Two scenes", 800, 450);
+    game.run<Title>();
+}
+```
+
+The Coin Rush example above uses the same trick for `PlayScene::update`, and so
+do `examples/05_coin_collector`, `examples/07_platformer` and
+`examples/09_menus_and_settings`. It works for any function, in scenes or
+entities.
 
 > **Bigger games:** once your `main.cpp` gets long, you can split it into several
 > files (`player.hpp`, `enemies.hpp`, ...). Every `.cpp` file in your game's folder

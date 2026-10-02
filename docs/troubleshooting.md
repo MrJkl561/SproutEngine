@@ -207,13 +207,16 @@ Timer spawnTimer(2.0f);       // error inside a struct
 Timer spawnTimer{2.0f};       // works
 ```
 
-### "'Enemy' was not declared in this scope" / "incomplete type" / "does not name a type"
+### "'Level' was not declared in this scope" / "use of undeclared identifier" / "does not name a type"
 
 - Check the spelling and capital letters.
 - C++ reads your file from top to bottom, so a struct must be written **above**
   the code that uses it. Move it up.
-- If two structs need each other (like two scenes that switch to each other),
-  use the [split-function trick](04-scenes.md#when-two-scenes-need-each-other).
+- **Two scenes that switch to each other** (Title to Level, and Level back to
+  Title) can't both be "above" each other. Announce one function in the struct
+  (`void update(float dt) override;`) and write its body **after both scenes**
+  (`void Title::update(float dt) { ... changeScene<Level>(); }`). There's a
+  complete example in [Scenes](04-scenes.md#when-two-scenes-need-each-other).
 
 ### "narrowing conversion of ... from 'float' to 'int'"
 
@@ -383,11 +386,12 @@ use the **top-left corner**. Draw with `drawRect(bounds(), color)`, or
 
 ### My save is forgotten every time
 
-- Make the `SaveFile` a **member of a scene**, not a global variable. See
-  [Saving](13-saving.md#where-to-create-it).
-- Saves live next to the game program, in the `build` folder. Deleting the
-  `build` folder deletes them too.
 - Did you call `set`? `get` only reads.
+- Saves live next to the game program, in the `build` folder
+  (`save.path()` tells you exactly where). Deleting the `build` folder deletes
+  them too, and a Visual Studio or CLion build has its own separate folder.
+- Do you have two `SaveFile`s for the same file at the same time? They overwrite
+  each other. See [Saving](13-saving.md#where-to-create-it).
 
 ### The game is slow (low frames per second)
 

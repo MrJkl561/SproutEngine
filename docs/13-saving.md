@@ -64,11 +64,11 @@ a number), you get the default back instead of a crash.
 | `save.write()` | Writes the file. `set`, `remove` and `clear` already do this for you. |
 | `save.reload()` | Reads the file again |
 | `save.data()` | The whole save as `Json`, for advanced use (call `write()` after changing it) |
-| `save.path()` | The file's name |
+| `save.path()` | Where the file really is (the full path) |
 
 ### Where to create it
 
-**Make the `SaveFile` a member of your scene**, with **curly brackets**:
+The easiest place is as a **member of your scene**, with **curly brackets**:
 
 ```cpp
 struct PlayScene : Scene {
@@ -77,12 +77,19 @@ struct PlayScene : Scene {
 };
 ```
 
-Don't make it a global variable (outside of any struct). Global variables are
-made before the `Game` exists, and Sprout only switches to your game's folder
-when the `Game` is created. A global `SaveFile` would read from one folder and
-write to another, so your progress would never come back. Several scenes can
-each have their own `SaveFile` for the same file; each one reads the latest
-version when its scene starts.
+Each time the scene starts, its `SaveFile` reads the latest version of the
+file. If several scenes need the same save, you can also make **one** `SaveFile`
+as a global variable (at the top of your file, outside of any struct) and use it
+from every scene:
+
+```cpp
+SaveFile save{"savegame.json"}; // shared by all scenes
+```
+
+Either way, `"savegame.json"` always means a file in your game's own folder.
+Just don't have two different `SaveFile`s for the **same** file alive at the
+same time: each one keeps its own copy of the data, so they would overwrite
+each other's changes.
 
 ### Where is the file?
 

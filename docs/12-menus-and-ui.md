@@ -90,6 +90,15 @@ The slider changes `volume` while the player drags it. Its text is drawn to the
 **left** of the `area`, and the current value (like `0.75`) to the **right**, so
 leave some room on both sides.
 
+> **Neater forms:** the slider's own text sits right up against the bar. For a
+> tidy settings screen where everything lines up, give the slider an empty text
+> `""` and put a `label` beside it, like `examples/09_menus_and_settings` does:
+>
+> ```cpp
+> label("Volume", {180, 145, 130, 30});
+> slider("", {320, 150, 220, 20}, volume, 0.0f, 1.0f);
+> ```
+
 ### Text boxes
 
 ```cpp
@@ -143,17 +152,21 @@ setUITheme(UITheme::Dark);   // a different look for every control
 The themes are: `UITheme::Default`, `Dark`, `Candy`, `Cyber`, `Jungle`, `Sunny`
 and `Terminal`. Try them all!
 
-A theme brings its own font and text size. If you want a particular size,
-call `setUITextSize` **after** `setUITheme`:
+Each theme brings its own pixel font and its own text size (most are a bit
+smaller than 20). Once you've picked a size with `setUITextSize`, Sprout keeps
+that size, even when you change the theme later:
 
 ```cpp
-setUITheme(UITheme::Candy);
-setUITextSize(20);
+setUITextSize(20);           // keep the text this big...
+setUITheme(UITheme::Candy);  // ...whatever the theme
 ```
 
 Themes and text size apply to the whole game until you change them again. A
 good place to set them is `main()` (after the `Game` is created) or your first
 scene's `start()`.
+
+> **Candy theme quirk:** its font draws `>` like `<` (a little bug in raygui), so
+> avoid those two characters on Candy buttons. Write "Next" instead of ">".
 
 ---
 
@@ -224,10 +237,10 @@ struct SettingsMenu : Scene {
         textBox({350, 180, 220, 30}, playerName, 16);
 
         label("Theme:", {230, 230, 100, 30});
-        if (button("Default", {228, 265, 84, 30})) { setUITheme(UITheme::Default); setUITextSize(20); }
-        if (button("Dark", {314, 265, 84, 30})) { setUITheme(UITheme::Dark); setUITextSize(20); }
-        if (button("Candy", {400, 265, 84, 30})) { setUITheme(UITheme::Candy); setUITextSize(20); }
-        if (button("Cyber", {486, 265, 84, 30})) { setUITheme(UITheme::Cyber); setUITextSize(20); }
+        if (button("Default", {228, 265, 84, 30})) setUITheme(UITheme::Default);
+        if (button("Dark", {314, 265, 84, 30})) setUITheme(UITheme::Dark);
+        if (button("Candy", {400, 265, 84, 30})) setUITheme(UITheme::Candy);
+        if (button("Cyber", {486, 265, 84, 30})) setUITheme(UITheme::Cyber);
 
         if (button("Back", {300, 340, 200, 45})) changeScene<MainMenu>();
     }
@@ -258,6 +271,7 @@ void MainMenu::drawUI() {
 
 int main() {
     Game game("Menus", 800, 450);
+    setUITextSize(20); // keep this text size, whichever theme is picked
     game.run<MainMenu>();
 }
 ```
