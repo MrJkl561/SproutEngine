@@ -3,8 +3,9 @@
 #
 #  These test the parts of the engine that don't need a window or a sound card
 #  (math, colors, random numbers, timers, tile maps, physics, scenes and
-#  entities, sprite animation, particles, save files and input actions), so
-#  they can run anywhere - including on a CI server without a display.
+#  entities, sprite animation, particles, save files, input actions and the
+#  raylib-cpp conversions), so they can run anywhere - including on a CI
+#  server without a display or a sound card.
 #
 #  Build and run them with:
 #    cmake -S . -B build -DSPROUT_BUILD_TESTS=ON
@@ -44,6 +45,7 @@ add_executable(sprout_tests
     test_particles.cpp
     test_save.cpp
     test_input.cpp
+    test_raylib_interop.cpp
 )
 
 target_link_libraries(sprout_tests PRIVATE sprout::sprout doctest::doctest)
