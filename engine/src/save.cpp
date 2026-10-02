@@ -1,6 +1,8 @@
 #include "sprout/save.hpp"
 
+#include <filesystem>
 #include <fstream>
+#include <system_error>
 #include <utility>
 
 #include "internal.hpp"
@@ -56,13 +58,30 @@ Json loadJson(const std::string& path) {
 }
 
 bool saveJson(const std::string& path, const Json& data) {
-    std::ofstream file(path);
-    if (!file) {
+    // Turn the JSON into text BEFORE touching the file, so a problem can never
+    // leave a half-written (or empty) save behind. Text that isn't valid UTF-8
+    // (e.g. "Ren\xE9" from a file saved in an old Windows encoding) gets a
+    // replacement character instead of throwing an exception.
+    const std::string text = data.dump(4, ' ', false, Json::error_handler_t::replace) + '\n';
+
+    // Write to a temporary file first, then swap it in: if the computer crashes
+    // halfway through, the old save is still there.
+    const std::string temporary = path + ".tmp";
+    {
+        std::ofstream file(temporary, std::ios::binary);
+        if (!file || !(file << text) || !file.flush()) {
+            detail::warn("couldn't write the file \"" + path + "\".");
+            return false;
+        }
+    }
+    std::error_code error;
+    std::filesystem::rename(temporary, path, error);
+    if (error) {
+        std::filesystem::remove(temporary, error);
         detail::warn("couldn't write the file \"" + path + "\".");
         return false;
     }
-    file << data.dump(4) << '\n';
-    return static_cast<bool>(file);
+    return true;
 }
 
 } // namespace sprout
