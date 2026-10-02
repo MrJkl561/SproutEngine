@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <exception>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
@@ -16,7 +17,7 @@ namespace sprout {
 namespace {
 
 struct GameState {
-    bool windowOpen = false;
+    std::optional<raylib::Window> window; // raylib::Window closes itself when reset
     std::unique_ptr<Scene> scene;
     detail::SceneFactory currentFactory;
     detail::SceneFactory nextFactory;
@@ -41,9 +42,12 @@ int testFrameLimit() {
 
 void saveScreenshot(const std::string& path) {
     rlDrawRenderBatchActive(); // make sure everything drawn so far is really on screen
-    ::Image image = LoadImageFromScreen();
-    ExportImage(image, path.c_str());
-    UnloadImage(image);
+    raylib::Image image{raylib::Image::LoadFromScreen()};
+    try {
+        image.Export(path);
+    } catch (const raylib::RaylibException&) {
+        detail::warn("couldn't save the screenshot \"" + path + "\".");
+    }
 }
 
 // Closes everything down: scenes, sounds, pictures, fonts and the window.
@@ -52,13 +56,16 @@ void shutdownEverything() {
     s.scene.reset();
     s.currentFactory = nullptr;
     s.nextFactory = nullptr;
-    if (s.windowOpen) {
+    if (s.window) {
         detail::shutdownAudio();
         detail::unloadAllTextures();
         detail::unloadFonts();
-        CloseWindow();
+        s.window.reset(); // closes the window
     }
-    s = GameState{};
+    s.quitRequested = false;
+    s.dt = 0.0f;
+    s.realTime = 0.0;
+    s.gameClock = 0.0;
 }
 
 void switchScene(detail::SceneFactory factory) {
@@ -75,7 +82,7 @@ void switchScene(detail::SceneFactory factory) {
 namespace detail {
 void warn(const std::string& message) { std::cerr << "[Sprout] Warning: " << message << std::endl; }
 
-bool windowIsOpen() { return state().windowOpen; }
+bool windowIsOpen() { return state().window.has_value(); }
 
 Scene* activeScene() { return state().scene.get(); }
 
@@ -90,21 +97,21 @@ void requestSceneChange(SceneFactory factory) { state().nextFactory = std::move(
 
 // --- Game --------------------------------------------------------------------------
 Game::Game(const std::string& title, int width, int height) {
-    if (state().windowOpen) {
+    GameState& s = state();
+    if (s.window) {
         throw std::logic_error("Only one Game can exist at a time.");
     }
-    SetTraceLogLevel(LOG_WARNING); // keep the console quiet unless something is wrong
-    SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_VSYNC_HINT);
-    InitWindow(width, height, title.c_str());
-    if (!IsWindowReady()) {
+    try {
+        // Smooth edges + no tearing, and only print raylib messages that matter.
+        s.window.emplace(width, height, title, FLAG_MSAA_4X_HINT | FLAG_VSYNC_HINT, LOG_WARNING);
+    } catch (const raylib::RaylibException&) {
         throw std::runtime_error("Sprout couldn't open a window. Is your graphics driver installed?");
     }
-    state().windowOpen = true;
 
     // Run from the folder the game is in, so "assets/player.png" is always found.
-    ChangeDirectory(GetApplicationDirectory());
+    raylib::ChangeDirectory(::GetApplicationDirectory());
 
-    SetTargetFPS(60);
+    s.window->SetTargetFPS(60);
     detail::initAudio();
     detail::initUI();
 }
@@ -119,10 +126,11 @@ void Game::runWithFactory(detail::SceneFactory factory) {
     try {
         switchScene(std::move(factory));
 
-        while (!s.quitRequested && !WindowShouldClose()) {
+        raylib::Window& window = *s.window;
+        while (!s.quitRequested && !window.ShouldClose()) {
             // Never step more than 1/10 of a second at once (e.g. after dragging the window),
             // otherwise things could fly through walls.
-            s.dt = std::min(GetFrameTime(), 0.1f);
+            s.dt = std::min(window.GetFrameTime(), 0.1f);
             s.realTime += s.dt;
             if (!s.scene->paused) s.gameClock += s.dt;
 
@@ -130,14 +138,14 @@ void Game::runWithFactory(detail::SceneFactory factory) {
             detail::updateAudio();
             s.scene->runUpdate(s.dt);
 
-            BeginDrawing();
+            window.BeginDrawing();
             s.scene->runDraw();
             ++frame;
             const bool lastTestFrame = frameLimit > 0 && frame >= frameLimit;
             if (lastTestFrame) {
                 if (const char* shot = std::getenv("SPROUT_TEST_SCREENSHOT")) saveScreenshot(shot);
             }
-            EndDrawing();
+            window.EndDrawing();
 
             if (lastTestFrame) s.quitRequested = true;
             if (s.nextFactory) {
@@ -168,39 +176,40 @@ Scene& currentScene() {
 void quitGame() { state().quitRequested = true; }
 
 // --- Window ------------------------------------------------------------------------
-int screenWidth() { return detail::windowIsOpen() ? GetScreenWidth() : 0; }
-int screenHeight() { return detail::windowIsOpen() ? GetScreenHeight() : 0; }
+int screenWidth() { return detail::windowIsOpen() ? raylib::Window::GetWidth() : 0; }
+int screenHeight() { return detail::windowIsOpen() ? raylib::Window::GetHeight() : 0; }
 Vec2 screenSize() { return Vec2{screenWidth(), screenHeight()}; }
 Vec2 screenCenter() { return screenSize() / 2.0f; }
 
 void setWindowTitle(const std::string& title) {
-    if (detail::windowIsOpen()) SetWindowTitle(title.c_str());
+    if (detail::windowIsOpen()) state().window->SetTitle(title);
 }
 
 void setResizable(bool resizable) {
     if (!detail::windowIsOpen()) return;
-    if (resizable) SetWindowState(FLAG_WINDOW_RESIZABLE);
-    else ClearWindowState(FLAG_WINDOW_RESIZABLE);
+    if (resizable) state().window->SetState(FLAG_WINDOW_RESIZABLE);
+    else state().window->ClearState(FLAG_WINDOW_RESIZABLE);
 }
 
 void setFullscreen(bool fullscreen) {
-    if (detail::windowIsOpen() && fullscreen != isFullscreen()) ToggleBorderlessWindowed();
+    // "Borderless windowed" fills the screen without changing the monitor's resolution.
+    if (detail::windowIsOpen() && fullscreen != isFullscreen()) state().window->ToggleBorderless();
 }
 
-bool isFullscreen() { return detail::windowIsOpen() && IsWindowState(FLAG_BORDERLESS_WINDOWED_MODE); }
+bool isFullscreen() { return detail::windowIsOpen() && raylib::Window::IsState(FLAG_BORDERLESS_WINDOWED_MODE); }
 
 void toggleFullscreen() { setFullscreen(!isFullscreen()); }
 
 void showCursor() {
-    if (detail::windowIsOpen()) ShowCursor();
+    if (detail::windowIsOpen()) raylib::Window::ShowCursor();
 }
 
 void hideCursor() {
-    if (detail::windowIsOpen()) HideCursor();
+    if (detail::windowIsOpen()) raylib::Window::HideCursor();
 }
 
 void setExitKey(Key key) {
-    if (detail::windowIsOpen()) SetExitKey(static_cast<int>(key));
+    if (detail::windowIsOpen()) raylib::Window::SetExitKey(static_cast<int>(key));
 }
 
 void takeScreenshot(const std::string& path) {
@@ -210,9 +219,9 @@ void takeScreenshot(const std::string& path) {
 // --- Time --------------------------------------------------------------------------
 float deltaTime() { return state().dt; }
 float timeSinceStart() { return static_cast<float>(state().realTime); }
-int fps() { return detail::windowIsOpen() ? GetFPS() : 0; }
+int fps() { return detail::windowIsOpen() ? raylib::Window::GetFPS() : 0; }
 void setTargetFPS(int targetFps) {
-    if (detail::windowIsOpen()) SetTargetFPS(targetFps);
+    if (detail::windowIsOpen()) state().window->SetTargetFPS(targetFps);
 }
 
 } // namespace sprout

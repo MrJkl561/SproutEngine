@@ -1,4 +1,5 @@
-// The UI is made with raygui: https://github.com/raysan5/raygui
+// The UI is made with raygui (https://github.com/raysan5/raygui), which draws
+// with raylib. Our Rects are turned into raylib-cpp Rectangles with toRaylib().
 #include "sprout/ui.hpp"
 
 #include <algorithm>
@@ -72,11 +73,11 @@ void initUI() {
 }
 } // namespace detail
 
-bool button(const std::string& text, const Rect& area) { return GuiButton(detail::toRay(area), text.c_str()) != 0; }
+bool button(const std::string& text, const Rect& area) { return GuiButton(toRaylib(area), text.c_str()) != 0; }
 
 bool checkbox(const std::string& text, const Rect& area, bool& checked) {
     const bool before = checked;
-    GuiCheckBox(detail::toRay(area), text.c_str(), &checked);
+    GuiCheckBox(toRaylib(area), text.c_str(), &checked);
     return checked != before;
 }
 
@@ -84,7 +85,7 @@ bool slider(const std::string& text, const Rect& area, float& value, float min, 
     const float before = value;
     // Show the label on the left and the current value on the right.
     const std::string valueText = std::to_string(value).substr(0, std::to_string(value).find('.') + 3);
-    GuiSliderBar(detail::toRay(area), text.c_str(), valueText.c_str(), &value, min, max);
+    GuiSliderBar(toRaylib(area), text.c_str(), valueText.c_str(), &value, min, max);
     return value != before;
 }
 
@@ -95,7 +96,7 @@ bool textBox(const Rect& area, std::string& text, int maxLength) {
 
     ActiveTextBox& active = activeTextBox();
     const bool editing = active.active && active.area == area;
-    if (GuiTextBox(detail::toRay(area), buffer.data(), maxLength + 1, editing)) {
+    if (GuiTextBox(toRaylib(area), buffer.data(), maxLength + 1, editing)) {
         // raygui says "toggle typing mode" (clicked, or Enter pressed)
         if (editing) active.active = false;
         else active = ActiveTextBox{true, area};
@@ -108,12 +109,12 @@ bool textBox(const Rect& area, std::string& text, int maxLength) {
 
 void progressBar(const Rect& area, float value, float max) {
     float clamped = std::clamp(value, 0.0f, max);
-    GuiProgressBar(detail::toRay(area), nullptr, nullptr, &clamped, 0.0f, max);
+    GuiProgressBar(toRaylib(area), nullptr, nullptr, &clamped, 0.0f, max);
 }
 
-void label(const std::string& text, const Rect& area) { GuiLabel(detail::toRay(area), text.c_str()); }
+void label(const std::string& text, const Rect& area) { GuiLabel(toRaylib(area), text.c_str()); }
 
-void panel(const std::string& title, const Rect& area) { GuiPanel(detail::toRay(area), title.c_str()); }
+void panel(const std::string& title, const Rect& area) { GuiPanel(toRaylib(area), title.c_str()); }
 
 void setUITextSize(int size) { GuiSetStyle(DEFAULT, TEXT_SIZE, std::max(6, size)); }
 

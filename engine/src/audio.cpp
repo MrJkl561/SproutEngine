@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <map>
+#include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -14,22 +16,31 @@ namespace {
 // How many copies of one sound can play at the same time.
 constexpr std::size_t kMaxVoicesPerSound = 8;
 
+// An extra "voice" that shares the sound data of the original sound.
+// raylib-cpp has no wrapper for sound aliases, so this small one cleans up after itself.
+struct SoundAlias {
+    raylib::SoundUnmanaged sound;
+    explicit SoundAlias(const ::Sound& original) : sound(::LoadSoundAlias(original)) {}
+    ~SoundAlias() { ::UnloadSoundAlias(sound); }
+    SoundAlias(const SoundAlias&) = delete;
+    SoundAlias& operator=(const SoundAlias&) = delete;
+};
+
 struct SoundEntry {
-    ::Sound original{};
-    std::vector<::Sound> aliases; // extra "voices" sharing the same sound data
+    std::optional<raylib::Sound> original;           // empty = couldn't be loaded
+    std::vector<std::unique_ptr<SoundAlias>> aliases; // pointers so the voices never move in memory
     std::size_t next = 0;
 };
 
-struct MusicEntry {
-    ::Music music{};
-};
-
 struct AudioState {
-    bool ready = false;
+    // The device must outlive every sound, so it is listed first (destroyed last).
+    std::optional<raylib::AudioDevice> device;
     std::map<std::string, SoundEntry> sounds;
-    std::map<std::string, MusicEntry> music;
+    std::map<std::string, std::optional<raylib::Music>> music; // empty = couldn't be loaded
     std::string currentMusic;
     bool musicPaused = false;
+
+    bool ready() const { return device.has_value(); }
 };
 
 AudioState& audio() {
@@ -39,81 +50,76 @@ AudioState& audio() {
 
 SoundEntry* getSound(const std::string& path) {
     AudioState& state = audio();
-    if (!state.ready) return nullptr;
-    if (auto it = state.sounds.find(path); it != state.sounds.end()) return &it->second;
+    if (!state.ready()) return nullptr;
+    if (auto it = state.sounds.find(path); it != state.sounds.end())
+        return it->second.original ? &it->second : nullptr;
 
-    if (!FileExists(path.c_str())) {
+    SoundEntry& entry = state.sounds[path]; // remembered even if it fails, so we only warn once
+    if (!raylib::FileExists(path)) {
         detail::warn("couldn't find the sound \"" + path + "\". Check the spelling and that it is in your "
                      "game's assets folder.");
-        state.sounds[path] = SoundEntry{}; // remember, so we only warn once
         return nullptr;
     }
-    ::Sound sound = LoadSound(path.c_str());
-    if (!IsSoundValid(sound)) {
+    try {
+        entry.original.emplace(path);
+    } catch (const raylib::RaylibException&) {
         detail::warn("couldn't load the sound \"" + path + "\". Try a .wav, .ogg or .mp3 file.");
-        state.sounds[path] = SoundEntry{};
         return nullptr;
     }
-    SoundEntry& entry = state.sounds[path];
-    entry.original = sound;
     return &entry;
 }
 
-MusicEntry* getMusic(const std::string& path) {
+raylib::Music* getMusic(const std::string& path) {
     AudioState& state = audio();
-    if (!state.ready) return nullptr;
+    if (!state.ready()) return nullptr;
     if (auto it = state.music.find(path); it != state.music.end())
-        return it->second.music.frameCount > 0 ? &it->second : nullptr;
+        return it->second ? &*it->second : nullptr;
 
-    if (!FileExists(path.c_str())) {
+    std::optional<raylib::Music>& slot = state.music[path];
+    if (!raylib::FileExists(path)) {
         detail::warn("couldn't find the music \"" + path + "\". Check the spelling and that it is in your "
                      "game's assets folder.");
-        state.music[path] = MusicEntry{};
         return nullptr;
     }
-    ::Music music = LoadMusicStream(path.c_str());
-    if (!IsMusicValid(music)) {
+    try {
+        slot.emplace(path);
+    } catch (const raylib::RaylibException&) {
         detail::warn("couldn't load the music \"" + path + "\". Try an .ogg or .mp3 file.");
-        state.music[path] = MusicEntry{};
         return nullptr;
     }
-    state.music[path].music = music;
-    return &state.music[path];
+    return &*slot;
 }
 
-MusicEntry* currentMusic() {
+raylib::Music* currentMusic() {
     AudioState& state = audio();
     if (state.currentMusic.empty()) return nullptr;
     auto it = state.music.find(state.currentMusic);
-    return it != state.music.end() && it->second.music.frameCount > 0 ? &it->second : nullptr;
+    return it != state.music.end() && it->second ? &*it->second : nullptr;
 }
 
 } // namespace
 
 namespace detail {
 void initAudio() {
-    InitAudioDevice();
-    audio().ready = IsAudioDeviceReady();
-    if (!audio().ready) warn("no sound device was found, so the game will be silent.");
+    try {
+        audio().device.emplace(); // raylib::AudioDevice opens the sound card
+    } catch (const raylib::RaylibException&) {
+        warn("no sound device was found, so the game will be silent.");
+    }
 }
 
 void updateAudio() {
-    AudioState& state = audio();
-    if (MusicEntry* entry = currentMusic(); entry && !state.musicPaused) UpdateMusicStream(entry->music);
+    if (raylib::Music* music = currentMusic(); music && !audio().musicPaused) music->Update();
 }
 
 void shutdownAudio() {
     AudioState& state = audio();
-    if (state.ready) {
-        for (auto& [path, entry] : state.sounds) {
-            for (::Sound& alias : entry.aliases) UnloadSoundAlias(alias);
-            if (entry.original.frameCount > 0) UnloadSound(entry.original);
-        }
-        for (auto& [path, entry] : state.music)
-            if (entry.music.frameCount > 0) UnloadMusicStream(entry.music);
-        CloseAudioDevice();
-    }
-    state = AudioState{};
+    // Sounds and music unload themselves, but must go BEFORE the sound card is closed.
+    state.sounds.clear();
+    state.music.clear();
+    state.device.reset(); // raylib::AudioDevice closes the sound card
+    state.currentMusic.clear();
+    state.musicPaused = false;
 }
 } // namespace detail
 
@@ -123,41 +129,41 @@ void playSound(const std::string& path, float volume, float pitch) {
     if (!entry) return;
 
     // Find a voice that isn't busy, so the same sound can overlap itself.
-    ::Sound* voice = nullptr;
-    if (!IsSoundPlaying(entry->original)) {
-        voice = &entry->original;
+    raylib::SoundUnmanaged* voice = nullptr;
+    if (!entry->original->IsPlaying()) {
+        voice = &*entry->original;
     } else {
-        for (::Sound& alias : entry->aliases)
-            if (!IsSoundPlaying(alias)) { voice = &alias; break; }
+        for (auto& alias : entry->aliases)
+            if (!alias->sound.IsPlaying()) { voice = &alias->sound; break; }
         if (!voice && entry->aliases.size() + 1 < kMaxVoicesPerSound) {
-            entry->aliases.push_back(LoadSoundAlias(entry->original));
-            voice = &entry->aliases.back();
+            entry->aliases.push_back(std::make_unique<SoundAlias>(*entry->original));
+            voice = &entry->aliases.back()->sound;
         }
         if (!voice) { // all voices busy: cut off the oldest one
             entry->next = (entry->next + 1) % (entry->aliases.size() + 1);
-            voice = entry->next == 0 ? &entry->original : &entry->aliases[entry->next - 1];
+            voice = entry->next == 0 ? &*entry->original : &entry->aliases[entry->next - 1]->sound;
         }
     }
-    SetSoundVolume(*voice, std::clamp(volume, 0.0f, 1.0f));
-    SetSoundPitch(*voice, std::max(0.01f, pitch));
-    PlaySound(*voice);
+    voice->SetVolume(std::clamp(volume, 0.0f, 1.0f));
+    voice->SetPitch(std::max(0.01f, pitch));
+    voice->Play();
 }
 
 void stopSound(const std::string& path) {
     AudioState& state = audio();
     auto it = state.sounds.find(path);
-    if (!state.ready || it == state.sounds.end() || it->second.original.frameCount == 0) return;
-    StopSound(it->second.original);
-    for (::Sound& alias : it->second.aliases) StopSound(alias);
+    if (it == state.sounds.end() || !it->second.original) return;
+    it->second.original->Stop();
+    for (auto& alias : it->second.aliases) alias->sound.Stop();
 }
 
 bool isSoundPlaying(const std::string& path) {
     AudioState& state = audio();
     auto it = state.sounds.find(path);
-    if (!state.ready || it == state.sounds.end() || it->second.original.frameCount == 0) return false;
-    if (IsSoundPlaying(it->second.original)) return true;
+    if (it == state.sounds.end() || !it->second.original) return false;
+    if (it->second.original->IsPlaying()) return true;
     return std::any_of(it->second.aliases.begin(), it->second.aliases.end(),
-                       [](const ::Sound& alias) { return IsSoundPlaying(alias); });
+                       [](const auto& alias) { return alias->sound.IsPlaying(); });
 }
 
 void preloadSound(const std::string& path) { getSound(path); }
@@ -165,54 +171,54 @@ void preloadSound(const std::string& path) { getSound(path); }
 // --- Music -------------------------------------------------------------------------
 void playMusic(const std::string& path, float volume, bool loop) {
     AudioState& state = audio();
-    MusicEntry* entry = getMusic(path);
-    if (!entry) return;
-    entry->music.looping = loop;
-    SetMusicVolume(entry->music, std::clamp(volume, 0.0f, 1.0f));
-    if (state.currentMusic == path && IsMusicStreamPlaying(entry->music)) return;
+    raylib::Music* music = getMusic(path);
+    if (!music) return;
+    music->looping = loop;
+    music->SetVolume(std::clamp(volume, 0.0f, 1.0f));
+    if (state.currentMusic == path && music->IsPlaying()) return;
     if (state.musicPaused && state.currentMusic == path) {
         resumeMusic();
         return;
     }
-    if (MusicEntry* old = currentMusic(); old && old != entry) StopMusicStream(old->music);
+    if (raylib::Music* old = currentMusic(); old && old != music) old->Stop();
     state.currentMusic = path;
     state.musicPaused = false;
-    PlayMusicStream(entry->music);
+    music->Play();
 }
 
 void stopMusic() {
-    if (MusicEntry* entry = currentMusic()) StopMusicStream(entry->music);
+    if (raylib::Music* music = currentMusic()) music->Stop();
     audio().currentMusic.clear();
     audio().musicPaused = false;
 }
 
 void pauseMusic() {
-    if (MusicEntry* entry = currentMusic()) {
-        PauseMusicStream(entry->music);
+    if (raylib::Music* music = currentMusic()) {
+        music->Pause();
         audio().musicPaused = true;
     }
 }
 
 void resumeMusic() {
-    if (MusicEntry* entry = currentMusic()) {
-        ResumeMusicStream(entry->music);
+    if (raylib::Music* music = currentMusic()) {
+        music->Resume();
         audio().musicPaused = false;
     }
 }
 
 bool isMusicPlaying() {
-    MusicEntry* entry = currentMusic();
-    return entry && !audio().musicPaused && IsMusicStreamPlaying(entry->music);
+    raylib::Music* music = currentMusic();
+    return music && !audio().musicPaused && music->IsPlaying();
 }
 
 void setMusicVolume(float volume) {
-    if (MusicEntry* entry = currentMusic()) SetMusicVolume(entry->music, std::clamp(volume, 0.0f, 1.0f));
+    if (raylib::Music* music = currentMusic()) music->SetVolume(std::clamp(volume, 0.0f, 1.0f));
 }
 
 void setMasterVolume(float volume) {
-    if (audio().ready) SetMasterVolume(std::clamp(volume, 0.0f, 1.0f));
+    if (audio().ready()) audio().device->SetVolume(std::clamp(volume, 0.0f, 1.0f));
 }
 
-float masterVolume() { return audio().ready ? GetMasterVolume() : 0.0f; }
+float masterVolume() { return audio().ready() ? ::GetMasterVolume() : 0.0f; }
 
 } // namespace sprout

@@ -24,6 +24,7 @@ SOFTWARE.
 Sprout downloads and uses these libraries, which have their own licenses:
 
   raylib         https://github.com/raysan5/raylib     zlib/libpng license
+  raylib-cpp     https://github.com/RobLoach/raylib-cpp zlib/libpng license
   raygui         https://github.com/raysan5/raygui     zlib/libpng license
   nlohmann/json  https://github.com/nlohmann/json      MIT license
   doctest        https://github.com/doctest/doctest    MIT license (tests only)

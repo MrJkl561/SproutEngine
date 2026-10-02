@@ -9,10 +9,6 @@
 
 namespace sprout {
 
-namespace detail {
-::Camera2D toRayCamera(const Camera& camera); // camera.cpp
-}
-
 Scene::Scene() { camera.reset(); }
 
 Scene::~Scene() = default;
@@ -119,9 +115,10 @@ void Scene::runUpdate(float dt) {
 }
 
 void Scene::runDraw() {
-    ClearBackground(detail::toRay(background));
+    toRaylib(background).ClearBackground();
 
-    BeginMode2D(detail::toRayCamera(camera));
+    raylib::Camera2D view = toRaylib(camera);
+    view.BeginMode();
     draw();
     // Draw entities from the lowest layer to the highest (stable: same layer keeps spawn order).
     std::vector<Entity*> order;
@@ -131,7 +128,7 @@ void Scene::runDraw() {
     std::stable_sort(order.begin(), order.end(), [](const Entity* a, const Entity* b) { return a->layer < b->layer; });
     for (Entity* entity : order) entity->draw();
     particles.draw();
-    EndMode2D();
+    view.EndMode();
 
     drawUI();
 }

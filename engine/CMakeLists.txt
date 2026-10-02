@@ -29,8 +29,10 @@ target_include_directories(sprout
 
 target_compile_features(sprout PUBLIC cxx_std_20)
 
+# raylib-cpp is PUBLIC so advanced users can #include <raylib-cpp.hpp>
+# (see sprout/raylib_interop.hpp).
 target_link_libraries(sprout
-    PUBLIC raylib nlohmann_json::nlohmann_json
+    PUBLIC raylib raylib_cpp nlohmann_json::nlohmann_json
 )
 
 # Extra warnings for the engine's own code (not for your games).

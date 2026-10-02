@@ -30,15 +30,14 @@ struct ActionState {
 
 bool bindingDown(const Binding& binding) {
     if (!detail::windowIsOpen()) return false;
+    const raylib::Gamepad pad{binding.gamepad};
     switch (binding.kind) {
-    case Binding::Kind::Key: return IsKeyDown(binding.code);
-    case Binding::Kind::Mouse: return IsMouseButtonDown(binding.code);
-    case Binding::Kind::GamepadButton:
-        return IsGamepadAvailable(binding.gamepad) && IsGamepadButtonDown(binding.gamepad, binding.code);
+    case Binding::Kind::Key: return raylib::Keyboard::IsKeyDown(binding.code);
+    case Binding::Kind::Mouse: return raylib::Mouse::IsButtonDown(binding.code);
+    case Binding::Kind::GamepadButton: return pad.IsAvailable() && pad.IsButtonDown(binding.code);
     case Binding::Kind::GamepadAxis:
-        if (!IsGamepadAvailable(binding.gamepad)) return false;
-        return GetGamepadAxisMovement(binding.gamepad, binding.code) * static_cast<float>(binding.direction) >
-               kStickPressed;
+        if (!pad.IsAvailable()) return false;
+        return pad.GetAxisMovement(binding.code) * static_cast<float>(binding.direction) > kStickPressed;
     }
     return false;
 }
@@ -97,56 +96,61 @@ void beginInputFrame() {
 } // namespace detail
 
 // --- Keyboard ------------------------------------------------------------------
-bool isKeyDown(Key key) { return detail::windowIsOpen() && key != Key::None && IsKeyDown(static_cast<int>(key)); }
+bool isKeyDown(Key key) {
+    return detail::windowIsOpen() && key != Key::None && raylib::Keyboard::IsKeyDown(static_cast<int>(key));
+}
 bool isKeyPressed(Key key) {
-    return detail::windowIsOpen() && key != Key::None && IsKeyPressed(static_cast<int>(key));
+    return detail::windowIsOpen() && key != Key::None && raylib::Keyboard::IsKeyPressed(static_cast<int>(key));
 }
 bool isKeyReleased(Key key) {
-    return detail::windowIsOpen() && key != Key::None && IsKeyReleased(static_cast<int>(key));
+    return detail::windowIsOpen() && key != Key::None && raylib::Keyboard::IsKeyReleased(static_cast<int>(key));
 }
 
 std::string typedText() {
     std::string result;
     if (!detail::windowIsOpen()) return result;
-    for (int codepoint = GetCharPressed(); codepoint > 0; codepoint = GetCharPressed()) {
+    for (int codepoint = raylib::Keyboard::GetCharPressed(); codepoint > 0;
+         codepoint = raylib::Keyboard::GetCharPressed()) {
         int size = 0;
-        const char* utf8 = CodepointToUTF8(codepoint, &size);
+        const char* utf8 = ::CodepointToUTF8(codepoint, &size);
         result.append(utf8, static_cast<std::size_t>(size));
     }
     return result;
 }
 
 // --- Mouse ---------------------------------------------------------------------
-bool isMouseDown(MouseButton button) { return detail::windowIsOpen() && IsMouseButtonDown(static_cast<int>(button)); }
+bool isMouseDown(MouseButton button) {
+    return detail::windowIsOpen() && raylib::Mouse::IsButtonDown(static_cast<int>(button));
+}
 bool isMousePressed(MouseButton button) {
-    return detail::windowIsOpen() && IsMouseButtonPressed(static_cast<int>(button));
+    return detail::windowIsOpen() && raylib::Mouse::IsButtonPressed(static_cast<int>(button));
 }
 bool isMouseReleased(MouseButton button) {
-    return detail::windowIsOpen() && IsMouseButtonReleased(static_cast<int>(button));
+    return detail::windowIsOpen() && raylib::Mouse::IsButtonReleased(static_cast<int>(button));
 }
-Vec2 mousePosition() { return detail::windowIsOpen() ? detail::fromRay(GetMousePosition()) : Vec2{}; }
+Vec2 mousePosition() { return detail::windowIsOpen() ? fromRaylib(raylib::Mouse::GetPosition()) : Vec2{}; }
 
 Vec2 mouseWorldPosition() {
     if (Scene* scene = detail::activeScene()) return scene->camera.screenToWorld(mousePosition());
     return mousePosition();
 }
 
-float mouseWheel() { return detail::windowIsOpen() ? GetMouseWheelMove() : 0.0f; }
+float mouseWheel() { return detail::windowIsOpen() ? raylib::Mouse::GetWheelMove() : 0.0f; }
 
 // --- Gamepad -------------------------------------------------------------------
-bool isGamepadConnected(int gamepad) { return detail::windowIsOpen() && IsGamepadAvailable(gamepad); }
+bool isGamepadConnected(int gamepad) { return detail::windowIsOpen() && raylib::Gamepad::IsAvailable(gamepad); }
 bool isGamepadDown(GamepadButton button, int gamepad) {
-    return isGamepadConnected(gamepad) && IsGamepadButtonDown(gamepad, static_cast<int>(button));
+    return isGamepadConnected(gamepad) && raylib::Gamepad{gamepad}.IsButtonDown(static_cast<int>(button));
 }
 bool isGamepadPressed(GamepadButton button, int gamepad) {
-    return isGamepadConnected(gamepad) && IsGamepadButtonPressed(gamepad, static_cast<int>(button));
+    return isGamepadConnected(gamepad) && raylib::Gamepad{gamepad}.IsButtonPressed(static_cast<int>(button));
 }
 bool isGamepadReleased(GamepadButton button, int gamepad) {
-    return isGamepadConnected(gamepad) && IsGamepadButtonReleased(gamepad, static_cast<int>(button));
+    return isGamepadConnected(gamepad) && raylib::Gamepad{gamepad}.IsButtonReleased(static_cast<int>(button));
 }
 float gamepadAxis(GamepadAxis axis, int gamepad) {
     if (!isGamepadConnected(gamepad)) return 0.0f;
-    const float value = GetGamepadAxisMovement(gamepad, static_cast<int>(axis));
+    const float value = raylib::Gamepad{gamepad}.GetAxisMovement(static_cast<int>(axis));
     const bool isTrigger = axis == GamepadAxis::LeftTrigger || axis == GamepadAxis::RightTrigger;
     if (!isTrigger && std::abs(value) < kStickDeadzone) return 0.0f;
     return value;

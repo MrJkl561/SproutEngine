@@ -9,16 +9,10 @@
 
 namespace sprout {
 
-namespace {
-::Camera2D toRayCamera(const Camera& camera) {
-    ::Camera2D result{};
-    result.offset = detail::toRay(screenCenter() + camera.shakeOffset());
-    result.target = detail::toRay(camera.position);
-    result.rotation = camera.rotation;
-    result.zoom = camera.zoom <= 0.0f ? 0.0001f : camera.zoom;
-    return result;
+raylib::Camera2D toRaylib(const Camera& camera) {
+    return raylib::Camera2D{toRaylib(screenCenter() + camera.shakeOffset()), toRaylib(camera.position),
+                            camera.rotation, camera.zoom <= 0.0f ? 0.0001f : camera.zoom};
 }
-} // namespace
 
 void Camera::follow(Vec2 target, float smoothness) {
     if (smoothness <= 0.0f) {
@@ -73,12 +67,12 @@ void Camera::updateCamera(float dt) {
 
 Vec2 Camera::screenToWorld(Vec2 screenPoint) const {
     if (!detail::windowIsOpen()) return screenPoint;
-    return detail::fromRay(GetScreenToWorld2D(detail::toRay(screenPoint), toRayCamera(*this)));
+    return fromRaylib(toRaylib(*this).GetScreenToWorld(toRaylib(screenPoint)));
 }
 
 Vec2 Camera::worldToScreen(Vec2 worldPoint) const {
     if (!detail::windowIsOpen()) return worldPoint;
-    return detail::fromRay(GetWorldToScreen2D(detail::toRay(worldPoint), toRayCamera(*this)));
+    return fromRaylib(toRaylib(*this).GetWorldToScreen(toRaylib(worldPoint)));
 }
 
 Rect Camera::visibleArea() const {
@@ -103,10 +97,5 @@ void Camera::reset() {
     shakeStrength_ = shakeTimeLeft_ = 0.0f;
     shakeOffset_ = {};
 }
-
-namespace detail {
-// Used by Scene to draw the world through the camera.
-::Camera2D toRayCamera(const Camera& camera) { return sprout::toRayCamera(camera); }
-} // namespace detail
 
 } // namespace sprout

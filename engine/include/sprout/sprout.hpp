@@ -31,6 +31,10 @@
 //    random.hpp     random numbers
 //    math.hpp       Vec2, Rect and math helpers
 //    color.hpp      colors
+//
+//  Advanced (not included here): raylib_interop.hpp lets you mix in
+//  raylib-cpp (https://github.com/RobLoach/raylib-cpp), the C++ wrapper for
+//  raylib that Sprout is built on, for things Sprout doesn't do itself.
 // =============================================================================
 
 #include "sprout/audio.hpp"
