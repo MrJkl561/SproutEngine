@@ -49,7 +49,10 @@ std::vector<int> levels = save.get("unlocked", std::vector<int>{1}); // a list
 ```
 
 If a value exists but has the wrong type (for example text where you expected
-a number), you get the default back instead of a crash.
+a number), you get the default back instead of a crash. Whole numbers and
+decimals count as the same kind of thing (a stored `3` read with
+`save.get("lives", 0.0f)` gives `3.0`), but `true`/`false` is never turned into
+a number or the other way round.
 
 ### Everything a `SaveFile` can do
 

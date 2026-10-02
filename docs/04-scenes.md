@@ -383,6 +383,7 @@ Every scene has a `bool paused`. While it's `true`:
 - particles freeze,
 - `after(...)` and `every(...)` timers stop counting,
 - `Timer` and `Cooldown` stop counting,
+- screen shake waits (the camera holds still),
 - but **your scene's own `update()` keeps running**, so you can un-pause.
 
 The usual way to use it:

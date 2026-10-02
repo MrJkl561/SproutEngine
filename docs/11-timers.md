@@ -41,7 +41,7 @@ void start() override {
 The code between `{` and `}` doesn't run straight away. It's saved and run
 later, when the time comes.
 
-### What's this `[this] { ... }` thing?
+### What is a lambda?
 
 It's called a **lambda**. A lambda is a little packet of code that you can hand
 to someone else to run later, like writing instructions on a sticky note and

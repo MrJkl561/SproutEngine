@@ -193,7 +193,7 @@ every(1.0f, [] { spawn<Enemy>(); });       // error
 every(1.0f, [this] { spawn<Enemy>(); });   // works
 ```
 
-See [Timers](11-timers.md#whats-this-this--thing).
+See [What is a lambda?](11-timers.md#what-is-a-lambda).
 
 ### "expected identifier before string constant" / "...before numeric constant"
 

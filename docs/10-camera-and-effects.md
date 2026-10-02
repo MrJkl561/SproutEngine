@@ -89,6 +89,11 @@ camera.shake(25, 1.0f);    // an earthquake
 The shake fades out by itself. Only the world shakes; your `drawUI()` stays
 still. From inside an entity, use `scene().camera.shake(...)`.
 
+If a shake is already going on, a new one only takes over when it's at least as
+strong as the current (fading) shake, so a tiny bump can't cut a big explosion
+short. While the scene is [paused](04-scenes.md#pausing), the shake waits and
+carries on afterwards.
+
 > **Don't overdo it.** Small shakes (4 to 10 pixels) for hits and explosions feel
 > great. Big shakes on every action make people feel seasick.
 
