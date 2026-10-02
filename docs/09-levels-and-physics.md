@@ -139,6 +139,9 @@ map = TileMap::fromFile("assets/level" + std::to_string(number) + ".txt", 32);
 ```
 
 If the file can't be found, Sprout prints a warning and you get an empty map.
+Each line of the file is one row of tiles. Windows (`\r\n`) line endings and the
+invisible "BOM" bytes that some Windows editors add at the start of a file are
+ignored, so any plain text editor works.
 
 ### Reading and changing tiles
 
@@ -203,6 +206,12 @@ anything solid**: the solid tiles of maps you added with `addSolid(map)`, and
 rectangles you added with `addSolid(rect)`. When it hits something, that part of
 the velocity becomes 0, and the entity **slides** along the wall instead of
 getting stuck. Fast entities can't skip through thin walls either.
+
+**Starting a little inside a wall is fine.** If an entity begins slightly
+inside something solid (for example a player 40 pixels tall, spawned in the
+middle of a 32-pixel `P` tile, so its feet poke into the floor), `moveAndSlide`
+pushes it out the shortest way. So it ends up standing on the floor instead of
+getting stuck or falling through.
 
 After `moveAndSlide`, you can ask what happened:
 

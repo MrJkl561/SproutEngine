@@ -350,9 +350,9 @@ sprite.update(dt);  // moves the animation forward
 | `setSpriteSheet(columns, rows = 1)` | Cuts the picture into a grid of equally sized frames |
 | `addAnimation(name, first, last, fps, loop = true)` | An animation using frames `first` to `last` |
 | `addAnimation(name, {frames...}, fps, loop = true)` | An animation using a list of frames |
-| `play(name)` | Starts an animation. If it's already playing, it **keeps going** (doesn't restart). |
-| `restart(name)` | Starts an animation from its first frame, even if it was already playing |
-| `stop()` | Freezes on the current frame |
+| `play(name)` | Starts an animation. If it's already the current animation, it **keeps going** (doesn't restart), so it's fine to call every frame. A play-once animation that has finished stays on its last frame. |
+| `restart(name)` | Starts an animation from its first frame, even if it was already playing or had finished |
+| `stop()` | Freezes on the current frame (`play` with the same name carries on from there) |
 | `update(dt)` | Moves the animation forward. **Call this every frame!** |
 | `isPlaying()` | Is an animation running? |
 | `animation()` | The name of the current animation (`""` if none) |
@@ -360,12 +360,22 @@ sprite.update(dt);  // moves the animation forward
 | `setFrame(n)` | Shows one frame (and stops any animation) |
 | `frame()`, `frameCount()` | The current frame number, and how many frames there are |
 
-Because `play` doesn't restart an animation that's already playing, you can
-safely call it every frame:
+Because `play` doesn't restart an animation that's already the current one, you
+can safely call it every frame:
 
 ```cpp
 if (move != 0) sprite.play("walk");
 else sprite.play("idle");
+```
+
+**Play-once animations** (made with `loop = false`) stop on their last frame.
+Calling `play` with the same name again does **not** replay it. Use `restart`
+when you want it to start over, for example for an attack:
+
+```cpp
+// ("attack" is your own action, see bindAction in the Input page)
+if (isActionPressed("attack")) sprite.restart("attack");   // swing again from the start
+if (sprite.animation() == "attack" && sprite.isAnimationFinished()) sprite.play("idle");
 ```
 
 ### A complete example

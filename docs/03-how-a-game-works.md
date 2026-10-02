@@ -250,8 +250,7 @@ help when something surprising happens.
    1. timers set up with `after(...)` and `every(...)` that are due run,
    2. every entity's `update(dt)` runs, in the order they were spawned,
    3. particles move.
-5. Entities **spawned** during this frame join the scene, and entities that
-   were **destroyed** are removed for good.
+5. Entities that were **destroyed** are removed for good.
 6. The **camera** updates (following limits, screen shake).
 7. **Drawing:**
    1. the screen is wiped with your scene's `background` color,
@@ -268,8 +267,11 @@ A few things follow from that order:
 
 - **An entity's `start()` runs immediately** when you call `spawn`, before
   `spawn` even returns.
-- A **newly spawned entity is drawn** in the same frame, but its first
-  `update()` happens in the **next** frame.
+- An entity spawned by your **scene** (in `start()`, in `update()` or in an
+  `after`/`every` timer) gets its first `update()` in the **same** frame.
+- An entity spawned by **another entity's** `update()` (like a bullet fired by
+  the player) gets its first `update()` in the **next** frame. It is still drawn
+  in the same frame, so you'll see it straight away.
 - `destroy()` doesn't make an entity vanish instantly. It's marked as
   destroyed (so `findAll`, `findFirst` and `count` ignore it), and it's really
   removed at the end of the update part of the frame.
