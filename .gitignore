@@ -1,0 +1,15 @@
+# Build folders
+build/
+build-*/
+out/
+cmake-build-*/
+
+# Editor / IDE files
+.vs/
+.idea/
+*.user
+.DS_Store
+
+# Files games write while running
+save.json
+screenshot*.png
