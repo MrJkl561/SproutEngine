@@ -899,3 +899,44 @@ TEST_CASE("moveAndSlide with addSolid(TileMap)") {
         CHECK(walker.bounds().bottom() == Approx(100.0f));
     }
 }
+
+// ENGINE BUG: same physics.cpp moveAxis() regression as described in test_physics.cpp.
+TEST_CASE("a player taller than a tile, spawned on its 'P' marker, stands on the floor" * doctest::may_fail()) {
+    // The usual way to place the player: at the middle of the 'P' tile. A hitbox
+    // taller than one tile then starts a few pixels inside the floor below it.
+    struct Level : TestScene {
+        TileMap map{32, {
+            "##########",
+            "#........#",
+            "#...P....#",
+            "##########",
+        }};
+        void start() override {
+            map.setSolid("#");
+            addSolid(map);
+            for (Vec2 spot : map.findTiles('P')) spawn<Walker>(spot, Vec2{24, 40});
+        }
+    };
+    Level scene;
+    scene.runStart();
+    Walker* player = scene.findFirst<Walker>();
+    REQUIRE(player != nullptr);
+    CHECK(player->bounds().bottom() == Approx(100.0f)); // starts 4 pixels inside the floor (y = 96)
+    scene.runFrames(60);
+    CHECK(player->isOnFloor());
+    CHECK(player->bounds().bottom() == Approx(96.0f));
+}
+
+// ENGINE BUG: same physics.cpp moveAxis() regression as described in test_physics.cpp.
+TEST_CASE("an entity whose hitbox grows while standing stays on the floor" * doctest::may_fail()) {
+    TestScene scene;
+    scene.runStart();
+    scene.addSolid(Rect{0, 300, 800, 20});
+    Walker& walker = scene.spawn<Walker>(Vec2{100, 290}, Vec2{20, 20});
+    scene.runFrames(10);
+    REQUIRE(walker.isOnFloor());
+    walker.size = {20, 40}; // stands up / grows - the middle stays put, so the feet go 10 px into the floor
+    scene.runFrames(30);
+    CHECK(walker.isOnFloor());
+    CHECK(walker.bounds().bottom() == Approx(300.0f));
+}

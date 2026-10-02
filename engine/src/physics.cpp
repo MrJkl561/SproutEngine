@@ -27,9 +27,20 @@ void moveAxis(Rect& box, float amount, bool horizontal, const std::vector<Rect>&
     else box.y += amount;
 
     for (const Rect& solid : solids) {
-        // Already inside this solid before moving (e.g. spawned there)? Let the box
-        // move out of it, instead of pushing it out the far side.
-        if (overlapsBy(before, solid)) continue;
+        if (overlapsBy(before, solid)) {
+            // The box was ALREADY inside this solid before moving (spawned a bit inside
+            // the floor, its hitbox just grew, ...). Only the axis where it sticks in
+            // the least counts. Moving away from the solid on that axis lets it slip
+            // out; moving into it pushes it back out (so a player sunk into the floor
+            // ends up standing on it, and one in the ceiling can still fall down).
+            const float overlapX = std::min(before.right(), solid.right()) - std::max(before.left(), solid.left());
+            const float overlapY = std::min(before.bottom(), solid.bottom()) - std::max(before.top(), solid.top());
+            const bool shallowestAxis = horizontal ? overlapX < overlapY : overlapY <= overlapX;
+            const float boxMiddle = horizontal ? before.center().x : before.center().y;
+            const float solidMiddle = horizontal ? solid.center().x : solid.center().y;
+            const bool movingAway = amount > 0.0f ? boxMiddle > solidMiddle : boxMiddle < solidMiddle;
+            if (!shallowestAxis || movingAway) continue;
+        }
         if (!overlapsBy(box, solid)) continue;
         if (horizontal) {
             if (amount > 0.0f) { box.x = solid.left() - box.width; result.hitRight = true; }

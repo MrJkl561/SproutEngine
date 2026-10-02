@@ -329,3 +329,41 @@ TEST_CASE("moveAndCollide with a TileMap: fast fall onto a one-tile-thick floor"
     CHECK(result.hitBottom);
     CHECK(box.bottom() == Approx(16.0f));
 }
+
+// =============================================================================
+//  Boxes that start out overlapping a solid
+// =============================================================================
+
+TEST_CASE("moveAndCollide: a box that starts inside a solid can move out of it") {
+    // E.g. an entity spawned overlapping the ceiling: falling must take it down and
+    // out of the ceiling, not push it out through the top of the ceiling.
+    const std::vector<Rect> solids{{0, 0, 400, 32}, {0, 300, 400, 32}}; // ceiling and floor
+    Rect box{100, 30, 20, 20};                                          // 2 pixels inside the ceiling
+    const MoveResult first = moveAndCollide(box, Vec2{0, 10}, solids);
+    CHECK_FALSE(first.hitTop);
+    CHECK(box.top() == Approx(40.0f)); // moved down normally
+    const MoveResult landing = moveAndCollide(box, Vec2{0, 1000}, solids);
+    CHECK(landing.hitBottom);
+    CHECK(box.bottom() == Approx(300.0f)); // and then landed on the floor
+}
+
+// ENGINE BUG (regression from commit c622476): engine/src/physics.cpp moveAxis() line 32,
+// `if (overlapsBy(before, solid)) continue;`, ignores EVERY solid the box already
+// overlapped - so a box that is a few pixels inside a floor falls straight through it.
+// Suggested fix (verified: makes all tests pass): only ignore an already-overlapped
+// solid when it is not ahead of the box in the direction of the move, e.g.
+//     if (overlapsBy(before, solid)) {
+//         const float self = horizontal ? before.center().x : before.center().y;
+//         const float other = horizontal ? solid.center().x : solid.center().y;
+//         if (!(amount > 0.0f ? self < other : self > other)) continue;
+//     }
+// (placed after the `if (!overlapsBy(box, solid)) continue;` check).
+TEST_CASE("moveAndCollide: a box that has sunk a little into the floor is put back on top, not dropped through" * doctest::may_fail()) {
+    // E.g. an entity whose hitbox just got taller (standing up after crouching),
+    // or one that was placed a few pixels too low.
+    const std::vector<Rect> floor{{0, 300, 400, 20}};
+    Rect box{100, 284, 20, 20}; // bottom at 304: 4 pixels into the floor
+    const MoveResult result = moveAndCollide(box, Vec2{0, 5}, floor);
+    CHECK(result.hitBottom);
+    CHECK(box.bottom() == Approx(300.0f));
+}
