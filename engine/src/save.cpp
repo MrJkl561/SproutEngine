@@ -9,7 +9,18 @@
 
 namespace sprout {
 
-SaveFile::SaveFile(std::string path) : path_(std::move(path)) { reload(); }
+namespace {
+// A relative path like "save.json" always means "in the game's folder" - even for a
+// SaveFile made before the Game (e.g. a global one), when the working folder may
+// still be somewhere else.
+std::string inGameFolder(std::string path) {
+    const std::filesystem::path p{path};
+    if (p.empty() || p.is_absolute()) return path;
+    return (std::filesystem::path{::GetApplicationDirectory()} / p).lexically_normal().string();
+}
+} // namespace
+
+SaveFile::SaveFile(std::string path) : path_(inGameFolder(std::move(path))) { reload(); }
 
 void SaveFile::reload() {
     std::ifstream file(path_);

@@ -30,6 +30,7 @@ using Json = nlohmann::json;
 class SaveFile {
 public:
     /// Opens a save file. If it doesn't exist yet, you start with an empty one.
+    /// A name like "save.json" means a file in your game's folder (next to the .exe).
     explicit SaveFile(std::string path = "save.json");
 
     /// Reads a value. If it's missing (or the wrong type), you get defaultValue.
@@ -68,6 +69,7 @@ public:
     /// The whole save as JSON, for advanced use. Call write() after changing it.
     Json& data() { return data_; }
     const Json& data() const { return data_; }
+    /// Where the file really is (the full path).
     const std::string& path() const { return path_; }
 
 private:

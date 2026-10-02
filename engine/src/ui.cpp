@@ -52,6 +52,9 @@ namespace {
 
 constexpr int kDefaultTextSize = 20;
 
+// The size picked with setUITextSize() (0 = none), kept when the theme changes.
+int gChosenTextSize = 0;
+
 // Which text box is being typed in (identified by where it is on screen).
 struct ActiveTextBox {
     bool active = false;
@@ -116,7 +119,10 @@ void label(const std::string& text, const Rect& area) { GuiLabel(toRaylib(area),
 
 void panel(const std::string& title, const Rect& area) { GuiPanel(toRaylib(area), title.c_str()); }
 
-void setUITextSize(int size) { GuiSetStyle(DEFAULT, TEXT_SIZE, std::max(6, size)); }
+void setUITextSize(int size) {
+    gChosenTextSize = std::max(6, size);
+    GuiSetStyle(DEFAULT, TEXT_SIZE, gChosenTextSize);
+}
 
 void setUITheme(UITheme theme) {
     switch (theme) {
@@ -129,6 +135,8 @@ void setUITheme(UITheme theme) {
     case UITheme::Terminal: GuiLoadStyleTerminal(); break;
     }
     if (theme == UITheme::Default) detail::initUI();
+    // Themes bring their own font size; keep the player's choice if they made one.
+    if (gChosenTextSize > 0) GuiSetStyle(DEFAULT, TEXT_SIZE, gChosenTextSize);
 }
 
 } // namespace sprout

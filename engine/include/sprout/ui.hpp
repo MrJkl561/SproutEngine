@@ -36,11 +36,13 @@ void label(const std::string& text, const Rect& area);
 /// A box with a title, to put other controls inside.
 void panel(const std::string& title, const Rect& area);
 
-/// How big the UI text is (20 by default).
+/// How big the UI text is (20 by default). Stays the same when you change theme.
 void setUITextSize(int size);
 
 enum class UITheme { Default, Dark, Candy, Cyber, Jungle, Sunny, Terminal };
-/// Changes how all the buttons, sliders, etc. look.
+/// Changes how all the buttons, sliders, etc. look. Each theme comes with its
+/// own pixel font and text size (unless you picked one with setUITextSize()).
+/// Note: the Candy theme's font draws '>' like '<', so avoid those on its buttons.
 void setUITheme(UITheme theme);
 
 } // namespace sprout

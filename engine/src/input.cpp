@@ -157,18 +157,31 @@ float gamepadAxis(GamepadAxis axis, int gamepad) {
 }
 
 // --- Actions -------------------------------------------------------------------
+namespace {
+// Binding the same key twice does nothing, so it's safe to call bindAction()
+// in a scene's start() even though restartScene() runs start() again.
+void addBinding(const std::string& action, const Binding& binding) {
+    std::vector<Binding>& bindings = actions()[action].bindings;
+    for (const Binding& existing : bindings) {
+        if (existing.kind == binding.kind && existing.code == binding.code && existing.gamepad == binding.gamepad &&
+            existing.direction == binding.direction)
+            return;
+    }
+    bindings.push_back(binding);
+}
+} // namespace
+
 void bindAction(const std::string& action, Key key) {
-    actions()[action].bindings.push_back({Binding::Kind::Key, static_cast<int>(key)});
+    addBinding(action, {Binding::Kind::Key, static_cast<int>(key)});
 }
 void bindAction(const std::string& action, MouseButton button) {
-    actions()[action].bindings.push_back({Binding::Kind::Mouse, static_cast<int>(button)});
+    addBinding(action, {Binding::Kind::Mouse, static_cast<int>(button)});
 }
 void bindAction(const std::string& action, GamepadButton button, int gamepad) {
-    actions()[action].bindings.push_back({Binding::Kind::GamepadButton, static_cast<int>(button), gamepad});
+    addBinding(action, {Binding::Kind::GamepadButton, static_cast<int>(button), gamepad});
 }
 void bindAction(const std::string& action, GamepadAxis axis, int direction, int gamepad) {
-    actions()[action].bindings.push_back(
-        {Binding::Kind::GamepadAxis, static_cast<int>(axis), gamepad, direction < 0 ? -1 : 1});
+    addBinding(action, {Binding::Kind::GamepadAxis, static_cast<int>(axis), gamepad, direction < 0 ? -1 : 1});
 }
 void clearAction(const std::string& action) {
     ActionState& state = actions()[action];

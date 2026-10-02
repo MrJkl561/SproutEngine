@@ -97,6 +97,7 @@ float gamepadAxis(GamepadAxis axis, int gamepad = 0);
 
 // --- Actions -----------------------------------------------------------------
 /// Adds a key to an action. An action can have as many keys/buttons as you like.
+/// Adding the same key to the same action twice does nothing.
 void bindAction(const std::string& action, Key key);
 void bindAction(const std::string& action, MouseButton button);
 void bindAction(const std::string& action, GamepadButton button, int gamepad = 0);
