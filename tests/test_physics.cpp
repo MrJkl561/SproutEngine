@@ -347,18 +347,9 @@ TEST_CASE("moveAndCollide: a box that starts inside a solid can move out of it")
     CHECK(box.bottom() == Approx(300.0f)); // and then landed on the floor
 }
 
-// ENGINE BUG (regression from commit c622476): engine/src/physics.cpp moveAxis() line 32,
-// `if (overlapsBy(before, solid)) continue;`, ignores EVERY solid the box already
-// overlapped - so a box that is a few pixels inside a floor falls straight through it.
-// Suggested fix (verified: makes all tests pass): only ignore an already-overlapped
-// solid when it is not ahead of the box in the direction of the move, e.g.
-//     if (overlapsBy(before, solid)) {
-//         const float self = horizontal ? before.center().x : before.center().y;
-//         const float other = horizontal ? solid.center().x : solid.center().y;
-//         if (!(amount > 0.0f ? self < other : self > other)) continue;
-//     }
-// (placed after the `if (!overlapsBy(box, solid)) continue;` check).
-TEST_CASE("moveAndCollide: a box that has sunk a little into the floor is put back on top, not dropped through" * doctest::may_fail()) {
+// A box already a little inside a solid is pushed back out on the axis where it sticks in
+// the least (here: up, out of the floor), instead of falling through.
+TEST_CASE("moveAndCollide: a box that has sunk a little into the floor is put back on top, not dropped through") {
     // E.g. an entity whose hitbox just got taller (standing up after crouching),
     // or one that was placed a few pixels too low.
     const std::vector<Rect> floor{{0, 300, 400, 20}};

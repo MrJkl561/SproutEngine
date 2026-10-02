@@ -26,6 +26,8 @@ TileMap TileMap::fromFile(const std::string& path, int tileSize) {
     std::string line;
     while (std::getline(file, line)) {
         if (!line.empty() && line.back() == '\r') line.pop_back(); // Windows line endings
+        // Some Windows editors put 3 invisible bytes (a "BOM") at the start of the file.
+        if (rows.empty() && line.rfind("\xEF\xBB\xBF", 0) == 0) line.erase(0, 3);
         rows.push_back(line);
     }
     return TileMap{tileSize, std::move(rows)};

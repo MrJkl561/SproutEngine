@@ -3,6 +3,7 @@
 // Every test works in its own fresh temporary folder, which is deleted afterwards.
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -178,16 +179,8 @@ TEST_CASE("a save file in a folder that doesn't exist can't be written, but does
     CHECK(captured.text().find("couldn't write") != std::string::npos);
 }
 
-// ENGINE BUG: engine/src/save.cpp saveJson() (lines 59 and 64) opens the file with
-// std::ofstream - which empties it - and only THEN calls data.dump(4). dump() throws
-// nlohmann::json::type_error (316) for strings that aren't valid UTF-8, so
-// SaveFile::set() throws AND the whole save file on disk is left empty (all progress lost).
-// saveJson() is documented to "return false if it failed", not to throw.
-// Suggested fix: build the text first, without throwing, e.g.
-//     const std::string text = data.dump(4, ' ', false, Json::error_handler_t::replace);
-// (invalid bytes become U+FFFD), and only then open the file and write `text`.
-// (Even safer: write to path + ".tmp" and rename it over the old file.)
-TEST_CASE("saving text that isn't valid UTF-8 doesn't throw or wipe the save file" * doctest::may_fail()) {
+// Bad text must never cost the player their save: no exception, and the old data stays.
+TEST_CASE("saving text that isn't valid UTF-8 doesn't throw or wipe the save file") {
     // e.g. a name typed in an old Windows code page: "Ren\xE9" is "René" in Latin-1.
     TempDir dir;
     const std::string path = dir.file("save.json");
@@ -198,6 +191,22 @@ TEST_CASE("saving text that isn't valid UTF-8 doesn't throw or wipe the save fil
     CHECK_NOTHROW(save.set("playerName", std::string("Ren\xE9")));
     CHECK(SaveFile{path}.get("highscore", 0) == 1200); // the old data is still in the file
     CHECK_NOTHROW(saveJson(dir.file("other.json"), Json{{"name", std::string("\xFF\xFE")}}));
+    CHECK(loadJson(dir.file("other.json")).is_object()); // still a readable JSON file
+}
+
+TEST_CASE("saving leaves no temporary files behind") {
+    TempDir dir;
+    const std::string path = dir.file("save.json");
+    SaveFile save{path};
+    save.set("a", 1);
+    save.set("b", "two");
+    save.remove("a");
+    CHECK(saveJson(dir.file("level.json"), Json{{"x", 1}}));
+    std::vector<std::string> files;
+    for (const auto& entry : std::filesystem::directory_iterator(dir.path()))
+        files.push_back(entry.path().filename().string());
+    std::sort(files.begin(), files.end());
+    CHECK(files == std::vector<std::string>{"level.json", "save.json"});
 }
 
 TEST_CASE("loadJson and saveJson") {
@@ -221,6 +230,11 @@ TEST_CASE("loadJson and saveJson") {
         const std::string path = dir.file("pretty.json");
         saveJson(path, Json{{"a", 1}});
         CHECK(sprout_test::readFile(path) == "{\n    \"a\": 1\n}\n");
+    }
+    SUBCASE("a file saved with a UTF-8 \"BOM\" (some Windows editors add one) loads fine") {
+        const std::string path = dir.file("bom.json");
+        sprout_test::writeFile(path, "\xEF\xBB\xBF{ \"a\": 1 }");
+        CHECK(loadJson(path) == Json{{"a", 1}});
     }
     SUBCASE("a missing file gives null and a warning") {
         CaptureStderr captured;

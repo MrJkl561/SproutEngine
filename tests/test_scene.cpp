@@ -900,8 +900,7 @@ TEST_CASE("moveAndSlide with addSolid(TileMap)") {
     }
 }
 
-// ENGINE BUG: same physics.cpp moveAxis() regression as described in test_physics.cpp.
-TEST_CASE("a player taller than a tile, spawned on its 'P' marker, stands on the floor" * doctest::may_fail()) {
+TEST_CASE("a player taller than a tile, spawned on its 'P' marker, stands on the floor") {
     // The usual way to place the player: at the middle of the 'P' tile. A hitbox
     // taller than one tile then starts a few pixels inside the floor below it.
     struct Level : TestScene {
@@ -927,8 +926,7 @@ TEST_CASE("a player taller than a tile, spawned on its 'P' marker, stands on the
     CHECK(player->bounds().bottom() == Approx(96.0f));
 }
 
-// ENGINE BUG: same physics.cpp moveAxis() regression as described in test_physics.cpp.
-TEST_CASE("an entity whose hitbox grows while standing stays on the floor" * doctest::may_fail()) {
+TEST_CASE("an entity whose hitbox grows while standing stays on the floor") {
     TestScene scene;
     scene.runStart();
     scene.addSolid(Rect{0, 300, 800, 20});
@@ -939,4 +937,54 @@ TEST_CASE("an entity whose hitbox grows while standing stays on the floor" * doc
     scene.runFrames(30);
     CHECK(walker.isOnFloor());
     CHECK(walker.bounds().bottom() == Approx(300.0f));
+}
+
+TEST_CASE("an entity spawned a little inside the ceiling falls out of it and lands") {
+    TestScene scene;
+    scene.runStart();
+    scene.addSolid(Rect{0, 0, 400, 32});   // ceiling
+    scene.addSolid(Rect{0, 200, 400, 32}); // floor
+    Walker& walker = scene.spawn<Walker>(Vec2{100, 40}, Vec2{20, 20}); // top at y = 30: 2 px inside the ceiling
+    scene.runFrames(60);
+    CHECK(walker.isOnFloor());
+    CHECK(walker.bounds().bottom() == Approx(200.0f));
+}
+
+TEST_CASE("which frame newly spawned entities first update in") {
+    TestScene scene;
+    scene.runStart();
+
+    SUBCASE("spawned between frames: updated in the next frame") {
+        Counter& counter = scene.spawn<Counter>();
+        scene.runUpdate(kFrame);
+        CHECK(counter.updates == 1);
+    }
+    SUBCASE("spawned by the scene's update(): updated in that same frame") {
+        Counter* counter = nullptr;
+        scene.onUpdate = [&](TestScene& s, float) {
+            if (!counter) counter = &s.spawn<Counter>();
+        };
+        scene.runUpdate(kFrame);
+        REQUIRE(counter != nullptr);
+        CHECK(counter->updates == 1);
+    }
+    SUBCASE("spawned by after(): updated in that same frame") {
+        Counter* counter = nullptr;
+        scene.after(0.0f, [&] { counter = &scene.spawn<Counter>(); });
+        scene.runUpdate(kFrame);
+        REQUIRE(counter != nullptr);
+        CHECK(counter->updates == 1);
+    }
+    SUBCASE("spawned by another entity's update(): updated from the next frame") {
+        Counter* counter = nullptr;
+        scene.spawn<Scripted>([&](Scripted& self, float) {
+            if (!counter) counter = &self.scene().spawn<Counter>();
+        });
+        scene.runUpdate(kFrame);
+        REQUIRE(counter != nullptr);
+        CHECK(counter->updates == 0);
+        CHECK(scene.findFirst<Counter>() == counter); // ...but it can already be found
+        scene.runUpdate(kFrame);
+        CHECK(counter->updates == 1);
+    }
 }

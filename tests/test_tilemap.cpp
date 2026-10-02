@@ -264,6 +264,15 @@ TEST_CASE("TileMap::fromFile loads a level from a text file") {
         CHECK(level.getTile(2, 0) == ' ');
         CHECK(level.getTile(1, 2) == '#');
     }
+    SUBCASE("a file saved with a UTF-8 \"BOM\" (some Windows editors add one) loads the same") {
+        const std::string path = dir.file("bom.txt");
+        sprout_test::writeFile(path, "\xEF\xBB\xBF###\r\n#P#\r\n###\r\n");
+        const TileMap level = TileMap::fromFile(path, 32);
+        CHECK(level.columns() == 3);
+        CHECK(level.rows() == 3);
+        CHECK(level.getTile(0, 0) == '#');
+        CHECK(level.getTile(1, 1) == 'P');
+    }
     SUBCASE("a missing file gives an empty map and a warning, not a crash") {
         CaptureStderr captured;
         const TileMap level = TileMap::fromFile(dir.file("does_not_exist.txt"), 32);
