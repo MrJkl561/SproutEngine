@@ -287,6 +287,11 @@ TEST_CASE("wrap wraps a value around like Pac-Man") {
     CHECK(wrap(0.0f, 0.0f, 800.0f) == Approx(0.0f));
     CHECK(wrap(1650.0f, 0.0f, 800.0f) == Approx(50.0f));
 
+    SUBCASE("a tiny negative value never comes out as exactly max") {
+        // -0.000001 + 800 rounds to 800.0 in a float, which is the same spot as 0.
+        CHECK(wrap(-1e-6f, 0.0f, 800.0f) < 800.0f);
+        CHECK(wrap(-1e-6f, 0.0f, 800.0f) >= 0.0f);
+    }
     SUBCASE("negative values come back in from the other side") {
         CHECK(wrap(-10.0f, 0.0f, 800.0f) == Approx(790.0f));
         CHECK(wrap(-810.0f, 0.0f, 800.0f) == Approx(790.0f));

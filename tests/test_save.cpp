@@ -3,7 +3,10 @@
 // Every test works in its own fresh temporary folder, which is deleted afterwards.
 #include <doctest/doctest.h>
 
+#include <raylib.h> // GetApplicationDirectory()
+
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -28,6 +31,49 @@ TEST_CASE("a SaveFile that doesn't exist yet starts empty") {
     CHECK_FALSE(save.has("highscore"));
     CHECK(save.get("highscore", 0) == 0);
     CHECK_FALSE(std::filesystem::exists(path)); // just opening it doesn't create the file
+}
+
+TEST_CASE("a relative path like \"save.json\" means the game's folder, not the current folder") {
+    // The game's folder is where the program (here: the test program) is.
+    const std::filesystem::path gameFolder{::GetApplicationDirectory()};
+    const std::string name =
+        "sprout_test_relative_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".json";
+
+    // Run from some other folder, like a game started from a shortcut or a terminal.
+    // (The guard puts the working folder back and deletes the file, even if a check throws.)
+    TempDir elsewhere;
+    struct Restore {
+        std::filesystem::path workingFolder = std::filesystem::current_path();
+        std::filesystem::path fileToDelete;
+        ~Restore() {
+            std::error_code ignored;
+            std::filesystem::current_path(workingFolder, ignored);
+            if (!fileToDelete.empty()) std::filesystem::remove(fileToDelete, ignored);
+        }
+    } restore;
+    std::filesystem::current_path(elsewhere.path());
+
+    SaveFile save{name};
+    const std::filesystem::path where{save.path()};
+    restore.fileToDelete = where;
+    CHECK(where.is_absolute());
+    CHECK(where.filename().string() == name);
+    CHECK(std::filesystem::equivalent(where.parent_path(), gameFolder));
+#ifdef __linux__
+    // Double-check against Linux's own idea of where the program is.
+    CHECK(std::filesystem::equivalent(where.parent_path(), std::filesystem::read_symlink("/proc/self/exe").parent_path()));
+#endif
+
+    save.set("level", 3);
+    CHECK(std::filesystem::exists(where));
+    CHECK_FALSE(std::filesystem::exists(elsewhere.path() / name)); // not in the working folder
+    CHECK(SaveFile{name}.get("level", 0) == 3);                    // the same name finds it again
+
+    SUBCASE("absolute paths are used exactly as given") {
+        TempDir dir;
+        const std::string absolute = dir.file("save.json");
+        CHECK(SaveFile{absolute}.path() == absolute);
+    }
 }
 
 TEST_CASE("set() writes the file straight away") {
@@ -78,6 +124,19 @@ TEST_CASE("get() gives the default for a missing key or the wrong type") {
     SUBCASE("numbers convert between int and float") {
         CHECK(save.get("score", 0.0f) == doctest::Approx(10.0f));
     }
+}
+
+TEST_CASE("true/false and numbers are different types for get()") {
+    TempDir dir;
+    SaveFile save{dir.file("save.json")};
+    save.set("alive", true);
+    save.set("lives", 3);
+    CHECK(save.get("alive", 7) == 7);         // a bool is not a number...
+    CHECK(save.get("alive", 1.5f) == 1.5f);
+    CHECK(save.get("lives", false) == false); // ...and a number is not a bool
+    CHECK(save.get("alive", false) == true);
+    CHECK(save.get("lives", 0) == 3);
+    CHECK(save.get("lives", 0.0f) == 3.0f);   // ints and floats mix fine
 }
 
 TEST_CASE("get(key, \"text\") gives back a std::string") {

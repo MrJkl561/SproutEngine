@@ -28,6 +28,21 @@ TEST_CASE("binding and clearing actions works before the window exists") {
     CHECK_NOTHROW(clearAction("an action that never existed"));
 }
 
+TEST_CASE("binding the same key again and again is harmless") {
+    // e.g. bindAction() in a scene's start(), and restartScene() runs start() again.
+    for (int i = 0; i < 100; ++i) {
+        bindAction("dash", Key::LeftShift);
+        bindAction("dash", GamepadButton::B);
+        bindAction("dash", GamepadAxis::LeftTrigger, +1);
+    }
+    CHECK_FALSE(isActionDown("dash"));
+    CHECK_FALSE(isActionPressed("dash"));
+    CHECK_NOTHROW(clearAction("dash"));
+    CHECK_FALSE(isActionDown("dash"));
+    CHECK_NOTHROW(bindAction("dash", Key::LeftShift)); // can be bound again after clearing
+    CHECK_FALSE(isActionDown("dash"));
+}
+
 TEST_CASE("the built-in actions exist and are not pressed without a window") {
     CaptureStderr captured;
     for (const char* action : {"left", "right", "up", "down", "jump", "pause"}) {

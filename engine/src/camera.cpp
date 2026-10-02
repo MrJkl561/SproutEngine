@@ -26,9 +26,15 @@ void Camera::follow(Vec2 target, float smoothness) {
 }
 
 void Camera::shake(float strength, float duration) {
-    shakeStrength_ = std::max(shakeStrength_, strength);
+    // A new shake only replaces the current one if it is at least as strong as the
+    // current one is RIGHT NOW (shakes fade out). Otherwise a short strong shake on top
+    // of a long weak one would keep the strong strength for the long time.
+    const float currentStrength =
+        shakeTimeLeft_ > 0.0f ? shakeStrength_ * std::clamp(shakeTimeLeft_ / shakeDuration_, 0.0f, 1.0f) : 0.0f;
+    if (strength < currentStrength) return;
+    shakeStrength_ = strength;
     shakeDuration_ = std::max(duration, 0.0001f);
-    shakeTimeLeft_ = std::max(shakeTimeLeft_, duration);
+    shakeTimeLeft_ = duration;
 }
 
 void Camera::setLimits(const Rect& area) {
@@ -52,6 +58,7 @@ void Camera::applyLimits() {
 
 void Camera::updateCamera(float dt) {
     applyLimits();
+    if (dt <= 0.0f) return; // paused: keep the view still (and the shake waits too)
     if (shakeTimeLeft_ > 0.0f) {
         shakeTimeLeft_ -= dt;
         const float fade = std::clamp(shakeTimeLeft_ / shakeDuration_, 0.0f, 1.0f);

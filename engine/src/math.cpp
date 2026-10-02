@@ -49,6 +49,7 @@ float wrap(float value, float min, float max) {
     if (range <= 0.0f) return min;
     float result = std::fmod(value - min, range);
     if (result < 0.0f) result += range;
+    if (result >= range) result = 0.0f; // rounding can land exactly on max: that's min again
     return result + min;
 }
 

@@ -46,6 +46,7 @@ add_executable(sprout_tests
     test_save.cpp
     test_input.cpp
     test_raylib_interop.cpp
+    test_camera.cpp
 )
 
 target_link_libraries(sprout_tests PRIVATE sprout::sprout doctest::doctest)

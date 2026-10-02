@@ -19,6 +19,7 @@
 //  https://github.com/nlohmann/json
 // =============================================================================
 #include <string>
+#include <type_traits>
 
 #include <nlohmann/json.hpp>
 
@@ -37,8 +38,15 @@ public:
     template <class T>
     T get(const std::string& key, const T& defaultValue) const {
         if (!data_.is_object() || !data_.contains(key)) return defaultValue;
+        const Json& value = data_.at(key);
+        // JSON would happily turn true into 1 (and back); we treat that as the wrong type.
+        if constexpr (std::is_same_v<T, bool>) {
+            if (!value.is_boolean()) return defaultValue;
+        } else if constexpr (std::is_arithmetic_v<T>) {
+            if (!value.is_number()) return defaultValue;
+        }
         try {
-            return data_.at(key).get<T>();
+            return value.get<T>();
         } catch (const nlohmann::json::exception&) {
             return defaultValue;
         }
