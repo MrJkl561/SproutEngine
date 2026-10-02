@@ -63,9 +63,11 @@ public:
     /// Adds an animation from a list of frames, e.g. {0, 1, 2, 1}.
     void addAnimation(const std::string& name, std::vector<int> frames, float framesPerSecond,
                       bool loop = true);
-    /// Starts an animation. If it is already playing, it keeps going (doesn't restart).
+    /// Starts an animation. If it is already the current animation it keeps going
+    /// (doesn't restart), so it's fine to call play() every frame. A play-once
+    /// animation that has finished stays on its last frame.
     void play(const std::string& name);
-    /// Starts an animation from its first frame, even if it was already playing.
+    /// Starts an animation from its first frame, even if it was already playing or finished.
     void restart(const std::string& name);
     void stop();
     bool isPlaying() const { return playing_; }

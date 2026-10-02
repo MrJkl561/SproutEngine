@@ -44,12 +44,20 @@ void Sprite::addAnimation(const std::string& name, std::vector<int> frames, floa
         return;
     }
     animations_[name] = Animation{std::move(frames), std::max(0.01f, framesPerSecond), loop};
+    // Replaced the animation that is playing? Start it from its first frame, so we
+    // never point past the end of a shorter frame list.
+    if (name == current_) {
+        animIndex_ = 0;
+        animTime_ = 0.0f;
+        frame_ = std::clamp(animations_[name].frames.front(), 0, frameCount() - 1);
+    }
 }
 
 void Sprite::play(const std::string& name) {
-    if (current_ == name && playing_) return;
-    if (current_ == name && !isAnimationFinished()) {
-        playing_ = true;
+    if (current_ == name) {
+        // Already the current animation: keep going (or resume after stop()). A finished
+        // play-once animation stays on its last frame - use restart() to replay it.
+        playing_ = !isAnimationFinished();
         return;
     }
     restart(name);
@@ -83,6 +91,7 @@ void Sprite::update(float dt) {
     if (it == animations_.end()) return;
     const Animation& anim = it->second;
     const int frameCountInAnim = static_cast<int>(anim.frames.size());
+    animIndex_ = std::clamp(animIndex_, 0, frameCountInAnim - 1); // extra safety
 
     animTime_ += dt;
     const float frameTime = 1.0f / anim.fps;

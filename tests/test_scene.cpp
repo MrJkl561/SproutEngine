@@ -886,14 +886,14 @@ TEST_CASE("moveAndSlide with addSolid(TileMap)") {
         CHECK(walker.bounds().right() == Approx(27 * 32.0f));
     }
     SUBCASE("landing on the raised block") {
-        Walker& walker = scene.spawn<Walker>(Vec2{28 * 32 + 16, 40}, Vec2{20, 20});
+        Walker& walker = scene.spawn<Walker>(Vec2{28 * 32 + 16, 60}, Vec2{20, 20});
         scene.runFrames(120);
         CHECK(walker.isOnFloor());
         CHECK(walker.bounds().bottom() == Approx(128.0f));
     }
     SUBCASE("rects and tile maps together") {
         scene.addSolid(Rect{100, 100, 50, 10}); // a floating platform
-        Walker& walker = scene.spawn<Walker>(Vec2{125, 40}, Vec2{20, 20});
+        Walker& walker = scene.spawn<Walker>(Vec2{125, 60}, Vec2{20, 20});
         scene.runFrames(120);
         CHECK(walker.isOnFloor());
         CHECK(walker.bounds().bottom() == Approx(100.0f));
