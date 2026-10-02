@@ -449,7 +449,8 @@ Inside a struct's functions, `this` means "the object I'm inside of".
   `after`, `camera` and `particles` directly.
 - **Inside an entity**, you're the entity. To reach the scene it lives in, use
   `scene()`: `scene().spawn<Bullet>(...)`, `scene().findFirst<Player>()`,
-  `scene().particles.burst(...)`.
+  `scene().particles.burst(...)`. Entities do have their **own** `after` and
+  `every`, though (see below).
 
 **Lambdas** (the `[this] { ... }` bits you give to `after` and `every`) need to
 be told which outside things they're allowed to use. `[this]` lets the code
@@ -463,30 +464,63 @@ every(2.0f, [this] { spawn<Enemy>(); });
 Without `[this]`, you'd get the error *"'this' was not captured for this lambda
 function"*. Lambdas are explained gently in [Timers](11-timers.md).
 
-> **Careful with `[this]` inside entities.** `scene().after(2.0f, [this] { ... })`
-> in an entity is only safe if that entity is still alive 2 seconds later. If it
-> got destroyed in the meantime, the lambda uses a dead entity. Inside entities,
-> use a `Timer` member instead; it disappears together with the entity:
->
-> ```cpp
-> struct Spark : Entity {
->     Timer life{0.5f}; // starts counting as soon as the spark is made
->
->     void update(float dt) override {
->         if (life.isDone()) destroy();
->     }
-> };
-> ```
+### Timers that belong to an entity
+
+Entities have their own `after(seconds, ...)` and `every(seconds, ...)`. They
+work just like the scene's, with one big bonus: they **stop by themselves when
+the entity is destroyed**. So using `[this]` inside them is always safe, even if
+the entity is blown up before the time is up.
+
+```cpp
+struct Bomb : Entity {
+    void start() override {
+        after(2.0f, [this] {                       // BOOM, 2 seconds after being spawned
+            scene().particles.burst(position, Color::Orange, 40, 250);
+            scene().camera.shake(10, 0.3f);
+            destroy();
+        });
+    }
+};
+
+struct Turret : Entity {
+    void start() override {
+        every(1.0f, [this] { scene().spawn<Bullet>(position); }); // until the turret is destroyed
+    }
+};
+```
+
+Call them in `start()` or `update()`, not in the constructor (the entity
+isn't in a scene yet there). They pause along with the scene. Like the scene's
+versions they give back an id, and `scene().cancelTimer(id)` stops one early.
+
+Inside an entity, always use the entity's own `after`/`every` rather than
+`scene().after(...)`: a scene timer doesn't know about the entity, so if the
+entity is destroyed first, `[this]` would point at a dead entity. A `Timer`
+member (see [Timers](11-timers.md#timer-has-enough-time-passed)) is another
+safe choice:
+
+```cpp
+struct Spark : Entity {
+    Timer life{0.5f}; // starts counting as soon as the spark is made
+
+    void update(float dt) override {
+        if (life.isDone()) destroy();
+    }
+};
+```
 
 ---
 
 ## Going further: an entity that changes its scene's variables
 
 `scene()` gives you a plain `Scene&`, which doesn't know about *your* scene's
-variables like `score`. The simplest solution is to do that work **in the
-scene**, like the bullets-and-enemies loop above. But if you really want an
-entity to change its scene's score, you can tell C++ "this scene is a
-PlayScene", using the [split-function trick](04-scenes.md#when-two-scenes-need-each-other):
+variables like `score`. One solution is to do that work **in the scene**, like
+the bullets-and-enemies loop above. The other is `sceneAs<YourScene>()`, which
+gives you the scene as **your** scene type, with all its variables.
+
+Because the coin needs `PlayScene` and `PlayScene` spawns coins, they need each
+other, so we use the [split-function trick](04-scenes.md#when-two-scenes-need-each-other)
+again:
 
 ```cpp
 struct PlayScene; // "there will be a scene called PlayScene" (written further down)
@@ -502,15 +536,17 @@ struct PlayScene : Scene {
 
 void Coin::update(float dt) {
     if (Player* player = scene().findFirst<Player>(); player && overlaps(*player)) {
-        PlayScene& play = static_cast<PlayScene&>(scene()); // "my scene is a PlayScene"
+        PlayScene& play = sceneAs<PlayScene>(); // my scene, as a PlayScene
         play.score += 1;
         destroy();
     }
 }
 ```
 
-`static_cast<PlayScene&>(...)` means "trust me, this is a PlayScene". It's only
-correct if the coin really lives in a `PlayScene`, so only use it there.
+For a quick one-off, `sceneAs<PlayScene>().score += 1;` works too. If the
+coin is ever spawned in a *different* kind of scene, `sceneAs` stops the game
+with a clear message ("sceneAs<...>() asked for the wrong kind of scene")
+instead of doing something strange.
 
 ---
 
@@ -523,6 +559,8 @@ correct if the coin really lives in a `PlayScene`, so only use it there.
 | `start()`, `update(dt)`, `draw()` | Functions you can fill in |
 | `spawn<T>(values...)` | Makes an entity (in a scene). Gives back `T&`. |
 | `scene()` | The scene this entity is in (not in the constructor) |
+| `sceneAs<MyScene>()` | The scene as your own scene type, so you can use its variables |
+| `after(seconds, [this] { ... })`, `every(seconds, [this] { ... })` | Entity timers: stop by themselves when the entity is destroyed |
 | `destroy()`, `isDestroyed()` | Removing entities |
 | `findAll<T>()`, `findFirst<T>()`, `findClosest<T>(point)`, `count<T>()`, `destroyAll<T>()` | Finding entities (in a scene) |
 | `bounds()`, `overlaps(...)`, `findOverlapping<T>()`, `findAllOverlapping<T>()` | Collisions |

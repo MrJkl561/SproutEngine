@@ -105,14 +105,39 @@ void update(float dt) override {
 scene ends (`changeScene`, `restartScene`), all its timers end with it, so you
 never have to clean them up yourself.
 
+### `after` and `every` in entities
+
+Entities have their own `after` and `every` too. They work exactly the same,
+but they belong to the entity: when the entity is destroyed, its timers stop by
+themselves. That makes `[this]` inside them always safe.
+
+```cpp
+struct Bomb : Entity {
+    void start() override {
+        after(2.0f, [this] {   // explode 2 seconds after being spawned
+            scene().particles.burst(position, Color::Orange, 40, 250);
+            destroy();
+        });
+    }
+};
+
+struct Ghost : Entity {
+    void start() override {
+        every(0.1f, [this] { visible = !visible; }); // flicker until destroyed
+    }
+};
+```
+
+Use them in the entity's `start()` or `update()` (not its constructor). Inside an
+entity, always pick its own `after`/`every` over `scene().after(...)`: the
+scene's timers don't know about the entity, and would keep going after it's gone.
+To stop an entity timer early, keep its id and call `scene().cancelTimer(id)`.
+
 ### Good to know
 
 - `after` and `every` run right after your scene's `update()`, before the
   entities update. So an entity you spawn in them starts moving straight away.
-- Inside an **entity**, use `scene().after(...)`. But be careful with `[this]`
-  there: if the entity is destroyed before the time is up, the lambda would use a
-  dead entity. Inside entities, a `Timer` or `Cooldown` member is safer (see
-  below), because it disappears together with the entity.
+- They stop counting while the scene is [paused](04-scenes.md#pausing).
 
 ---
 
@@ -249,10 +274,11 @@ void draw() override {
 
 ## Which one should I use?
 
-- Something should **happen** at a certain time, once or repeatedly, and it
-  belongs to the scene? Use **`after`** or **`every`**.
-- You want to **ask** "is it time yet?" in your `update()`, or the waiting
-  belongs to an **entity**? Use a **`Timer`**.
+- Something should **happen** at a certain time, once or repeatedly? Use
+  **`after`** or **`every`**: the scene's for scene things, the entity's own for
+  entity things.
+- You want to **ask** "is it time yet?" in your `update()`, or show progress?
+  Use a **`Timer`**.
 - The player wants to do something and you need to say "not yet"? Use a
   **`Cooldown`**.
 
