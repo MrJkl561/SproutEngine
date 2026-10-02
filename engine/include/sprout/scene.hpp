@@ -144,6 +144,16 @@ private:
 //  Template code (has to live in the header)
 // =============================================================================
 
+namespace detail {
+/// The entity as a T*, or nullptr if it isn't a T. (dynamic_cast, minus a
+/// compiler warning when T is Entity itself.)
+template <class T>
+T* entityAs(Entity& entity) {
+    if constexpr (std::is_same_v<T, Entity>) return &entity;
+    else return dynamic_cast<T*>(&entity);
+}
+} // namespace detail
+
 template <class Fn>
 void Scene::forEachLiving(Fn&& fn) {
     for (auto& entity : entities_)
@@ -166,7 +176,7 @@ template <class T>
 std::vector<T*> Scene::findAll() {
     std::vector<T*> result;
     forEachLiving([&](Entity& entity) {
-        if (auto* found = dynamic_cast<T*>(&entity)) result.push_back(found);
+        if (T* found = detail::entityAs<T>(entity)) result.push_back(found);
     });
     return result;
 }
@@ -175,7 +185,7 @@ template <class T>
 T* Scene::findFirst() {
     T* result = nullptr;
     forEachLiving([&](Entity& entity) {
-        if (!result) result = dynamic_cast<T*>(&entity);
+        if (!result) result = detail::entityAs<T>(entity);
     });
     return result;
 }
@@ -185,7 +195,7 @@ T* Scene::findClosest(Vec2 point) {
     T* result = nullptr;
     float best = std::numeric_limits<float>::max();
     forEachLiving([&](Entity& entity) {
-        if (auto* found = dynamic_cast<T*>(&entity)) {
+        if (T* found = detail::entityAs<T>(entity)) {
             const float distance = (entity.position - point).lengthSquared();
             if (distance < best) {
                 best = distance;
@@ -200,7 +210,7 @@ template <class T>
 int Scene::count() {
     int result = 0;
     forEachLiving([&](Entity& entity) {
-        if (dynamic_cast<T*>(&entity)) ++result;
+        if (detail::entityAs<T>(entity)) ++result;
     });
     return result;
 }
@@ -208,7 +218,7 @@ int Scene::count() {
 template <class T>
 void Scene::destroyAll() {
     forEachLiving([&](Entity& entity) {
-        if (dynamic_cast<T*>(&entity)) entity.destroy();
+        if (detail::entityAs<T>(entity)) entity.destroy();
     });
 }
 

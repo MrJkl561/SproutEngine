@@ -97,11 +97,13 @@ void Scene::runStart() {
 }
 
 void Scene::runUpdate(float dt) {
+    mergeSpawned(); // entities spawned since the last frame join in now
     update(dt);
 
     if (!paused) {
         updateTimers(dt);
-        // Index loop: entities may spawn more entities while updating (they wait in spawned_).
+        mergeSpawned(); // ...and so do ones spawned by update() or a timer, so they update this frame too
+        // Entities spawned while the entities update wait in spawned_ until the next frame.
         for (std::size_t i = 0; i < entities_.size(); ++i) {
             Entity& entity = *entities_[i];
             if (!entity.isDestroyed()) entity.update(dt);

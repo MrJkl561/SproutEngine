@@ -22,10 +22,14 @@ bool overlapsBy(const Rect& a, const Rect& b) {
 // Moves along ONE axis and pushes the box back out of anything it ran into.
 void moveAxis(Rect& box, float amount, bool horizontal, const std::vector<Rect>& solids, MoveResult& result) {
     if (amount == 0.0f) return;
+    const Rect before = box;
     if (horizontal) box.x += amount;
     else box.y += amount;
 
     for (const Rect& solid : solids) {
+        // Already inside this solid before moving (e.g. spawned there)? Let the box
+        // move out of it, instead of pushing it out the far side.
+        if (overlapsBy(before, solid)) continue;
         if (!overlapsBy(box, solid)) continue;
         if (horizontal) {
             if (amount > 0.0f) { box.x = solid.left() - box.width; result.hitRight = true; }
