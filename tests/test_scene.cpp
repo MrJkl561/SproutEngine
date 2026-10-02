@@ -278,16 +278,19 @@ TEST_CASE("destroy() removes the entity at the end of the frame") {
 TEST_CASE("an entity destroyed earlier in the frame doesn't update any more") {
     TestScene scene;
     scene.runStart();
-    Counter* victim = nullptr;
+    // The victim is deleted at the end of the frame, so count its updates outside of it.
+    int victimUpdates = 0;
+    Scripted* victim = nullptr;
     scene.spawn<Scripted>([&](Scripted&, float) {
         if (victim) victim->destroy();
+        victim = nullptr; // don't touch it again after this frame
     });
-    victim = &scene.spawn<Counter>();
+    victim = &scene.spawn<Scripted>([&](Scripted&, float) { ++victimUpdates; });
     scene.runUpdate(kFrame);
-    CHECK(victim->updates == 0); // destroyed by the entity before it, so it was skipped
-    CHECK(scene.count<Counter>() == 0);
-    victim = nullptr; // it's deleted now
+    CHECK(victimUpdates == 0); // destroyed by the entity before it, so it was skipped
+    CHECK(scene.count() == 1);
     scene.runUpdate(kFrame);
+    CHECK(victimUpdates == 0);
 }
 
 TEST_CASE("an entity can destroy itself in update() or start()") {
