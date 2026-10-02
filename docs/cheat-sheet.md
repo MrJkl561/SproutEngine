@@ -37,11 +37,11 @@ how to use it.
 | `screenWidth()`, `screenHeight()` | Window size in pixels (`int`) |
 | `screenSize()`, `screenCenter()` | Window size, and its middle (`Vec2`) |
 | `setWindowTitle(title)` | Changes the window title |
-| `setResizable(bool)` | Lets the player resize the window |
+| `setResizable(bool)` | Lets the player resize the window (an unmoved camera keeps looking at the new middle) |
 | `setFullscreen(bool)`, `isFullscreen()`, `toggleFullscreen()` | Fullscreen (borderless) |
 | `showCursor()`, `hideCursor()` | The mouse pointer |
-| `setExitKey(Key)` | Which key quits (`Key::Escape` by default, `Key::None` = none) |
-| `takeScreenshot(path = "screenshot.png")` | Saves a picture of the screen (F12 also works) |
+| `setExitKey(Key)` | Which key quits (`Key::Escape` by default, `Key::None` = none; never while typing in a `textBox`) |
+| `takeScreenshot(path = "screenshot.png")` | Saves a picture of the screen at the end of this frame (works from anywhere; F12 also works) |
 | `deltaTime()` | Seconds since the last frame (same as `dt`) |
 | `timeSinceStart()` | Seconds since the game started |
 | `fps()` | Frames per second right now |
@@ -74,7 +74,7 @@ struct MyScene : Scene {
 | `findClosest<T>(point)` | The `T` closest to a point, or `nullptr` |
 | `count<T>()` | How many `T`s there are |
 | `destroyAll<T>()` | Destroys every `T` (every entity without `<T>`) |
-| `after(seconds, [this] { ... })` | Runs code once, later. Gives back an id. |
+| `after(seconds, [this] { ... })` | Runs code once, later. Gives back an id. (In entities, use the entity's own `after`.) |
 | `every(seconds, [this] { ... })` | Runs code again and again. Gives back an id. |
 | `cancelTimer(id)`, `cancelAllTimers()` | Stops `after`/`every` timers |
 | `addSolid(rect)`, `addSolid(map)` | Makes a rectangle or a tile map's solid tiles block `moveAndSlide` |
@@ -108,8 +108,10 @@ struct Coin : Entity {
 | `findAllOverlapping<T>()` | Every `T` touching me |
 | `moveAndSlide(dt)` | Moves by `velocity * dt`, stopping at solids. Gives back a `MoveResult`. |
 | `isOnFloor()`, `isOnWall()`, `isOnCeiling()` | What the last `moveAndSlide` touched |
+| `after(seconds, [this] { ... })`, `every(seconds, [this] { ... })` | Entity timers: stop by themselves when the entity is destroyed. Give back an id for `scene().cancelTimer(id)`. |
 | `destroy()`, `isDestroyed()` | Remove at the end of the frame / was it? |
 | `scene()` | The scene I'm in (not in the constructor) |
+| `sceneAs<MyScene>()` | The scene as your own scene type (clear error if it's another kind) |
 
 ## Input (`input.hpp`)
 
@@ -126,11 +128,11 @@ struct Coin : Entity {
 | `mouseWheel()` | Wheel movement this frame (up = positive) |
 | `isGamepadConnected(pad = 0)` | Is that gamepad plugged in? |
 | `isGamepadDown(GamepadButton::A, pad = 0)` | Gamepad button held (`Pressed`, `Released` too) |
-| `gamepadAxis(GamepadAxis::LeftX, pad = 0)` | Stick -1 to 1 (small wobbles ignored), triggers up to 1 |
+| `gamepadAxis(GamepadAxis::LeftX, pad = 0)` | Sticks -1 to 1 (small wobbles ignored), triggers 0 (let go) to 1 (pressed) |
 | `bindAction("name", Key::X)` | Adds a key to an action (duplicates are ignored) |
 | `bindAction("name", MouseButton::Left)` | ...a mouse button |
 | `bindAction("name", GamepadButton::A, pad = 0)` | ...a gamepad button |
-| `bindAction("name", GamepadAxis::LeftX, -1 or 1, pad = 0)` | ...a stick direction |
+| `bindAction("name", GamepadAxis::LeftX, -1 or 1, pad = 0)` | ...a stick direction, or a trigger with `+1` (down past halfway) |
 | `clearAction("name")` | Removes every key/button from an action |
 | `isActionDown("name")`, `isActionPressed(...)`, `isActionReleased(...)` | Like the key functions |
 | `getAxis("left", "right")` | -1, 0 or +1 |
@@ -266,7 +268,7 @@ W) and `"down"` (Down, S), which also work with the D-pad and left stick, plus
 |---|---|
 | `playSound(path, volume = 1, pitch = 1)` | Sound effect (can overlap itself) |
 | `stopSound(path)`, `isSoundPlaying(path)`, `preloadSound(path)` | Control sound effects |
-| `playMusic(path, volume = 1, loop = true)` | Background music (one song at a time; same song = keeps playing) |
+| `playMusic(path, volume = 1, loop = true)` | Background music (one song at a time; the song that's already playing just keeps playing) |
 | `stopMusic()`, `pauseMusic()`, `resumeMusic()`, `isMusicPlaying()` | Control music |
 | `setMusicVolume(volume)` | Volume of the current song |
 | `setMasterVolume(volume)`, `masterVolume()` | Volume of everything (0 to 1) |
@@ -296,7 +298,7 @@ Call these in `drawUI()`. `area` is a `Rect` `{x, y, width, height}`.
 | `button(text, area)` | `true` on the frame it's clicked |
 | `checkbox(text, area, boolVariable)` | Toggles the bool; `true` if it changed (text on the right) |
 | `slider(text, area, floatVariable, min, max)` | Changes the float; `true` if it changed (text on the left) |
-| `textBox(area, stringVariable, maxLength = 32)` | Typing box; `true` if the text changed |
+| `textBox(area, stringVariable, maxLength = 32)` | Typing box; `true` if the text changed (Esc doesn't quit while typing) |
 | `progressBar(area, value, max = 1)` | Bar `value / max` full |
 | `label(text, area)` | Text in the UI style |
 | `panel(title, area)` | Box with a title bar |

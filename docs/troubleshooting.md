@@ -123,8 +123,8 @@ The game is still running. Close its window, then build again.
 - **"Open a local folder" mode:** choose your game in the **Select Startup Item**
   drop-down next to the green ▶ button.
 - **`.sln` mode:** right-click your game in the **Solution Explorer** and choose
-  **Set as Startup Project**. (The solution starts the first example,
-  `01_hello_world`, unless you change it.)
+  **Set as Startup Project**. (The solution starts `my_first_game` unless you
+  change it.)
 
 ---
 
@@ -274,7 +274,11 @@ Look at the terminal. If it says `[Sprout] Your game stopped because of an
 error:`, the next line explains what went wrong. For example:
 
 - *"Entity::scene() was used before the entity was added to a scene"*: you used
-  `scene()` in an entity's **constructor**. Move that code into `start()`.
+  `scene()` (or `sceneAs`, `after` or `every`) in an entity's **constructor**.
+  Move that code into `start()`.
+- *"sceneAs<...>() asked for the wrong kind of scene"*: the entity lives in a
+  different scene than the one between the `< >` brackets. Check the name, and
+  which scene spawns that entity.
 - An error mentioning JSON (`type_error`, `parse_error`): you read a value that
   isn't there or has the wrong type. See [Saving](13-saving.md#reading-json-files).
 
@@ -288,6 +292,9 @@ The two usual causes:
 2. **Using an entity after it was destroyed.** Don't keep entity pointers in
    member variables across frames; look entities up again each frame. See
    [Don't hold on to entity pointers](05-entities.md#dont-hold-on-to-entity-pointers).
+   Inside an entity, use its **own** `after`/`every` instead of
+   `scene().after(..., [this] { ... })`, because the entity's own timers stop
+   when it's destroyed (see [Timers that belong to an entity](05-entities.md#timers-that-belong-to-an-entity)).
 
 A **debugger** helps a lot here: run the game with the debugger (F5 in Visual
 Studio, Ctrl + F5 in VS Code with CMake Tools) and it stops on the exact line
@@ -316,7 +323,8 @@ was found; the game still runs, silently.
 
 ### Esc closes my game
 
-That's the default. Turn it off (or pick another key) after creating the Game:
+That's the default (except while the player is typing in a text box). Turn it
+off (or pick another key) after creating the Game:
 
 ```cpp
 setExitKey(Key::None);
