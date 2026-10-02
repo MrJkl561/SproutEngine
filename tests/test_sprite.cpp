@@ -248,13 +248,8 @@ TEST_CASE("looping and non-looping animations") {
     }
 }
 
-// ENGINE BUG: engine/src/sprite.cpp Sprite::play() (line ~56) restarts the current
-// animation when it is a finished non-looping one. So the usual "call play() every
-// frame" pattern makes a play-once animation (the header's own "jump" example:
-// addAnimation("jump", 4, 7, 12, false) "play once, don't loop") loop forever.
-// Suggested fix: in play(), if current_ == name, only resume (playing_ = true when it
-// isn't finished) and never restart - restart() exists for replaying on purpose.
-TEST_CASE("calling play() every frame doesn't replay a finished non-looping animation" * doctest::may_fail()) {
+// The usual "call play() every frame" pattern must keep a play-once animation on its last frame.
+TEST_CASE("calling play() every frame doesn't replay a finished non-looping animation") {
     Sprite sprite = makeSheet();
     sprite.addAnimation("jump", 4, 7, kFps, false);
     std::vector<int> seen;
@@ -265,6 +260,14 @@ TEST_CASE("calling play() every frame doesn't replay a finished non-looping anim
     }
     CHECK(seen == std::vector<int>{5, 6, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7});
     CHECK(sprite.isAnimationFinished());
+    CHECK_FALSE(sprite.isPlaying());
+
+    SUBCASE("restart() is how you replay it on purpose") {
+        sprite.restart("jump");
+        CHECK(sprite.frame() == 4);
+        CHECK(sprite.isPlaying());
+        CHECK_FALSE(sprite.isAnimationFinished());
+    }
 }
 
 TEST_CASE("setFrame stops the animation") {
@@ -315,13 +318,8 @@ TEST_CASE("animation frames outside the sprite sheet are clamped") {
     CHECK(sprite.frame() <= 7);
 }
 
-// ENGINE BUG: engine/src/sprite.cpp Sprite::update() (line ~101) reads
-// anim.frames[animIndex_] without checking animIndex_ is still inside the list.
-// If addAnimation() replaces the animation that is playing with a SHORTER one,
-// this reads past the end of the vector (AddressSanitizer: heap-buffer-overflow).
-// Suggested fix: in addAnimation(), if name == current_, reset animIndex_/animTime_
-// (or clamp animIndex_ in update() before indexing).
-TEST_CASE("redefining the playing animation with fewer frames stays inside the new frames" * doctest::may_fail()) {
+// Replacing the animation that is playing starts it again from its (new) first frame.
+TEST_CASE("redefining the playing animation with fewer frames stays inside the new frames") {
     Sprite sprite = makeSheet();
     sprite.addAnimation("walk", 0, 7, kFps);
     sprite.play("walk");
@@ -329,6 +327,12 @@ TEST_CASE("redefining the playing animation with fewer frames stays inside the n
     REQUIRE(sprite.frame() == 6);
 
     sprite.addAnimation("walk", {0, 1}, kFps); // now only 2 frames
+    CHECK(sprite.frame() == 0);
     sprite.update(kFrameTime / 10);            // not enough time to move on a frame
-    CHECK((sprite.frame() == 0 || sprite.frame() == 1));
+    CHECK(sprite.frame() == 0);
+    sprite.update(kFrameTime);
+    CHECK(sprite.frame() == 1);
+    sprite.update(kFrameTime);
+    CHECK(sprite.frame() == 0); // and it loops over the new frames
+    CHECK(sprite.isPlaying());
 }
