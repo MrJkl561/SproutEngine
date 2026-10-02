@@ -1,0 +1,49 @@
+# Builds Sprout, its examples and tests on Windows, macOS and Linux for every push.
+name: Build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libx11-dev libxrandr-dev libxinerama-dev \
+            libxcursor-dev libxi-dev libgl1-mesa-dev libasound2-dev xvfb
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Run every game and example for 2 seconds
+        if: runner.os == 'Linux'
+        run: |
+          status=0
+          for dir in build/bin/*/; do
+            name=$(basename "$dir")
+            echo "::group::$name"
+            if SPROUT_TEST_FRAMES=120 timeout 60 xvfb-run -a "$dir$name"; then
+              echo "$name ran OK"
+            else
+              echo "::error::$name failed"
+              status=1
+            fi
+            echo "::endgroup::"
+          done
+          exit $status

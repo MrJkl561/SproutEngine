@@ -2,7 +2,6 @@
 #include "sprout/ui.hpp"
 
 #include <algorithm>
-#include <cstring>
 #include <string>
 #include <vector>
 
@@ -92,7 +91,7 @@ bool slider(const std::string& text, const Rect& area, float& value, float min, 
 bool textBox(const Rect& area, std::string& text, int maxLength) {
     maxLength = std::clamp(maxLength, 1, 1024);
     std::vector<char> buffer(static_cast<std::size_t>(maxLength) + 1, '\0');
-    std::strncpy(buffer.data(), text.c_str(), static_cast<std::size_t>(maxLength));
+    text.copy(buffer.data(), static_cast<std::size_t>(maxLength));
 
     ActiveTextBox& active = activeTextBox();
     const bool editing = active.active && active.area == area;
