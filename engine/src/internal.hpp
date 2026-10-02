@@ -32,6 +32,9 @@ void shutdownAudio();
 void unloadAllTextures();
 void unloadFonts();
 void initUI();
+/// Called after each frame is drawn: turns the exit key off while a textBox is
+/// being typed in (so Esc doesn't quit mid-name), and back on otherwise.
+void endUIFrame(int exitKey);
 
 // Text drawing with the current font (see useFont()).
 raylib::FontUnmanaged currentFont();

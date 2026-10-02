@@ -88,8 +88,9 @@ void toggleFullscreen();
 void showCursor();
 void hideCursor();
 /// Which key closes the game (Escape by default). Use Key::None to turn it off.
+/// (It never closes the game while the player is typing in a textBox.)
 void setExitKey(Key key);
-/// Saves a picture of the screen.
+/// Saves a picture of the screen (at the end of this frame, once everything is drawn).
 void takeScreenshot(const std::string& path = "screenshot.png");
 
 // --- Time --------------------------------------------------------------------

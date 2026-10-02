@@ -18,10 +18,10 @@
 //          toRaylib(box).DrawGradientH(toRaylib(sprout::Color::Red), toRaylib(sprout::Color::Blue));
 //      }
 //
-//  WATCH OUT: raylib has its own global types called Color, Rectangle,
-//  Texture, Camera, etc. In a file that includes this header, write
-//  sprout::Color or raylib::Color (not just Color) so the compiler knows
-//  which one you mean.
+//  WATCH OUT: raylib has its own global types with the same names as some of
+//  Sprout's: Color, Texture, Camera, MouseButton, GamepadButton and
+//  GamepadAxis. In a file that includes this header, write sprout::Color or
+//  raylib::Color (not just Color) so the compiler knows which one you mean.
 // =============================================================================
 #include <raylib-cpp.hpp>
 

@@ -23,6 +23,7 @@
 //  IMPORTANT: `position` is the MIDDLE of the entity, and `size` is the size
 //  of its hitbox (the invisible box used for collisions).
 // =============================================================================
+#include <functional>
 #include <vector>
 
 #include "sprout/math.hpp"
@@ -78,6 +79,16 @@ public:
     /// After moveAndSlide(): bumped a ceiling?
     bool isOnCeiling() const { return lastMove_.hitTop; }
 
+    // --- Timers -----------------------------------------------------------------
+    /// Runs some code once, after a delay - like the scene's after(), but it is
+    /// cancelled automatically if this entity is destroyed first, so using
+    /// `this` inside it is always safe:
+    ///   after(0.5f, [this] { visible = true; });
+    int after(float seconds, std::function<void()> action);
+    /// Runs some code again and again, until this entity is destroyed:
+    ///   every(1.0f, [this] { scene().spawn<Bullet>(position); });
+    int every(float seconds, std::function<void()> action);
+
     // --- Life and death ---------------------------------------------------------
     /// Removes the entity from the scene at the end of this frame.
     void destroy() { destroyed_ = true; }
@@ -86,12 +97,18 @@ public:
     /// The scene this entity lives in. (Not available inside the constructor -
     /// use start() for things that need the scene.)
     Scene& scene() const;
+    /// The scene as YOUR scene type, so you can use its variables:
+    ///   sceneAs<Level>().score += 10;
+    /// (If the entity is in a different kind of scene you get a clear error.)
+    template <class T>
+    T& sceneAs() const;
 
 private:
     friend class Scene;
     Scene* scene_ = nullptr;
     bool destroyed_ = false;
     MoveResult lastMove_;
+    std::vector<int> timers_; // cancelled when the entity is removed
 };
 
 } // namespace sprout

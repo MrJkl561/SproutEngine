@@ -61,6 +61,9 @@ struct ActiveTextBox {
     Rect area;
 };
 
+// Was a text box being typed in this frame?
+bool gTypingThisFrame = false;
+
 ActiveTextBox& activeTextBox() {
     static ActiveTextBox box;
     return box;
@@ -69,6 +72,11 @@ ActiveTextBox& activeTextBox() {
 } // namespace
 
 namespace detail {
+void endUIFrame(int exitKey) {
+    raylib::Window::SetExitKey(gTypingThisFrame ? KEY_NULL : exitKey);
+    gTypingThisFrame = false;
+}
+
 void initUI() {
     GuiLoadStyleDefault();
     GuiSetStyle(DEFAULT, TEXT_SIZE, kDefaultTextSize);
@@ -104,6 +112,7 @@ bool textBox(const Rect& area, std::string& text, int maxLength) {
         if (editing) active.active = false;
         else active = ActiveTextBox{true, area};
     }
+    if (active.active && active.area == area) gTypingThisFrame = true;
     const std::string updated = buffer.data();
     const bool changed = updated != text;
     text = updated;

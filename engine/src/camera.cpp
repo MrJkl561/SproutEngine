@@ -57,6 +57,13 @@ void Camera::applyLimits() {
 }
 
 void Camera::updateCamera(float dt) {
+    // The window was resized: if the camera was still in its starting spot, keep
+    // world and screen coordinates the same (so the game doesn't slide sideways).
+    const Vec2 center = screenCenter();
+    if (center != lastScreenCenter_) {
+        if (position == lastScreenCenter_) position = center;
+        lastScreenCenter_ = center;
+    }
     applyLimits();
     if (dt <= 0.0f) return; // paused: keep the view still (and the shake waits too)
     if (shakeTimeLeft_ > 0.0f) {
@@ -98,6 +105,7 @@ Rect Camera::visibleArea() const {
 
 void Camera::reset() {
     position = screenCenter();
+    lastScreenCenter_ = position;
     zoom = 1.0f;
     rotation = 0.0f;
     limits_.reset();

@@ -1,5 +1,6 @@
 #include "sprout/input.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <map>
 #include <string>
@@ -28,6 +29,15 @@ struct ActionState {
     bool wasDown = false;
 };
 
+// Sticks go from -1 to 1. raylib reports triggers from -1 (let go) to 1 (pressed);
+// we turn that into 0 to 1, which is what people expect.
+float axisValue(const raylib::Gamepad& pad, int axis) {
+    const float value = pad.GetAxisMovement(axis);
+    if (axis == GAMEPAD_AXIS_LEFT_TRIGGER || axis == GAMEPAD_AXIS_RIGHT_TRIGGER)
+        return std::clamp((value + 1.0f) / 2.0f, 0.0f, 1.0f);
+    return value;
+}
+
 bool bindingDown(const Binding& binding) {
     if (!detail::windowIsOpen()) return false;
     const raylib::Gamepad pad{binding.gamepad};
@@ -37,7 +47,7 @@ bool bindingDown(const Binding& binding) {
     case Binding::Kind::GamepadButton: return pad.IsAvailable() && pad.IsButtonDown(binding.code);
     case Binding::Kind::GamepadAxis:
         if (!pad.IsAvailable()) return false;
-        return pad.GetAxisMovement(binding.code) * static_cast<float>(binding.direction) > kStickPressed;
+        return axisValue(pad, binding.code) * static_cast<float>(binding.direction) > kStickPressed;
     }
     return false;
 }
@@ -150,7 +160,7 @@ bool isGamepadReleased(GamepadButton button, int gamepad) {
 }
 float gamepadAxis(GamepadAxis axis, int gamepad) {
     if (!isGamepadConnected(gamepad)) return 0.0f;
-    const float value = raylib::Gamepad{gamepad}.GetAxisMovement(static_cast<int>(axis));
+    const float value = axisValue(raylib::Gamepad{gamepad}, static_cast<int>(axis));
     const bool isTrigger = axis == GamepadAxis::LeftTrigger || axis == GamepadAxis::RightTrigger;
     if (!isTrigger && std::abs(value) < kStickDeadzone) return 0.0f;
     return value;

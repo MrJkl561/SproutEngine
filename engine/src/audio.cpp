@@ -173,9 +173,10 @@ void playMusic(const std::string& path, float volume, bool loop) {
     AudioState& state = audio();
     raylib::Music* music = getMusic(path);
     if (!music) return;
+    // Already playing this song? Leave it alone (keeps any setMusicVolume() change too).
+    if (state.currentMusic == path && music->IsPlaying() && !state.musicPaused) return;
     music->looping = loop;
     music->SetVolume(std::clamp(volume, 0.0f, 1.0f));
-    if (state.currentMusic == path && music->IsPlaying()) return;
     if (state.musicPaused && state.currentMusic == path) {
         resumeMusic();
         return;

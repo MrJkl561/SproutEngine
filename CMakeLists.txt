@@ -5,7 +5,7 @@
 #  To make a new game, create a folder inside "games/" with a main.cpp in it,
 #  then build again. See docs/02-your-first-game.md.
 # =============================================================================
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.25) # raylib 6 needs 3.25
 
 project(Sprout
     VERSION 0.1.0
@@ -42,12 +42,13 @@ include(SproutDependencies) # downloads raylib, raygui and nlohmann/json
 add_subdirectory(engine)    # the engine itself (the "sprout" library)
 include(SproutGame)         # gives you sprout_add_game(...)
 
-if(SPROUT_BUILD_EXAMPLES)
-    add_subdirectory(examples)
-endif()
-
+# Games first, so Visual Studio starts your game (my_first_game) when you press F5.
 if(SPROUT_BUILD_GAMES)
     add_subdirectory(games)
+endif()
+
+if(SPROUT_BUILD_EXAMPLES)
+    add_subdirectory(examples)
 endif()
 
 if(SPROUT_BUILD_TESTS)

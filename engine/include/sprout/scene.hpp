@@ -24,6 +24,7 @@
 #include <functional>
 #include <limits>
 #include <memory>
+#include <stdexcept>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -92,6 +93,8 @@ public:
     /// Runs some code once, after a delay:
     ///   after(2.0f, [this] { changeScene<GameOver>(); });
     /// Returns an id you can give to cancelTimer().
+    /// (Inside an Entity, use the entity's own after()/every() instead - they stop
+    /// by themselves when the entity is destroyed.)
     int after(float seconds, std::function<void()> action);
     /// Runs some code again and again:
     ///   every(1.5f, [this] { spawn<Enemy>(); });
@@ -220,6 +223,14 @@ void Scene::destroyAll() {
     forEachLiving([&](Entity& entity) {
         if (detail::entityAs<T>(entity)) entity.destroy();
     });
+}
+
+template <class T>
+T& Entity::sceneAs() const {
+    static_assert(std::is_base_of_v<Scene, T>, "sceneAs<T>() needs a scene class, e.g. sceneAs<Level>()");
+    if (T* typed = dynamic_cast<T*>(&scene())) return *typed;
+    throw std::logic_error("sceneAs<...>() asked for the wrong kind of scene: this entity lives in a "
+                           "different scene class. Check the name between the < > brackets.");
 }
 
 template <class T>

@@ -23,6 +23,22 @@ Scene& Entity::scene() const {
     return *scene_;
 }
 
+int Entity::after(float seconds, std::function<void()> action) {
+    const int id = scene().after(seconds, [this, action = std::move(action)] {
+        if (!isDestroyed()) action();
+    });
+    timers_.push_back(id);
+    return id;
+}
+
+int Entity::every(float seconds, std::function<void()> action) {
+    const int id = scene().every(seconds, [this, action = std::move(action)] {
+        if (!isDestroyed()) action();
+    });
+    timers_.push_back(id);
+    return id;
+}
+
 MoveResult Entity::moveAndSlide(float dt) {
     Rect box = bounds();
     const Vec2 motion = velocity * dt;

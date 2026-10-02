@@ -991,3 +991,68 @@ TEST_CASE("which frame newly spawned entities first update in") {
         CHECK(counter->updates == 1);
     }
 }
+
+// =============================================================================
+//  An entity's own timers, and sceneAs<T>()
+// =============================================================================
+
+TEST_CASE("an entity's after() and every() run like the scene's") {
+    struct Blinker : Entity {
+        int blinks = 0;
+        bool shown = false;
+        void start() override {
+            after(0.5f, [this] { shown = true; });
+            every(0.25f, [this] { ++blinks; });
+        }
+    };
+    TestScene scene;
+    scene.runStart();
+    Blinker& blinker = scene.spawn<Blinker>();
+    scene.runFrames(10, 0.1f); // one second
+    CHECK(blinker.shown);
+    CHECK(blinker.blinks == 4);
+}
+
+TEST_CASE("an entity's timers stop by themselves when it is destroyed") {
+    int fired = 0;
+    struct Bomb : Entity {
+        int* fired = nullptr;
+        explicit Bomb(int* counter) : fired(counter) {}
+        void start() override {
+            after(1.0f, [this] { ++*fired; });
+            every(0.1f, [this] { ++*fired; });
+        }
+    };
+    TestScene scene;
+    scene.runStart();
+    Bomb& bomb = scene.spawn<Bomb>(&fired);
+    scene.runUpdate(0.05f);
+    bomb.destroy();     // gone at the end of the next frame
+    scene.runUpdate(0.05f);
+    const int before = fired;
+    scene.runFrames(30, 0.1f); // would crash or count up if the timers still ran
+    CHECK(fired == before);
+    CHECK(scene.count() == 0);
+}
+
+TEST_CASE("sceneAs<T>() gives the entity's scene as your own scene type") {
+    struct Level : TestScene {
+        int score = 0;
+    };
+    struct Coin : Entity {
+        void start() override { sceneAs<Level>().score += 10; }
+    };
+    struct Other : TestScene {};
+
+    Level level;
+    level.runStart();
+    level.spawn<Coin>();
+    CHECK(level.score == 10);
+
+    SUBCASE("asking for the wrong kind of scene gives a clear error") {
+        Other other;
+        other.runStart();
+        Entity& thing = other.spawn<Entity>();
+        CHECK_THROWS_AS(thing.sceneAs<Level>(), std::logic_error);
+    }
+}

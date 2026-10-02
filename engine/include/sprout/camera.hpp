@@ -57,6 +57,7 @@ private:
     void applyLimits();
 
     std::optional<Rect> limits_;
+    Vec2 lastScreenCenter_; // to keep the default view lined up when the window is resized
     float shakeStrength_ = 0.0f;
     float shakeTimeLeft_ = 0.0f;
     float shakeDuration_ = 0.0f;

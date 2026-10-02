@@ -32,6 +32,10 @@ void Scene::mergeSpawned() {
 }
 
 void Scene::removeDestroyed() {
+    // An entity's own after()/every() timers stop when it goes away.
+    for (const auto& entity : entities_)
+        if (entity->isDestroyed())
+            for (int id : entity->timers_) cancelTimer(id);
     std::erase_if(entities_, [](const std::unique_ptr<Entity>& e) { return e->isDestroyed(); });
 }
 

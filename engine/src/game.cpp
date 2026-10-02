@@ -25,6 +25,8 @@ struct GameState {
     float dt = 0.0f;
     double realTime = 0.0;
     double gameClock = 0.0;
+    int exitKey = KEY_ESCAPE;
+    std::string pendingScreenshot; // taken at the end of the frame, once everything is drawn
 };
 
 GameState& state() {
@@ -66,6 +68,8 @@ void shutdownEverything() {
     s.dt = 0.0f;
     s.realTime = 0.0;
     s.gameClock = 0.0;
+    s.exitKey = KEY_ESCAPE;
+    s.pendingScreenshot.clear();
 }
 
 void switchScene(detail::SceneFactory factory) {
@@ -140,6 +144,11 @@ void Game::runWithFactory(detail::SceneFactory factory) {
 
             window.BeginDrawing();
             s.scene->runDraw();
+            if (!s.pendingScreenshot.empty()) {
+                saveScreenshot(s.pendingScreenshot);
+                s.pendingScreenshot.clear();
+            }
+            detail::endUIFrame(s.exitKey);
             ++frame;
             const bool lastTestFrame = frameLimit > 0 && frame >= frameLimit;
             if (lastTestFrame) {
@@ -209,11 +218,13 @@ void hideCursor() {
 }
 
 void setExitKey(Key key) {
-    if (detail::windowIsOpen()) raylib::Window::SetExitKey(static_cast<int>(key));
+    state().exitKey = static_cast<int>(key);
+    if (detail::windowIsOpen()) raylib::Window::SetExitKey(state().exitKey);
 }
 
 void takeScreenshot(const std::string& path) {
-    if (detail::windowIsOpen()) saveScreenshot(path);
+    // Wait until the frame is completely drawn, so it works from update() too.
+    if (detail::windowIsOpen()) state().pendingScreenshot = path;
 }
 
 // --- Time --------------------------------------------------------------------------
