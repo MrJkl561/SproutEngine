@@ -114,9 +114,9 @@ Click the box to start typing. Press **Enter** (or click somewhere else) to
 finish. While a text box is active, don't also read `typedText()`, because they
 would steal each other's letters.
 
-> **Watch out:** Esc closes the game by default, even while typing. If players
-> will type a lot, consider `setExitKey(Key::None);` (see
-> [Input](06-input.md#key-names)).
+> **Good to know:** Esc normally closes the game, but not while the player is
+> typing in a text box, so nobody loses their game by accident. (To change or
+> turn off the quit key, see `setExitKey` in [Input](06-input.md#key-names).)
 
 ### Progress bars
 

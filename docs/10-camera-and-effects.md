@@ -18,7 +18,9 @@ it's stuck to the screen, like a sticker on the lens. That's why scores go in
 
 When a scene starts, the camera looks at the middle of the window with no zoom,
 so world coordinates and screen coordinates are exactly the same. You only need
-to think about the camera when you start moving it.
+to think about the camera when you start moving it. (If you let the player
+resize the window with `setResizable(true)`, a camera you haven't moved keeps
+looking at the new middle, so the two stay the same.)
 
 | Member | What it is | Starts as |
 |---|---|---|

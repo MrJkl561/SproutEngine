@@ -49,14 +49,16 @@ All the keys are in `Key::`. The common ones:
 | Symbols | `Key::Minus`, `Key::Equal`, `Key::Comma`, `Key::Period`, `Key::Slash`, `Key::Semicolon`, `Key::Apostrophe`, `Key::LeftBracket`, `Key::RightBracket`, `Key::Backslash`, `Key::Grave` |
 | Others | `Key::Insert`, `Key::Home`, `Key::End`, `Key::PageUp`, `Key::PageDown`, `Key::CapsLock`, `Key::PrintScreen`, `Key::Pause`, ... |
 
-> **Esc quits the game** by default. To use Esc for your own pause menu, turn
-> that off with `setExitKey(Key::None);` (or pick another key:
+> **Esc quits the game** by default (except while the player is typing in a
+> [text box](12-menus-and-ui.md#text-boxes)). To use Esc for your own pause menu,
+> turn that off with `setExitKey(Key::None);` (or pick another key:
 > `setExitKey(Key::F10);`). Call it after the `Game` is created, for example in
 > `main()` or in your first scene's `start()`.
 
 > **Free screenshots:** press **F12** in any Sprout game to save a screenshot
 > (`screenshot000.png`, `screenshot001.png`, ...) in the game's folder, next to the
-> program. This comes from raylib.
+> program. This comes from raylib. Your own code can take one too, from
+> anywhere: `takeScreenshot("photo.png");` saves the frame once it's fully drawn.
 
 ### Typing text
 
@@ -268,10 +270,18 @@ The sticks are `GamepadAxis::LeftX`, `LeftY`, `RightX` and `RightY`. Tiny
 wobbles near the middle are ignored for you, so a stick at rest gives exactly 0.
 Remember y goes **down**, so pushing a stick down gives a positive y.
 
-The analog triggers are `GamepadAxis::LeftTrigger` and `RightTrigger`, and they
-go up to 1 when pressed all the way. The simplest way to use a trigger is as a
-button (`GamepadButton::RightTrigger`), or check
-`gamepadAxis(GamepadAxis::RightTrigger) > 0.5f` for "pressed more than halfway".
+The analog triggers are `GamepadAxis::LeftTrigger` and `RightTrigger`. They go
+from **0** (let go) to **1** (pressed all the way), so you can use them for
+things like a car's accelerator:
+
+```cpp
+float gas = gamepadAxis(GamepadAxis::RightTrigger); // 0 to 1
+speed = gas * maxSpeed;
+```
+
+You can also use a trigger as a button: `GamepadButton::RightTrigger`, or an
+action with `bindAction("accelerate", GamepadAxis::RightTrigger, +1);`, which
+counts as "down" once the trigger is pressed more than halfway.
 
 Moving with the left stick, with the analog "push a little to walk slowly" feel:
 
@@ -352,7 +362,7 @@ compact `if` that gives back a value.
 | `mousePosition()` / `mouseWorldPosition()` / `mouseWheel()` | Mouse position and wheel |
 | `isGamepadConnected(n)` | Is gamepad `n` plugged in? |
 | `isGamepadDown(GamepadButton::A, n)` / `Pressed` / `Released` | Gamepad buttons |
-| `gamepadAxis(GamepadAxis::LeftX, n)` | Sticks and triggers |
+| `gamepadAxis(GamepadAxis::LeftX, n)` | Sticks (-1 to 1) and triggers (0 to 1) |
 | `bindAction("name", key/button/axis)` | Adds a key or button to an action |
 | `clearAction("name")` | Removes all keys and buttons from an action |
 | `isActionDown("name")` / `isActionPressed(...)` / `isActionReleased(...)` | Reading actions |

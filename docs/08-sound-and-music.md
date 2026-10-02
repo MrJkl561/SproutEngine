@@ -77,8 +77,8 @@ Some useful things to know:
 - Calling `playMusic` with the song that's **already playing does nothing** (it
   doesn't restart from the beginning). So it's safe to put
   `playMusic("assets/song.ogg");` in the `start()` of every scene that should have
-  that song. Coming back to that scene won't make the music jump. (It does
-  set the song's volume to the volume you pass, so pass the same one each time.)
+  that song. Coming back to that scene won't make the music jump, and a volume
+  you set with `setMusicVolume` stays as it is.
 - To give each level its own song, just call `playMusic` with a different file
   in each level's `start()`.
 

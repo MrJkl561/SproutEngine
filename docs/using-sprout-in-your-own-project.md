@@ -66,8 +66,10 @@ FetchContent_MakeAvailable(sprout)
 sprout_add_game(my_game SOURCES main.cpp)
 ```
 
-`GIT_TAG` says which version of Sprout to download. A **branch** name (like
-`main`) always gets the newest version. A **commit id** (the long code you see in
+`GIT_TAG` says which version of Sprout to download. Any branch, tag or commit
+of the repository works, so if the version you want lives on another branch, put
+that branch's name here instead of `main`. A **branch** name (like `main`)
+always gets the newest version on that branch. A **commit id** (the long code you see in
 the commit history on GitHub) or a release tag never changes, so your game won't
 suddenly break when Sprout is updated. That's the safer choice for a finished
 game.

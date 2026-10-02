@@ -263,8 +263,9 @@ In this mode, Visual Studio uses its own build folder, so the program ends up
 in `out\build\x64-Debug\bin\my_first_game\` instead of `build\bin\`.
 
 > **Prefer a classic `.sln` solution?** Run `cmake -S . -B build` in the
-> Developer PowerShell, then open `build\Sprout.sln`. Right-click your game in the
-> **Solution Explorer** and choose **Set as Startup Project**, then press F5.
+> Developer PowerShell, then open `build\Sprout.sln` and press F5. It starts
+> `my_first_game`. To run a different game, right-click it in the **Solution
+> Explorer** and choose **Set as Startup Project**.
 
 ### VS Code (Windows, macOS and Linux)
 
