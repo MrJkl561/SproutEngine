@@ -23,6 +23,7 @@ endif()
 option(SPROUT_BUILD_GAMES    "Build every game inside the games/ folder" ${SPROUT_IS_TOP_LEVEL})
 option(SPROUT_BUILD_EXAMPLES "Build the example games in examples/"     ${SPROUT_IS_TOP_LEVEL})
 option(SPROUT_BUILD_TESTS    "Build the engine's unit tests"            OFF)
+option(SPROUT_BUILD_EDITOR   "Build the Godot-style 2D editor in editor/" ${SPROUT_IS_TOP_LEVEL})
 
 # If nobody picked a build type, use Debug so the debugger works nicely.
 if(SPROUT_IS_TOP_LEVEL AND NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
@@ -49,6 +50,10 @@ endif()
 
 if(SPROUT_BUILD_EXAMPLES)
     add_subdirectory(examples)
+endif()
+
+if(SPROUT_BUILD_EDITOR)
+    add_subdirectory(editor)
 endif()
 
 if(SPROUT_BUILD_TESTS)
