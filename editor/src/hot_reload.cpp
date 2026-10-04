@@ -5,12 +5,8 @@
 #include <set>
 #include <system_error>
 
+#include "platform.hpp"
 #include "script.hpp"
-
-#if defined(SPROUT_EDITOR_HOT_RELOAD)
-#include <dlfcn.h>
-#include <unistd.h>
-#endif
 
 namespace fs = std::filesystem;
 
@@ -64,16 +60,9 @@ void ScriptReloader::startBuild() {
     if (thread_.joinable()) thread_.join();
     thread_ = std::thread([this] {
         std::string cmd = std::string("\"") + SPROUT_EDITOR_CMAKE + "\" --build \"" + SPROUT_EDITOR_BUILD_DIR +
-                          "\" --target sprout_scripts --config \"" + SPROUT_EDITOR_BUILD_CONFIG + "\" 2>&1";
+                          "\" --target sprout_scripts --config \"" + SPROUT_EDITOR_BUILD_CONFIG + "\"";
         std::string output;
-        bool ok = false;
-        if (FILE* pipe = popen(cmd.c_str(), "r")) {
-            char buf[512];
-            while (fgets(buf, sizeof buf, pipe)) output += buf;
-            ok = pclose(pipe) == 0;
-        } else {
-            output = "couldn't run: " + cmd;
-        }
+        bool ok = platform::runCommand(cmd, output) == 0;
         buildOk_ = ok;
         buildOutput_ = std::move(output);
         buildDone_ = true;  // published last; read by pollBuild() on the main thread
@@ -110,7 +99,7 @@ bool ScriptReloader::load(std::string& error) {
     // Load a copy with a new name each time: the system won't load the same
     // file name twice, and the build can replace the original while we run.
     fs::path copy = fs::temp_directory_path(ec) /
-                    ("sprout_scripts_" + std::to_string(getpid()) + "_" + std::to_string(++loadCount_) +
+                    ("sprout_scripts_" + std::to_string(platform::processId()) + "_" + std::to_string(++loadCount_) +
                      fs::path(SPROUT_EDITOR_SCRIPTS_MODULE).extension().string());
     fs::copy_file(SPROUT_EDITOR_SCRIPTS_MODULE, copy, fs::copy_options::overwrite_existing, ec);
     if (ec) {
@@ -119,10 +108,8 @@ bool ScriptReloader::load(std::string& error) {
     }
 
     std::vector<std::string> before = ScriptRegistry::names();
-    void* handle = dlopen(copy.string().c_str(), RTLD_NOW | RTLD_LOCAL);
+    void* handle = platform::loadLibrary(copy, error);
     if (!handle) {
-        const char* why = dlerror();
-        error = why ? why : "dlopen failed";
         fs::remove(copy, ec);
         return false;
     }
@@ -142,7 +129,7 @@ void ScriptReloader::unload() {
     // The registry holds functions from the library; forget them first.
     for (auto& n : names_) ScriptRegistry::remove(n);
     names_.clear();
-    dlclose(handle_);
+    platform::freeLibrary(handle_);
     handle_ = nullptr;
     std::error_code ec;
     fs::remove(loadedCopy_, ec);

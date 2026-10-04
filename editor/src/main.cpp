@@ -1,18 +1,23 @@
 // Sprout Editor: a small Godot-style 2D editor built on raylib, raylib-cpp and raygui.
 //
 //   sprout_editor [project folder]
+//   sprout_editor --check-scripts    load every C++ script without opening a
+//                                    window, then exit (used by CI)
 //
 // With no folder it opens editor/project/ from the source tree, and new C++
 // scripts are written to editor/scripts/ so the next build compiles them in.
 #include <raylib-cpp.hpp>
 
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <string>
 
 #include "editor.hpp"
+#include "hot_reload.hpp"
 #include "raygui_include.hpp"
+#include "script.hpp"
 #include "ui_scale.hpp"
 
 #ifndef SPROUT_EDITOR_PROJECT_DIR
@@ -22,7 +27,38 @@
 #define SPROUT_EDITOR_SCRIPTS_DIR "scripts"
 #endif
 
+namespace {
+
+// Loads the scripts (the hot reload library, if this build uses one) and makes
+// one of each, without a window. Proves the library loads and links on this
+// system: on Windows that's the part most likely to go wrong.
+int checkScripts() {
+    s2d::ScriptReloader reloader(SPROUT_EDITOR_SCRIPTS_DIR);
+    if (s2d::ScriptReloader::supported()) {
+        std::string error;
+        if (!reloader.load(error)) {
+            std::printf("FAILED to load the scripts library: %s\n", error.c_str());
+            return 1;
+        }
+        std::printf("Loaded the scripts library (hot reloading is on).\n");
+    } else {
+        std::printf("Scripts are compiled into the editor (hot reloading is off).\n");
+    }
+    auto names = s2d::ScriptRegistry::names();
+    for (const std::string& name : names) {
+        auto script = s2d::ScriptRegistry::create(name);
+        std::printf("  %s: %s\n", name.c_str(), script ? "ok" : "FAILED");
+        if (!script) return 1;
+    }
+    std::printf("%d scripts OK\n", static_cast<int>(names.size()));
+    reloader.unload();
+    return 0;
+}
+
+}  // namespace
+
 int main(int argc, char** argv) {
+    if (argc > 1 && std::string(argv[1]) == "--check-scripts") return checkScripts();
     std::filesystem::path project = argc > 1 ? argv[1] : SPROUT_EDITOR_PROJECT_DIR;
     std::filesystem::path scripts = SPROUT_EDITOR_SCRIPTS_DIR;
 

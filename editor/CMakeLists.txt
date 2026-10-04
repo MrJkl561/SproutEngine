@@ -31,10 +31,11 @@ file(GLOB SPROUT_EDITOR_SCRIPTS CONFIGURE_DEPENDS
 
 # Hot reloading: the scripts are built as a separate library that the editor
 # rebuilds and reloads whenever a script file changes. The library uses the
-# editor's own copy of the nodes and raylib, which needs an executable that
-# exports its symbols; Windows can't do that with a static raylib, so there the
-# scripts are compiled into the editor instead (rebuild and restart).
-if(WIN32)
+# editor's own copy of the nodes and raylib, so the editor executable exports
+# them (ENABLE_EXPORTS). On Windows that needs Visual Studio's compiler (MSVC or
+# clang-cl); with MinGW the scripts are compiled into the editor instead
+# (rebuild and restart).
+if(WIN32 AND NOT MSVC)
     set(_hot_reload_default OFF)
 else()
     set(_hot_reload_default ON)
@@ -70,6 +71,19 @@ if(SPROUT_EDITOR_HOT_RELOAD)
     target_link_libraries(sprout_editor PRIVATE "$<LINK_LIBRARY:WHOLE_ARCHIVE,raylib>" ${CMAKE_DL_LIBS})
     set_target_properties(sprout_editor PROPERTIES ENABLE_EXPORTS ON)
 
+    if(WIN32)
+        # An .exe exports nothing by default. Export the editor's own code
+        # (WINDOWS_EXPORT_ALL_SYMBOLS) plus every raylib function, listed in a
+        # .def file made from raylib.h; CMake merges the two.
+        include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/RaylibExports.cmake")
+        set(_raylib_h "${raylib_SOURCE_DIR}/src/raylib.h")
+        set(_raylib_def "${CMAKE_CURRENT_BINARY_DIR}/raylib_exports.def")
+        sprout_editor_raylib_def("${_raylib_h}" "${_raylib_def}")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_raylib_h}")
+        target_sources(sprout_editor PRIVATE "${_raylib_def}")
+        set_target_properties(sprout_editor PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+    endif()
+
     # src/module/ holds an empty file so the library builds even with no scripts.
     add_library(sprout_scripts MODULE
         "${CMAKE_CURRENT_SOURCE_DIR}/src/module/scripts_module.cpp"
@@ -85,15 +99,20 @@ if(SPROUT_EDITOR_HOT_RELOAD)
         # Lets an old copy of the library really unload when a new one is loaded.
         target_compile_options(sprout_scripts PRIVATE -fno-gnu-unique)
     endif()
-    if(NOT MSVC)
+    if(MSVC)
+        target_compile_options(sprout_scripts PRIVATE /W4 /permissive- /utf-8)
+    else()
         target_compile_options(sprout_scripts PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     set_target_properties(sprout_scripts PROPERTIES
         PREFIX ""
-        LIBRARY_OUTPUT_DIRECTORY "${_editor_out}")
+        LIBRARY_OUTPUT_DIRECTORY "${_editor_out}"
+        RUNTIME_OUTPUT_DIRECTORY "${_editor_out}")  # Windows puts DLLs in the "runtime" folder
     foreach(config Debug Release RelWithDebInfo MinSizeRel)
         string(TOUPPER "${config}" config)
-        set_target_properties(sprout_scripts PROPERTIES LIBRARY_OUTPUT_DIRECTORY_${config} "${_editor_out}")
+        set_target_properties(sprout_scripts PROPERTIES
+            LIBRARY_OUTPUT_DIRECTORY_${config} "${_editor_out}"
+            RUNTIME_OUTPUT_DIRECTORY_${config} "${_editor_out}")
     endforeach()
 
     # What the editor needs to rebuild and load the scripts by itself.

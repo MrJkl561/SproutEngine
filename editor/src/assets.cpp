@@ -2,6 +2,12 @@
 
 namespace s2d {
 
+std::filesystem::path Assets::projectDir_;
+std::map<std::string, std::unique_ptr<raylib::Texture>> Assets::textures_;
+
+void Assets::setProjectDir(const std::filesystem::path& dir) { projectDir_ = dir; }
+const std::filesystem::path& Assets::projectDir() { return projectDir_; }
+
 raylib::Texture* Assets::texture(const std::string& path) {
     if (path.empty()) return nullptr;
     auto it = textures_.find(path);

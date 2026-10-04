@@ -142,35 +142,29 @@ and it works while the game is playing too:
 - The button next to the status rebuilds and reloads by hand.
 
 How it works: the scripts are built into a separate library,
-`sprout_scripts` (`.so` on Linux and macOS). The editor watches
-`editor/scripts/`, runs `cmake --build <your build folder> --target sprout_scripts`
+`sprout_scripts` (`.dll` on Windows, `.so` on Linux and macOS). The editor
+watches `editor/scripts/`, runs `cmake --build <your build folder> --target sprout_scripts`
 in the background, and loads the new library in place of the old one. Both
 the editor and your scripts use the editor's own copy of the nodes and raylib.
+The editor makes them available to the library: on Windows by exporting every
+raylib function from `raylib.h` and all of the editor's own code.
 
-**Windows:** hot reloading is turned off there. The editor links raylib
-statically, and a Windows DLL can't use the raylib inside the editor's `.exe`.
-On Windows the scripts are compiled into the editor, so you rebuild and restart
-it after changing a script. You can also pick the mode yourself with
-`-DSPROUT_EDITOR_HOT_RELOAD=ON/OFF`.
+**Windows notes:**
+- You need Visual Studio's compiler (the normal setup). With MinGW, hot
+  reloading is off and the scripts are compiled into the editor, so you rebuild
+  and restart it instead.
+- If you change the editor's own code (not a script) while it's running, the
+  background build can't replace the running `sprout_editor.exe`. Close the
+  editor and build normally.
+- If the editor runs under the Visual Studio debugger, the debugger can hold the
+  scripts' `.pdb` file open, so a rebuild may fail. Run it without debugging
+  (Ctrl+F5) for hot reloading.
+- Scripts can use everything in `raylib.h`. rlgl and raygui functions aren't
+  available to scripts on Windows.
 
-What a script can use:
-
-| | |
-|---|---|
-| `node()` | the node it's attached to |
-| `self<T>()` | the node as a type, e.g. `self<CharacterBody2D>()` (nullptr if it isn't one) |
-| `getNode("Child")`, `getNode("../Sibling")` | nodes by path |
-| `findNode("Score")`, `findNode<Label>("Score")` | a node by name anywhere in the scene |
-| `node()->queueFree()` | remove the node at the end of the frame |
-| `node()->addChild(createNode("Sprite2D"))` | make new nodes while playing |
-| `print("text")` | write to the Output panel |
-| everything in raylib | input (`IsKeyDown(KEY_SPACE)`), sound, drawing, ... |
-
-Tip: to set a whole vector, write `me->position = Vector2{100, 200};`
-(raylib-cpp needs the type name there).
-
-The included scripts are `player_controller.cpp` (platformer movement),
-`coin.cpp` (collectibles with a score label) and `spinner.cpp`.
+You can pick the mode yourself with `-DSPROUT_EDITOR_HOT_RELOAD=ON/OFF`.
+`sprout_editor --check-scripts` loads every script without opening a window
+and tells you whether they all work.
 
 ## Files
 
@@ -197,6 +191,6 @@ Scenes are plain JSON (`{"type": "Sprite2D", "name": ..., "properties": {...},
 
 ## Not there yet
 
-This is the bare minimum. Not included: hot reloading on Windows, script variables in the inspector, instancing scenes inside scenes,
+This is the bare minimum. Not included: script variables in the inspector, instancing scenes inside scenes,
 animation, sound nodes, UI (Control) nodes, tilemaps, and exporting a game
 without the editor.
