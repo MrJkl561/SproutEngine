@@ -81,6 +81,51 @@ to the display's scale). To force a size from the start, set the environment
 variable `SPROUT_EDITOR_UI_SCALE`, e.g. `SPROUT_EDITOR_UI_SCALE=1.5`. Press
 **Home** in the viewport to fit the game window back in view.
 
+## Scenes inside scenes
+
+Like in Godot, a scene can be placed inside another scene. Build the player
+once in `player.scene.json` (body, sprite, collision shape, script), then put
+it into every level. The demo works like this: `main.scene.json` uses
+`player.scene.json`, `coin.scene.json` (three times) and `box.scene.json`.
+
+- **Place a scene:** drag a `.scene.json` from the FileSystem into the viewport
+  (it goes where you drop it) or onto a node in the Scene dock (it becomes that
+  node's child). The scene button next to **Add** does the same from a list.
+- **Make a scene out of part of one:** select a node and press **Save Branch
+  as Scene** in the inspector. That node and its children are saved to a new
+  file and replaced by a copy of it. This is how you split a big level up.
+- In the Scene dock a placed scene has a scene icon, and its nodes are tinted.
+  Click the arrow to see them. In the viewport, clicking anything in it
+  selects the whole copy.
+
+**The original is the template; each copy can be changed on its own:**
+
+- Changing the original scene (open it, edit, save) changes every copy in
+  every level.
+- Changing a copy in a level only changes that copy. That covers its position
+  and also anything inside it: select the copy's sprite in the Scene dock and
+  give it another colour, and only that copy changes. The level file stores
+  just those differences ("overrides").
+- Anything you didn't change in a copy keeps following the original.
+- In the inspector, values a copy changed are **orange** with a revert button
+  that sets them back to the original's value. **Reset Copy** throws away all of
+  the copy's changes (it keeps its position).
+- What's *in* a copy (adding, deleting or moving its nodes) comes from the
+  original, so change that in the original scene. **Make Local** cuts the link
+  and turns the copy into ordinary nodes of the level.
+- **Open Original Scene** opens the template. If you have unsaved changes, the
+  editor asks whether to save them first.
+
+Scripts can make copies while the game runs:
+
+```cpp
+node()->addChild(instantiate("scenes/coin.scene.json"));
+```
+
+If a scene file is moved or deleted, the levels using it show "(missing
+scene)" in red and keep the link, so putting the file back fixes them. A scene
+can't be placed inside itself.
+
 ## Nodes
 
 | Node | What it's for |
@@ -183,7 +228,7 @@ editor/
 ├── scripts/              <- your C++ scripts (built into sprout_scripts)
 └── project/
     ├── assets/           <- pictures
-    └── scenes/           <- *.scene.json files
+    └── scenes/           <- *.scene.json files (main, player, coin, box)
 ```
 
 Scenes are plain JSON (`{"type": "Sprite2D", "name": ..., "properties": {...},
@@ -191,6 +236,6 @@ Scenes are plain JSON (`{"type": "Sprite2D", "name": ..., "properties": {...},
 
 ## Not there yet
 
-This is the bare minimum. Not included: script variables in the inspector, instancing scenes inside scenes,
+This is the bare minimum. Not included: changing scenes while the game runs, script variables in the inspector, instancing scenes inside scenes,
 animation, sound nodes, UI (Control) nodes, tilemaps, and exporting a game
 without the editor.

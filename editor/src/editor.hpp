@@ -13,6 +13,8 @@
 
 #include <raylib-cpp.hpp>
 
+#include <nlohmann/json.hpp>
+
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -69,6 +71,16 @@ private:
 
     // --- actions ----------------------------------------------------------
     void newScene();
+    // Instanced scenes
+    void instanceScene(const std::string& scenePath, Node* parent, const Vector2* world = nullptr);
+    void saveBranchAsScene(Node* node, const std::string& scenePath);
+    void makeLocal(Node* node);
+    void resetInstance(Node* node);  // throw away this copy's changes
+    bool lockedByInstance(Node* node, const char* action);  // true (and says why) inside an instance
+    Node2D* selectableFor(Node2D* hit);  // what clicking `hit` in the viewport selects
+    // Asks "Save changes?" first if the scene has unsaved changes.
+    void confirmUnsaved(std::function<void()> then);
+    void requestOpenScene(const std::string& scenePath);
     void saveScene();
     void play();
     void stop();
@@ -104,7 +116,7 @@ private:
     void openPopup(Vector2 at, std::vector<std::string> items, std::function<void(int)> onPick);
     void openTextDialog(std::string title, std::string message, std::string initial,
                         std::function<void(const std::string&)> onOk);
-    bool isTyping() const { return !activeField_.empty() || dialog_.open; }
+    bool isTyping() const { return !activeField_.empty() || dialog_.open || confirm_.open; }
 
     // --- state ------------------------------------------------------------
     std::filesystem::path projectDir_;
@@ -145,6 +157,13 @@ private:
     std::string openColorPicker_;
     raylib::Vector2 inspectorScroll_{0, 0};
     float inspectorContentHeight_ = 0;
+    // For a node in an instanced scene: its values in the original scene, to
+    // show which ones this copy changed (with a revert button).
+    nlohmann::json inspectorOriginal_;
+    nlohmann::json inspectorCurrent_;
+    std::unique_ptr<Node> originalTree_;
+    std::string originalKey_;
+    double originalTime_ = -100;
 
     // Scene dock
     raylib::Vector2 treeScroll_{0, 0};
@@ -194,6 +213,12 @@ private:
         char text[128] = {};
         std::function<void(const std::string&)> onOk;
     } dialog_;
+
+    struct ConfirmDialog {
+        bool open = false;
+        std::string message;
+        std::function<void()> then;
+    } confirm_;
 };
 
 }  // namespace s2d

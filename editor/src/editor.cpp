@@ -363,7 +363,7 @@ void Editor::frame() {
     ClearBackground(kBg);
     applyUiScale();
 
-    bool modal = popup_.open || dialog_.open || swallowMouse_;
+    bool modal = popup_.open || dialog_.open || confirm_.open || swallowMouse_;
     if (modal) GuiLock();
     {
         // While the game runs the scene can't be edited (it's a copy that's playing).
@@ -456,7 +456,7 @@ void Editor::drawToolbar(Rectangle r) {
     float x = 8, y = 6, h = 28;
     bool playing = playTree_ != nullptr;
     if (playing) GuiDisable();
-    if (GuiButton({x, y, 76, h}, GuiIconText(ICON_FILE_NEW, "New"))) newScene();
+    if (GuiButton({x, y, 76, h}, GuiIconText(ICON_FILE_NEW, "New"))) confirmUnsaved([this] { newScene(); });
     x += 80;
     if (GuiButton({x, y, 80, h}, GuiIconText(ICON_FOLDER_FILE_OPEN, "Open"))) {
         std::vector<std::string> scenes;
@@ -465,7 +465,7 @@ void Editor::drawToolbar(Rectangle r) {
         if (scenes.empty()) {
             log("No scenes in " + (projectDir_ / "scenes").string() + " yet.", kDim);
         } else {
-            openPopup({x, y + h + 2}, scenes, [this, scenes](int i) { openScene(scenes[i]); });
+            openPopup({x, y + h + 2}, scenes, [this, scenes](int i) { requestOpenScene(scenes[i]); });
         }
     }
     x += 84;
@@ -539,11 +539,26 @@ void Editor::drawSceneDock(Rectangle r) {
     drawHeader(r, "Scene");
 
     float y = r.y + kHeaderH + 4, x = r.x + 6;
-    float addW = std::min(88.0f, r.width - 12 - 4 * 33 - 4);  // the other four buttons are 30 wide
-    if (GuiButton({x, y, addW, 26}, GuiIconText(ICON_CIRCLE_ADD, "Add"))) {
+    float addW = std::min(88.0f, r.width - 12 - 5 * 33 - 4);  // the other five buttons are 30 wide
+    if (GuiButton({x, y, addW, 26}, GuiIconText(ICON_CIRCLE_ADD, addW >= 64 ? "Add" : nullptr))) {
         openPopup({x, y + 28}, nodeTypeNames(), [this](int i) { addNode(nodeTypeNames()[i]); });
     }
     x += addW + 4;
+    // Instance a scene (like Godot's chain-link button)
+    if (GuiButton({x, y, 30, 26}, GuiIconText(ICON_LAYERS, nullptr))) {
+        std::vector<std::string> scenes;
+        for (auto& f : files_)
+            if (f.kind == FileEntry::Scene && f.path != scenePath_) scenes.push_back(f.path);
+        if (scenes.empty()) {
+            log("No other scenes to instance yet. Make one: select a node and use 'Save Branch as Scene'.", kDim);
+        } else {
+            openPopup({x, y + 28}, scenes, [this, scenes](int i) {
+                Node* parent = selected_ ? selected_ : editTree_.root();
+                instanceScene(scenes[i], parent);
+            });
+        }
+    }
+    x += 33;
     if (GuiButton({x, y, 30, 26}, GuiIconText(ICON_FILE_COPY, nullptr))) duplicateSelected();
     x += 33;
     if (GuiButton({x, y, 30, 26}, GuiIconText(ICON_BIN, nullptr))) deleteSelected();
@@ -563,7 +578,7 @@ void Editor::drawSceneDock(Rectangle r) {
     std::vector<Row> rows;
     std::function<void(Node*, int)> collect = [&](Node* n, int depth) {
         rows.push_back({n, depth});
-        if (n->collapsed) return;
+        if (n->collapsed) return;  // (instanced scenes start folded up)
         for (auto& c : n->children()) collect(c.get(), depth + 1);
     };
     if (root) collect(root, 0);
@@ -592,12 +607,19 @@ void Editor::drawSceneDock(Rectangle r) {
 
         float ix = row.x + 6 + rows[i].depth * 16.0f;
         Rectangle arrow{ix, row.y + 4, 16, 16};
-        if (!n->children().empty()) {
+        bool foldable = !n->children().empty();
+        if (foldable) {
             GuiDrawIcon(n->collapsed ? ICON_ARROW_RIGHT_FILL : ICON_ARROW_DOWN_FILL, static_cast<int>(ix),
                         static_cast<int>(row.y + 4), 1, kDim);
         }
         GuiDrawIcon(iconFor(n), static_cast<int>(ix + 18), static_cast<int>(row.y + 4), 1, colorFor(n));
-        drawText(n->name, ix + 40, row.y + 4, kText);
+        // Nodes that come from an instanced scene are drawn in a softer colour.
+        drawText(n->name + (n->instanceMissing ? "  (missing scene)" : ""), ix + 40, row.y + 4,
+                 n->instanceMissing ? kBad : n->inInstance ? Color{150, 175, 215, 255} : kText);
+        if (!n->sceneFile.empty()) {  // instanced scene: a scene icon at the right
+            GuiDrawIcon(ICON_LAYERS, static_cast<int>(row.x + row.width - 46), static_cast<int>(row.y + 4), 1,
+                        n->instanceMissing ? kBad : kAccent);
+        }
         if (!n->scriptName.empty()) {
             Color sc = ScriptRegistry::has(n->scriptName) ? kGood : kOrange;
             GuiDrawIcon(ICON_FILETYPE_TEXT, static_cast<int>(row.x + row.width - 24), static_cast<int>(row.y + 4), 1,
@@ -616,7 +638,7 @@ void Editor::drawSceneDock(Rectangle r) {
         }
 
         if (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !playTree_) {
-            if (!n->children().empty() && CheckCollisionPointRec(mouse, arrow)) {
+            if (foldable && CheckCollisionPointRec(mouse, arrow)) {
                 n->collapsed = !n->collapsed;
             } else {
                 select(n);
@@ -765,7 +787,7 @@ void Editor::activateFile(size_t index) {
                 log("Drag " + f.path + " into the viewport to make a Sprite2D, or select a Sprite2D first.", kDim);
             }
             break;
-        case FileEntry::Scene: openScene(f.path); break;
+        case FileEntry::Scene: requestOpenScene(f.path); break;
         case FileEntry::Script:
             if (f.scriptClass.empty()) {
                 log(f.label + " has no REGISTER_SCRIPT(...) line, so it can't be attached.", kBad);
@@ -818,15 +840,13 @@ void Editor::finishDrag() {
         if (f.kind == FileEntry::Texture) {
             createSpriteAt(f.path, world);
         } else if (f.kind == FileEntry::Scene) {
-            openScene(f.path);
+            instanceScene(f.path, editTree_.root(), &world);  // drop a scene in: instance it there
         } else if (Node2D* hit = pickNode(world)) {
-            // Clicking a sprite or shape inside a physics body picks the body, so
-            // the whole thing moves together. Pick the child in the Scene dock to
-            // move it on its own.
-            if (hit != selected_ && dynamic_cast<CollisionObject2D*>(hit->parent())) hit = hit->parent2D();
-            select(hit);
+            select(selectableFor(hit));
             activateFile(d.file);
         }
+    } else if (dropTarget_ && f.kind == FileEntry::Scene) {
+        instanceScene(f.path, dropTarget_);  // onto a node in the tree: instance it as a child
     } else if (dropTarget_) {
         select(dropTarget_);
         activateFile(d.file);
@@ -837,6 +857,11 @@ void Editor::finishDrag() {
 
 void Editor::reparent(Node* node, Node* target, int zone) {
     if (!node || !target || node == target || node->isAncestorOf(target) || !node->parent()) return;
+    if (lockedByInstance(node, "moved")) return;
+    if ((zone == 0 && (!target->sceneFile.empty() || target->inInstance)) || (zone != 0 && target->inInstance)) {
+        log("Nodes can't be added inside an instanced scene here; open its scene file to change what's in it.", kDim);
+        return;
+    }
     Node* newParent = target;
     int index = -1;
     if (zone != 0) {
@@ -868,6 +893,19 @@ raylib::Vector2 Editor::rotateHandlePos() const {
 
 bool Editor::overRotateHandle(Vector2 mouse) {
     return selected_ && selected_->as<Node2D>() && rotateHandlePos().Distance(mouse) < 10;
+}
+
+Node2D* Editor::selectableFor(Node2D* hit) {
+    if (hit == selected_) return hit;  // keep dragging what's already selected
+    // Part of an instanced scene: select the instance (edit the rest in its own file).
+    Node* n = hit;
+    while (n->inInstance && n->parent()) n = n->parent();
+    if (auto* n2 = n->as<Node2D>()) hit = n2;
+    // A sprite or shape inside a physics body picks the body, so the whole thing
+    // moves together. Pick the child in the Scene dock to move it on its own.
+    if (hit != selected_ && hit->sceneFile.empty() && dynamic_cast<CollisionObject2D*>(hit->parent()))
+        hit = hit->parent2D();
+    return hit;
 }
 
 Node2D* Editor::pickNode(Vector2 world) {
@@ -922,10 +960,7 @@ void Editor::updateViewportInput(Rectangle r) {
         if (sel && overRotateHandle(mouse)) {
             viewDrag_ = ViewDrag::Rotate;
         } else if (Node2D* hit = pickNode(world)) {
-            // Clicking a sprite or shape inside a physics body picks the body, so
-            // the whole thing moves together. Pick the child in the Scene dock to
-            // move it on its own.
-            if (hit != selected_ && dynamic_cast<CollisionObject2D*>(hit->parent())) hit = hit->parent2D();
+            hit = selectableFor(hit);
             select(hit);
             viewDrag_ = ViewDrag::Move;
             grabOffset_ = hit->globalPosition() - world;
@@ -1214,7 +1249,21 @@ void Editor::propertyRow(Property& p, float x, float& y, float width) {
     std::string id = std::to_string(reinterpret_cast<uintptr_t>(selected_)) + "/" + p.name;
     std::string label = p.name;
     std::replace(label.begin(), label.end(), '_', ' ');
-    drawText(label, x, y + 4, kDim);
+
+    // Changed from the original scene (this node is part of an instance)? Show it, with a revert button.
+    if (inspectorOriginal_.is_object() && inspectorOriginal_.contains(p.name) && inspectorCurrent_.contains(p.name) &&
+        inspectorOriginal_[p.name] != inspectorCurrent_[p.name]) {
+        DrawRectangleRec({x - 6, y + 4, 3, 16}, kOrange);
+        drawText(label, x, y + 4, kOrange);
+        if (GuiButton({x + labelW - 26, y + 2, 22, 20}, GuiIconText(ICON_UNDO, nullptr))) {
+            touch();
+            nlohmann::json one;
+            one[p.name] = inspectorOriginal_[p.name];
+            applyProperties(*selected_, one);
+        }
+    } else {
+        drawText(label, x, y + 4, kDim);
+    }
 
     switch (p.kind) {
         case PropKind::Section: break;
@@ -1312,9 +1361,38 @@ void Editor::drawInspector(Rectangle r) {
     drawText(selected_->typeName(), x + 24, y + 2, kText);
     y += 30;
 
+    // In an instanced scene? Find the original values, to mark what this copy changed.
+    Node* instanceRoot = selected_;
+    while (instanceRoot->inInstance && instanceRoot->parent()) instanceRoot = instanceRoot->parent();
+    if (instanceRoot->sceneFile.empty() || instanceRoot->instanceMissing) instanceRoot = nullptr;
+    inspectorOriginal_ = nullptr;
+    if (instanceRoot) {
+        std::string key = std::to_string(reinterpret_cast<uintptr_t>(instanceRoot)) + instanceRoot->sceneFile;
+        if (key != originalKey_ || GetTime() - originalTime_ > 0.5) {  // the original file may have changed
+            originalTree_ = instanceSource(instanceRoot->sceneFile);
+            originalKey_ = key;
+            originalTime_ = GetTime();
+        }
+        Node* original = !originalTree_ ? nullptr
+                         : instanceRoot == selected_
+                             ? originalTree_.get()
+                             : originalTree_->getNode(pathBetween(instanceRoot, selected_));
+        if (original) {
+            inspectorOriginal_ = propertiesToJson(*original);
+            inspectorCurrent_ = propertiesToJson(*selected_);
+        }
+    }
+
     Property nameProp{"name", PropKind::String, &selected_->name};
     std::string oldName = selected_->name;
-    propertyRow(nameProp, x, y, w);
+    if (selected_->inInstance) {
+        // Changes inside an instance are remembered by node name, so it stays fixed.
+        drawText("name", x, y + 4, kDim);
+        drawText(selected_->name, x + 112, y + 4, kText);
+        y += 30;
+    } else {
+        propertyRow(nameProp, x, y, w);
+    }
     if (selected_->name.empty()) selected_->name = oldName;
     if (selected_->name != oldName && selected_->parent()) {
         std::string wanted = selected_->name;
@@ -1363,7 +1441,57 @@ void Editor::drawInspector(Rectangle r) {
         touch();
         selected_->scriptName.clear();
     }
-    y += 40;
+    y += 34;
+
+    // Scene: instancing (like Godot's "instance" and "Save Branch as Scene")
+    if (selected_->parent()) {
+        Property sceneSection{"Scene", PropKind::Section};
+        propertyRow(sceneSection, x, y, w);
+        if (selected_->inInstance) {
+            Node* root = selected_;
+            while (root->inInstance && root->parent()) root = root->parent();
+            drawText("Part of the instance '" + root->name + "'.", x, y + 4, kDim);
+            drawText("Changes here only affect this copy;", x, y + 24, kDim);
+            drawText("orange fields differ from the original.", x, y + 44, kDim);
+            y += 70;
+            if (GuiButton({x, y, w, 26}, GuiIconText(ICON_FOLDER_FILE_OPEN, "Open Original Scene")))
+                requestOpenScene(root->sceneFile);
+        } else if (!selected_->sceneFile.empty()) {
+            drawText("Instance of", x, y + 4, kDim);
+            drawText(selected_->sceneFile, x + textWidth("Instance of") + 8, y + 4,
+                     selected_->instanceMissing ? kBad : kAccent);
+            y += 26;
+            if (selected_->instanceMissing) {
+                drawText("That file is missing.", x, y + 4, kBad);
+                y += 26;
+            } else {
+                drawText("Changes here only affect this copy.", x, y + 4, kDim);
+                drawText("Edit the original to change every copy.", x, y + 24, kDim);
+                y += 50;
+            }
+            float hw = (w - 4) / 2;
+            if (GuiButton({x, y, w, 26}, GuiIconText(ICON_FOLDER_FILE_OPEN, "Open Original Scene")) &&
+                !selected_->instanceMissing)
+                requestOpenScene(selected_->sceneFile);
+            y += 30;
+            if (GuiButton({x, y, hw, 26}, GuiIconText(ICON_UNDO, "Reset Copy")) && !selected_->instanceMissing)
+                resetInstance(selected_);
+            if (GuiButton({x + hw + 4, y, hw, 26}, GuiIconText(ICON_LINK_BOXES, "Make Local"))) makeLocal(selected_);
+        } else {
+            drawText("Move this node and its children", x, y + 4, kDim);
+            drawText("into their own scene file:", x, y + 24, kDim);
+            y += 48;
+            if (GuiButton({x, y, w, 26}, GuiIconText(ICON_FILE_SAVE, "Save Branch as Scene"))) {
+                Node* target = selected_;
+                openTextDialog("Save Branch as Scene", "New scene file (inside the project):",
+                               "scenes/" + snakeCase(pascalCase(selected_->name)) + ".scene.json",
+                               [this, target](const std::string& p) {
+                                   if (selected_ == target) saveBranchAsScene(target, p);
+                               });
+            }
+        }
+        y += 40;
+    }
     inspectorContentHeight_ = y - top + 8;
     EndScissorMode();
 }
@@ -1454,7 +1582,39 @@ void Editor::openTextDialog(std::string title, std::string message, std::string 
     moveTextCursorToEnd();
 }
 
+void Editor::confirmUnsaved(std::function<void()> then) {
+    if (!dirty_ || !editTree_.root() || playTree_) {
+        then();
+        return;
+    }
+    confirm_ = ConfirmDialog{true, "Save changes to " + scenePath_ + " first?", std::move(then)};
+}
+
+void Editor::requestOpenScene(const std::string& scenePath) {
+    confirmUnsaved([this, scenePath] { openScene(scenePath); });
+}
+
 void Editor::drawModal() {
+    if (confirm_.open) {
+        float sw = screenW(), sh = screenH();
+        DrawRectangle(0, 0, static_cast<int>(sw), static_cast<int>(sh), Fade(BLACK, 0.5f));
+        Rectangle box{sw / 2 - 230, sh / 2 - 70, 460, 140};
+        bool cancel = GuiWindowBox(box, "Unsaved changes") != 0;
+        GuiLabel({box.x + 14, box.y + 40, box.width - 28, 24}, confirm_.message.c_str());
+        int choice = -1;
+        if (GuiButton({box.x + box.width - 318, box.y + 94, 96, 30}, "Save")) choice = 0;
+        if (GuiButton({box.x + box.width - 216, box.y + 94, 110, 30}, "Don't Save")) choice = 1;
+        if (GuiButton({box.x + box.width - 100, box.y + 94, 86, 30}, "Cancel") || IsKeyPressed(KEY_ESCAPE)) cancel = true;
+        if (cancel) {
+            confirm_.open = false;
+        } else if (choice >= 0) {
+            auto then = confirm_.then;
+            confirm_.open = false;
+            if (choice == 0) saveScene();
+            if (!dirty_ || choice == 1) then();  // don't go on if saving failed
+        }
+        return;
+    }
     if (!dialog_.open) return;
     float sw = screenW(), sh = screenH();
     DrawRectangle(0, 0, static_cast<int>(sw), static_cast<int>(sh), Fade(BLACK, 0.5f));
@@ -1635,14 +1795,115 @@ void Editor::addNode(const std::string& type) {
         return;
     }
     Node* parent = selected_ ? selected_ : editTree_.root();
+    if (!parent->sceneFile.empty() || parent->inInstance) {
+        log("Can't add nodes inside an instanced scene here; open its scene file to change what's in it "
+            "(or select another node).",
+            kDim);
+        return;
+    }
     node->name = uniqueChildName(parent, type);
     Node* raw = parent->addChild(std::move(node));
     parent->collapsed = false;
     select(raw);
 }
 
+void Editor::instanceScene(const std::string& scenePath, Node* parent, const Vector2* world) {
+    if (playTree_) return;
+    if (sceneUses(scenePath, scenePath_)) {
+        log("Can't put " + scenePath + " inside " + scenePath_ + ": it would contain itself.", kBad);
+        return;
+    }
+    nlohmann::json link;
+    link["instance"] = scenePath;
+    auto node = nodeFromJson(link);
+    if (!node || node->instanceMissing) return;  // nodeFromJson already said why
+    touch();
+    if (!editTree_.root()) {
+        auto root = createNode("Node2D");
+        root->name = "Main";
+        setRoot(std::move(root));
+    }
+    if (!parent) parent = editTree_.root();
+    while (parent->inInstance && parent->parent()) parent = parent->parent();
+    if (!parent->sceneFile.empty() && parent->parent()) parent = parent->parent();  // not inside another instance
+    node->name = uniqueChildName(parent, node->name);
+    Node* raw = parent->addChild(std::move(node));
+    if (auto* n2 = raw->as<Node2D>(); n2 && world) {
+        raylib::Vector2 p = *world;
+        if (ctrlDown()) p = raylib::Vector2{std::round(p.x / 8) * 8, std::round(p.y / 8) * 8};
+        else p = raylib::Vector2{std::round(p.x), std::round(p.y)};
+        n2->setGlobalPosition(p);
+    }
+    parent->collapsed = false;
+    select(raw);
+    log("Instanced " + scenePath + " as '" + raw->name + "'");
+}
+
+void Editor::saveBranchAsScene(Node* node, const std::string& scenePath) {
+    if (!node || !node->parent() || !node->sceneFile.empty()) return;
+    if (scenePath.empty() || scenePath == scenePath_) {
+        log("Pick a different file name for the new scene.", kBad);
+        return;
+    }
+    if (fs::exists(projectDir_ / scenePath)) {
+        log(scenePath + " already exists. Pick another name (or instance that scene instead).", kBad);
+        return;
+    }
+    std::string error;
+    if (!s2d::saveScene(*node, projectDir_ / scenePath, &error)) {
+        log("Couldn't save " + scenePath + ": " + error, kBad);
+        return;
+    }
+    touch();
+    node->sceneFile = scenePath;
+    markInstanceChildren(*node, true);
+    rescanFiles();
+    log("Saved '" + node->name + "' as " + scenePath + ". It's now an instance of that scene.", kGood);
+    log("Save this scene too (Ctrl+S) to keep the link.", kDim);
+}
+
+void Editor::resetInstance(Node* node) {
+    if (!node || node->sceneFile.empty() || !node->parent()) return;
+    auto fresh = instanceSource(node->sceneFile);
+    if (!fresh) return;
+    touch();
+    // Keep where it is and what it's called; everything else goes back to the original.
+    fresh->name = node->name;
+    auto* oldPlace = node->as<Node2D>();
+    if (auto* n2 = fresh->as<Node2D>(); n2 && oldPlace) {
+        n2->position = oldPlace->position;
+        n2->rotation = oldPlace->rotation;
+        n2->scale = oldPlace->scale;
+    }
+    fresh->collapsed = node->collapsed;
+    Node* parent = node->parent();
+    int index = node->indexInParent();
+    select(nullptr);
+    node->detach();  // freed here
+    Node* raw = parent->addChild(std::move(fresh), index);
+    select(raw);
+    log("Reset '" + raw->name + "' to match " + raw->sceneFile + " (kept its position).");
+}
+
+void Editor::makeLocal(Node* node) {
+    if (!node || node->sceneFile.empty()) return;
+    touch();
+    log("'" + node->name + "' is no longer linked to " + node->sceneFile + "; its nodes are now part of this scene.");
+    node->sceneFile.clear();
+    node->instanceMissing = false;
+    markInstanceChildren(*node, false);
+}
+
+bool Editor::lockedByInstance(Node* node, const char* action) {
+    if (!node || !node->inInstance) return false;
+    log(std::string("'") + node->name + "' belongs to an instanced scene, so it can't be " + action +
+            " here. Open the original scene to change it there (that changes every copy).",
+        kDim);
+    return true;
+}
+
 void Editor::deleteSelected() {
-    if (!selected_) return;
+    if (!selected_ || lockedByInstance(selected_, "deleted")) return;
     touch();
     if (!selected_->parent()) {
         setRoot(nullptr);
@@ -1655,7 +1916,7 @@ void Editor::deleteSelected() {
 }
 
 void Editor::duplicateSelected() {
-    if (!selected_) return;
+    if (!selected_ || lockedByInstance(selected_, "duplicated")) return;
     if (!selected_->parent()) {
         log("The root node can't be duplicated.", kDim);
         return;
@@ -1670,7 +1931,7 @@ void Editor::duplicateSelected() {
 }
 
 void Editor::moveSelected(int direction) {
-    if (!selected_ || !selected_->parent()) return;
+    if (!selected_ || !selected_->parent() || lockedByInstance(selected_, "reordered")) return;
     Node* parent = selected_->parent();
     int index = selected_->indexInParent() + direction;
     if (index < 0 || index >= static_cast<int>(parent->children().size())) return;

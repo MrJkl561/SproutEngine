@@ -1,312 +1,308 @@
 {
   "format": "sprout-editor-scene",
-  "version": 1,
   "root": {
-    "type": "Node2D",
-    "name": "Main",
-    "properties": {},
     "children": [
       {
-        "type": "ColorRect",
+        "children": [],
         "name": "Background",
         "properties": {
-          "size": [
-            800,
-            450
-          ],
           "color": [
             38,
             52,
             82,
             255
-          ]
+          ],
+          "position": [
+            0.0,
+            0.0
+          ],
+          "rotation": 0.0,
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "size": [
+            800.0,
+            450.0
+          ],
+          "visible": true
         },
-        "children": []
+        "type": "ColorRect"
       },
       {
-        "type": "StaticBody2D",
-        "name": "Floor",
-        "properties": {
-          "position": [
-            400,
-            430
-          ]
-        },
         "children": [
           {
-            "type": "ColorRect",
+            "children": [],
             "name": "Ground",
             "properties": {
-              "position": [
-                -400,
-                -20
-              ],
-              "size": [
-                800,
-                40
-              ],
               "color": [
                 70,
                 120,
                 60,
                 255
-              ]
+              ],
+              "position": [
+                -400.0,
+                -20.0
+              ],
+              "rotation": 0.0,
+              "scale": [
+                1.0,
+                1.0
+              ],
+              "size": [
+                800.0,
+                40.0
+              ],
+              "visible": true
             },
-            "children": []
+            "type": "ColorRect"
           },
           {
-            "type": "CollisionShape2D",
+            "children": [],
             "name": "CollisionShape2D",
             "properties": {
+              "disabled": false,
+              "position": [
+                0.0,
+                0.0
+              ],
+              "rotation": 0.0,
+              "scale": [
+                1.0,
+                1.0
+              ],
               "size": [
-                800,
-                40
-              ]
+                800.0,
+                40.0
+              ],
+              "visible": true
             },
-            "children": []
+            "type": "CollisionShape2D"
           }
-        ]
+        ],
+        "name": "Floor",
+        "properties": {
+          "position": [
+            400.0,
+            430.0
+          ],
+          "rotation": 0.0,
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "visible": true
+        },
+        "type": "StaticBody2D"
       },
       {
-        "type": "StaticBody2D",
+        "instance": "scenes/box.scene.json",
         "name": "Box",
-        "properties": {
-          "position": [
-            250,
-            378
-          ]
-        },
-        "children": [
-          {
-            "type": "Sprite2D",
-            "name": "Sprite2D",
-            "properties": {
-              "texture": "assets/box.png"
-            },
-            "children": []
-          },
-          {
-            "type": "CollisionShape2D",
-            "name": "CollisionShape2D",
-            "properties": {
-              "size": [
-                64,
-                64
-              ]
-            },
-            "children": []
-          }
-        ]
+        "type": "StaticBody2D"
       },
       {
-        "type": "StaticBody2D",
-        "name": "Platform",
-        "properties": {
-          "position": [
-            560,
-            340
-          ]
-        },
         "children": [
           {
-            "type": "ColorRect",
+            "children": [],
             "name": "Look",
             "properties": {
-              "position": [
-                -80,
-                -12
-              ],
-              "size": [
-                160,
-                24
-              ],
               "color": [
                 150,
                 110,
                 70,
                 255
-              ]
+              ],
+              "position": [
+                -80.0,
+                -12.0
+              ],
+              "rotation": 0.0,
+              "scale": [
+                1.0,
+                1.0
+              ],
+              "size": [
+                160.0,
+                24.0
+              ],
+              "visible": true
             },
-            "children": []
+            "type": "ColorRect"
           },
           {
-            "type": "CollisionShape2D",
+            "children": [],
             "name": "CollisionShape2D",
             "properties": {
+              "disabled": false,
+              "position": [
+                0.0,
+                0.0
+              ],
+              "rotation": 0.0,
+              "scale": [
+                1.0,
+                1.0
+              ],
               "size": [
-                160,
-                24
-              ]
+                160.0,
+                24.0
+              ],
+              "visible": true
             },
-            "children": []
+            "type": "CollisionShape2D"
           }
-        ]
-      },
-      {
-        "type": "CharacterBody2D",
-        "name": "Player",
-        "script": "PlayerController",
+        ],
+        "name": "Platform",
         "properties": {
           "position": [
-            100,
-            380
-          ]
-        },
-        "children": [
-          {
-            "type": "Sprite2D",
-            "name": "Sprite2D",
-            "properties": {
-              "texture": "assets/player.png"
-            },
-            "children": []
-          },
-          {
-            "type": "CollisionShape2D",
-            "name": "CollisionShape2D",
-            "properties": {
-              "size": [
-                32,
-                48
-              ]
-            },
-            "children": []
-          }
-        ]
-      },
-      {
-        "type": "Area2D",
-        "name": "Coin",
-        "script": "Coin",
-        "properties": {
-          "position": [
-            250,
-            310
-          ]
-        },
-        "children": [
-          {
-            "type": "Sprite2D",
-            "name": "Sprite2D",
-            "properties": {
-              "texture": "assets/coin.png"
-            },
-            "children": []
-          },
-          {
-            "type": "CollisionShape2D",
-            "name": "CollisionShape2D",
-            "properties": {
-              "size": [
-                24,
-                24
-              ]
-            },
-            "children": []
-          }
-        ]
-      },
-      {
-        "type": "Area2D",
-        "name": "Coin2",
-        "script": "Coin",
-        "properties": {
-          "position": [
-            560,
-            300
-          ]
-        },
-        "children": [
-          {
-            "type": "Sprite2D",
-            "name": "Sprite2D",
-            "properties": {
-              "texture": "assets/coin.png"
-            },
-            "children": []
-          },
-          {
-            "type": "CollisionShape2D",
-            "name": "CollisionShape2D",
-            "properties": {
-              "size": [
-                24,
-                24
-              ]
-            },
-            "children": []
-          }
-        ]
-      },
-      {
-        "type": "Area2D",
-        "name": "Coin3",
-        "script": "Coin",
-        "properties": {
-          "position": [
-            720,
-            390
-          ]
-        },
-        "children": [
-          {
-            "type": "Sprite2D",
-            "name": "Sprite2D",
-            "properties": {
-              "texture": "assets/coin.png"
-            },
-            "children": []
-          },
-          {
-            "type": "CollisionShape2D",
-            "name": "CollisionShape2D",
-            "properties": {
-              "size": [
-                24,
-                24
-              ]
-            },
-            "children": []
-          }
-        ]
-      },
-      {
-        "type": "Sprite2D",
-        "name": "Icon",
-        "script": "Spinner",
-        "properties": {
-          "position": [
-            730,
-            70
+            560.0,
+            340.0
           ],
-          "texture": "assets/icon.png"
+          "rotation": 0.0,
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "visible": true
         },
-        "children": []
+        "type": "StaticBody2D"
       },
       {
-        "type": "Label",
+        "instance": "scenes/player.scene.json",
+        "name": "Player",
+        "properties": {
+          "position": [
+            100.0,
+            380.0
+          ]
+        },
+        "type": "CharacterBody2D"
+      },
+      {
+        "instance": "scenes/coin.scene.json",
+        "name": "Coin",
+        "properties": {
+          "position": [
+            250.0,
+            310.0
+          ]
+        },
+        "type": "Area2D"
+      },
+      {
+        "instance": "scenes/coin.scene.json",
+        "name": "Coin2",
+        "properties": {
+          "position": [
+            560.0,
+            300.0
+          ]
+        },
+        "type": "Area2D"
+      },
+      {
+        "instance": "scenes/coin.scene.json",
+        "name": "Coin3",
+        "properties": {
+          "position": [
+            720.0,
+            390.0
+          ]
+        },
+        "type": "Area2D"
+      },
+      {
+        "children": [],
+        "name": "Icon",
+        "properties": {
+          "centered": true,
+          "flip_h": false,
+          "flip_v": false,
+          "modulate": [
+            255,
+            255,
+            255,
+            255
+          ],
+          "offset": [
+            0.0,
+            0.0
+          ],
+          "position": [
+            730.0,
+            70.0
+          ],
+          "rotation": 0.0,
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "texture": "assets/icon.png",
+          "visible": true
+        },
+        "script": "Spinner",
+        "type": "Sprite2D"
+      },
+      {
+        "children": [],
         "name": "Score",
         "properties": {
+          "color": [
+            255,
+            255,
+            255,
+            255
+          ],
+          "font_size": 24,
           "position": [
-            16,
-            12
+            16.0,
+            12.0
+          ],
+          "rotation": 0.0,
+          "scale": [
+            1.0,
+            1.0
           ],
           "text": "Coins: 0",
-          "font_size": 24
+          "visible": true
         },
-        "children": []
+        "type": "Label"
       },
       {
-        "type": "Camera2D",
+        "children": [],
         "name": "Camera2D",
         "properties": {
+          "current": true,
           "position": [
-            400,
-            225
-          ]
+            400.0,
+            225.0
+          ],
+          "rotation": 0.0,
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "visible": true,
+          "zoom": 1.0
         },
-        "children": []
+        "type": "Camera2D"
       }
-    ]
-  }
+    ],
+    "name": "Main",
+    "properties": {
+      "position": [
+        0.0,
+        0.0
+      ],
+      "rotation": 0.0,
+      "scale": [
+        1.0,
+        1.0
+      ],
+      "visible": true
+    },
+    "type": "Node2D"
+  },
+  "version": 1
 }

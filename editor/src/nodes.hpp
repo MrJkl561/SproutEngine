@@ -57,6 +57,13 @@ public:
     std::unique_ptr<Script> script;  // only exists while the game is playing
     bool collapsed = false;          // editor only: children hidden in the scene dock
 
+    // Instanced scenes (like Godot's): a node whose sceneFile is set is the root
+    // of another scene file, e.g. "scenes/player.scene.json". Its children come
+    // from that file; only the root's changed properties are saved with it.
+    std::string sceneFile;
+    bool inInstance = false;       // part of an instanced scene (not its root): edit it in its own file
+    bool instanceMissing = false;  // sceneFile couldn't be loaded; this is a stand-in
+
     Node();
     virtual ~Node();
     Node(const Node&) = delete;

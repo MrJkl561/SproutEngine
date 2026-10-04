@@ -56,6 +56,11 @@ private:
     Node* node_ = nullptr;
 };
 
+// Makes a new copy of a scene file, to add with addChild(), e.g.
+//   node()->addChild(instantiate("scenes/coin.scene.json"));
+// Returns nullptr if the file can't be loaded.
+std::unique_ptr<Node> instantiate(const std::string& scenePath);
+
 // Writes a line to the editor's Output panel.
 void print(const std::string& message);
 // Where print() sends its text (the editor points this at its Output panel).
