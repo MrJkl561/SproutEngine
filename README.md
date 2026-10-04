@@ -74,7 +74,7 @@ int main() {
   automatically by CMake.
 
 **What Sprout isn't:** it's for 2D desktop games written in code. There's no
-visual editor, no 3D, no networking and no web or mobile export. (If you
+3D, no networking and no web or mobile export. (If you
 outgrow it, you can call [raylib-cpp](https://github.com/RobLoach/raylib-cpp)
 directly from a Sprout game, see
 [Using raylib-cpp](docs/using-sprout-in-your-own-project.md#going-further-using-raylib-cpp-directly).)
@@ -114,6 +114,17 @@ few minutes. After that it's quick.
 (On Windows, run these commands in the **Developer PowerShell for VS**. Prefer
 Visual Studio, VS Code or CLion? See
 [Building from a code editor](docs/01-installing.md#building-from-a-code-editor).)
+
+## The editor (experimental)
+
+There's also a small **Godot-style 2D editor** in [`editor/`](editor/README.md):
+a scene tree of nodes (`Node2D`, `Sprite2D`, `Camera2D`, `CharacterBody2D`, ...),
+a live viewport where you drag textures around, an inspector, and C++ scripts
+attached to nodes. It's built along with everything else:
+
+| Windows | macOS / Linux |
+|---|---|
+| `build\bin\sprout_editor\sprout_editor.exe` | `./build/bin/sprout_editor/sprout_editor` |
 
 ## Make your own game
 
@@ -185,6 +196,7 @@ Cpp-Game-engine-/
 │       └── main.cpp
 ├── examples/           <- example games 01 to 10, to learn from
 ├── docs/               <- the documentation
+├── editor/             <- the Godot-style 2D editor (see editor/README.md)
 ├── engine/
 │   ├── include/sprout/ <- the engine's headers (each starts with a how-to comment)
 │   └── src/            <- the engine's code

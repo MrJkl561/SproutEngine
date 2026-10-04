@@ -1,0 +1,76 @@
+// C++ scripts. A script is a class that is attached to a node and gets
+// ready() once when the game starts and process(delta) every frame, just like
+// _ready() and _process() in Godot.
+//
+// Put your scripts in the editor/scripts/ folder (or press "New Script" in the
+// inspector), rebuild, and they show up in the inspector's script menu:
+//
+//     #include "script.hpp"
+//     using namespace s2d;
+//
+//     class Spinner : public Script {
+//     public:
+//         float speed = 90;
+//         void process(float delta) override { self<Node2D>()->rotation += speed * delta; }
+//     };
+//     REGISTER_SCRIPT(Spinner)
+#pragma once
+
+#include <functional>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include "nodes.hpp"
+#include "scene_tree.hpp"
+
+namespace s2d {
+
+class Script {
+public:
+    virtual ~Script() = default;
+
+    virtual void ready() {}
+    virtual void process(float /*delta*/) {}
+
+    // The node this script is attached to.
+    Node* node() const { return node_; }
+    // The node as a particular type, e.g. self<CharacterBody2D>(); nullptr if it isn't one.
+    template <class T> T* self() const { return node_ ? dynamic_cast<T*>(node_) : nullptr; }
+
+    // Finds a node by path from this one: "Child", "../Sibling".
+    Node* getNode(const std::string& path) const { return node_ ? node_->getNode(path) : nullptr; }
+    // Finds a node by name anywhere in the scene.
+    Node* findNode(const std::string& name) const;
+    template <class T> T* findNode(const std::string& name) const {
+        Node* n = findNode(name);
+        return n ? dynamic_cast<T*>(n) : nullptr;
+    }
+
+    SceneTree* tree() const { return node_ ? node_->tree() : nullptr; }
+
+private:
+    friend class SceneTree;
+    Node* node_ = nullptr;
+};
+
+// Writes a line to the editor's Output panel.
+void print(const std::string& message);
+// Where print() sends its text (the editor points this at its Output panel).
+void setPrintHandler(std::function<void(const std::string&)> handler);
+
+class ScriptRegistry {
+public:
+    using Factory = std::function<std::unique_ptr<Script>()>;
+    static bool add(const std::string& name, Factory factory);
+    static std::unique_ptr<Script> create(const std::string& name);
+    static bool has(const std::string& name);
+    static std::vector<std::string> names();  // sorted
+};
+
+}  // namespace s2d
+
+// Makes a script class show up in the editor. Put it after the class.
+#define REGISTER_SCRIPT(ClassName)                                            \
+    static const bool s2dRegistered_##ClassName = ::s2d::ScriptRegistry::add( \
+        #ClassName, [] { return std::unique_ptr<::s2d::Script>(new ClassName()); });
