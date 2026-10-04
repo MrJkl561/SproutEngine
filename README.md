@@ -120,7 +120,7 @@ Visual Studio, VS Code or CLion? See
 There's also a small **Godot-style 2D editor** in [`editor/`](editor/README.md):
 a scene tree of nodes (`Node2D`, `Sprite2D`, `Camera2D`, `CharacterBody2D`, ...),
 a live viewport where you drag textures around, an inspector, and C++ scripts
-attached to nodes. It's built along with everything else:
+attached to nodes that reload while it runs. It's built along with everything else:
 
 | Windows | macOS / Linux |
 |---|---|

@@ -38,7 +38,7 @@ void SceneTree::attachScripts(Node* node) {
             n->script->node_ = n;
         } else {
             print("Script '" + n->scriptName + "' on node '" + n->name +
-                  "' isn't compiled into the editor yet. Rebuild the editor to use it.");
+                  "' isn't loaded. Check the Output panel for compile errors.");
         }
     });
 }
@@ -52,6 +52,16 @@ void SceneTree::readyRecursive(Node* node) {
 void SceneTree::start() {
     playing_ = true;
     if (!root_) return;
+    attachScripts(root_.get());
+    readyRecursive(root_.get());
+}
+
+void SceneTree::dropScripts() {
+    forEachNode(root_.get(), [](Node* n) { n->script.reset(); });
+}
+
+void SceneTree::restartScripts() {
+    if (!playing_ || !root_) return;
     attachScripts(root_.get());
     readyRecursive(root_.get());
 }
@@ -125,6 +135,8 @@ std::unique_ptr<Script> ScriptRegistry::create(const std::string& name) {
     auto it = registry().find(name);
     return it == registry().end() ? nullptr : it->second();
 }
+
+void ScriptRegistry::remove(const std::string& name) { registry().erase(name); }
 
 bool ScriptRegistry::has(const std::string& name) { return registry().count(name) > 0; }
 

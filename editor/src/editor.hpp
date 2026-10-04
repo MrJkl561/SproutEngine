@@ -19,6 +19,7 @@
 #include <string>
 #include <vector>
 
+#include "hot_reload.hpp"
 #include "nodes.hpp"
 #include "scene_tree.hpp"
 
@@ -66,6 +67,8 @@ private:
     void saveScene();
     void play();
     void stop();
+    void updateScripts();  // hot reloading: watch, rebuild, reload
+    void reloadScripts();
     void addNode(const std::string& type);
     void deleteSelected();
     void duplicateSelected();
@@ -107,6 +110,7 @@ private:
 
     SceneTree editTree_;
     std::unique_ptr<SceneTree> playTree_;
+    std::unique_ptr<ScriptReloader> scripts_;
     std::unique_ptr<raylib::RenderTexture> gameTexture_;
     Node* selected_ = nullptr;
 

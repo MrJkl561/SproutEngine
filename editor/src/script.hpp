@@ -2,8 +2,10 @@
 // ready() once when the game starts and process(delta) every frame, just like
 // _ready() and _process() in Godot.
 //
-// Put your scripts in the editor/scripts/ folder (or press "New Script" in the
-// inspector), rebuild, and they show up in the inspector's script menu:
+// Put your scripts in the editor/scripts/ folder (or press "New" under Script
+// in the inspector). The editor compiles and reloads them every time you save
+// one, even while the game is running; they show up in the inspector's
+// script menu:
 //
 //     #include "script.hpp"
 //     using namespace s2d;
@@ -63,6 +65,7 @@ class ScriptRegistry {
 public:
     using Factory = std::function<std::unique_ptr<Script>()>;
     static bool add(const std::string& name, Factory factory);
+    static void remove(const std::string& name);
     static std::unique_ptr<Script> create(const std::string& name);
     static bool has(const std::string& name);
     static std::vector<std::string> names();  // sorted

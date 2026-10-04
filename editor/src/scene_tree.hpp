@@ -28,6 +28,11 @@ public:
     bool isPlaying() const { return playing_; }
     float delta() const { return delta_; }
 
+    // Hot reloading: destroy every node's script, then make them again (and
+    // call ready()) from whatever scripts are registered now.
+    void dropScripts();
+    void restartScripts();
+
     // The Camera2D the game looks through (the first one marked "current").
     Camera2D* currentCamera() const;
 

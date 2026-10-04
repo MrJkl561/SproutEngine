@@ -161,6 +161,7 @@ bool isImageFile(const fs::path& p) {
 
 const char* kScriptTemplate = R"(// A script for the Sprout editor. Attach it to a node in the inspector,
 // then press Play. ready() runs once, process() runs every frame.
+// Save this file and the editor reloads it, even while the game is running.
 #include "script.hpp"
 
 using namespace s2d;
@@ -221,7 +222,14 @@ Editor::Editor(fs::path projectDir, fs::path scriptsDir)
     rescanFiles();
 
     log("Sprout Editor - project: " + projectDir_.string());
-    log(std::to_string(ScriptRegistry::names().size()) + " C++ scripts compiled in, from " + scriptsDir_.string());
+    scripts_ = std::make_unique<ScriptReloader>(scriptsDir_);
+    if (ScriptReloader::supported()) {
+        log("C++ scripts in " + scriptsDir_.string() + " reload automatically when you save them.");
+        if (scripts_->libraryExists()) reloadScripts();
+        if (scripts_->libraryOutOfDate()) scripts_->requestBuild();
+    } else {
+        log(std::to_string(ScriptRegistry::names().size()) + " C++ scripts compiled in, from " + scriptsDir_.string());
+    }
     if (!openScene(scenePath_)) newScene();
     undoStack_.clear();
     dirty_ = false;
@@ -230,6 +238,7 @@ Editor::Editor(fs::path projectDir, fs::path scriptsDir)
 Editor::~Editor() {
     setPrintHandler(nullptr);
     playTree_.reset();
+    scripts_.reset();  // after the game: scripts' code lives in the library
     gameTexture_.reset();
     Assets::clear();
 }
@@ -319,6 +328,7 @@ void Editor::frame() {
     }
 
     handleShortcuts();
+    updateScripts();
 
     if (playTree_) {
         try {
@@ -433,6 +443,18 @@ void Editor::drawToolbar(Rectangle r) {
     if (!playing) GuiDisable();
     if (GuiButton({cx, y, 88, h}, GuiIconText(ICON_PLAYER_STOP, "Stop"))) stop();
     if (!playing) GuiEnable();
+
+    // Script hot reload status
+    if (ScriptReloader::supported()) {
+        float sx = cx + 104;
+        if (GuiButton({sx, y, 34, h}, GuiIconText(ICON_ROTATE_FILL, nullptr))) scripts_->requestBuild();
+        std::string status = scripts_->isBuilding()        ? "Scripts: compiling..."
+                             : scripts_->lastBuildFailed() ? "Scripts: build failed (see Output)"
+                                                           : "Scripts: " + std::to_string(scripts_->scriptNames().size()) +
+                                                                 " loaded";
+        Color c = scripts_->isBuilding() ? kOrange : scripts_->lastBuildFailed() ? kBad : kDim;
+        drawText(status, sx + 42, y + 6, c);
+    }
 
     std::string brand = "Sprout Editor 2D";
     drawText(brand, r.width - textWidth(brand) - 14, y + 6, kAccent);
@@ -650,7 +672,7 @@ void Editor::drawFileSystem(Rectangle r) {
         }
         std::string label = f.label;
         if (f.kind == FileEntry::Script && !f.scriptClass.empty() && !ScriptRegistry::has(f.scriptClass))
-            label += "  (rebuild)";
+            label += ScriptReloader::supported() ? "  (not loaded)" : "  (rebuild)";
         drawText(label, ix + 26, row.y + 4, f.kind == FileEntry::Scene && f.path == scenePath_ ? kAccent : kText);
 
         if (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
@@ -1231,7 +1253,8 @@ void Editor::drawInspector(Rectangle r) {
     drawText(status, x, y + 4, statusColor);
     if (!selected_->scriptName.empty() && !ScriptRegistry::has(selected_->scriptName)) {
         y += 22;
-        drawText("not compiled yet - rebuild the editor", x, y + 4, kOrange);
+        drawText(ScriptReloader::supported() ? "not loaded - check the Output panel" : "not compiled yet - rebuild the editor",
+                 x, y + 4, kOrange);
     }
     y += 30;
     float bw = (w - 8) / 3;
@@ -1473,6 +1496,49 @@ void Editor::stop() {
     log("Stopped.", kAccent);
 }
 
+void Editor::updateScripts() {
+    if (!ScriptReloader::supported()) return;
+    scripts_->update(GetTime());
+    bool ok = false;
+    std::string output;
+    if (!scripts_->pollBuild(ok, output)) return;
+    if (!ok) {
+        log("Scripts didn't compile - still using the last working version:", kBad);
+        // Show the compiler's error lines (with a little context), not the whole build log.
+        std::stringstream ss(output);
+        std::string line;
+        int shown = 0, context = 0;
+        while (std::getline(ss, line) && shown < 40) {
+            bool isError = line.find("error") != std::string::npos || line.find("Error") != std::string::npos;
+            if (isError) context = 3;
+            if (context > 0) {
+                log("  " + line, isError ? kBad : kDim);
+                --context;
+                ++shown;
+            }
+        }
+        if (shown == 0) log(output, kDim);
+        return;
+    }
+    reloadScripts();
+}
+
+void Editor::reloadScripts() {
+    // Scripts made from the old library must go before the library does.
+    if (playTree_) playTree_->dropScripts();
+    std::string error;
+    bool firstLoad = !scripts_->isLoaded();
+    if (scripts_->load(error)) {
+        std::string names;
+        for (auto& n : scripts_->scriptNames()) names += (names.empty() ? "" : ", ") + n;
+        log((firstLoad ? "Loaded scripts: " : "Reloaded scripts: ") + (names.empty() ? "(none)" : names), kGood);
+    } else {
+        log("Couldn't load the scripts library: " + error, kBad);
+    }
+    if (playTree_) playTree_->restartScripts();  // the running game picks up the new code
+    rescanFiles();
+}
+
 void Editor::addNode(const std::string& type) {
     auto node = createNode(type);
     if (!node) return;
@@ -1576,7 +1642,11 @@ void Editor::createScript(const std::string& className) {
     }
     rescanFiles();
     log("Created " + file.string(), kGood);
-    log("Rebuild the editor (cmake --build build) to compile it, then press Play.", kOrange);
+    if (ScriptReloader::supported()) {
+        log("It compiles and loads by itself; edit it and save to reload.", kGood);
+    } else {
+        log("Rebuild the editor (cmake --build build) to compile it, then press Play.", kOrange);
+    }
 }
 
 // ===========================================================================

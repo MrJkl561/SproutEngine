@@ -48,7 +48,7 @@ collect the coins. Press **Stop** (F8 or Esc) to go back to editing.
 - Drag a node onto another to make it a child, or onto the top/bottom edge of
   a row to put it before/after that node.
 - The little arrow folds a node's children away. A script icon shows which
-  nodes have a script (green = compiled, orange = needs a rebuild).
+  nodes have a script (green = loaded, orange = not loaded yet or failed to compile).
 
 **Viewport (middle)** - the live 2D view. The purple rectangle is the game
 window (800 x 450).
@@ -68,7 +68,7 @@ window (800 x 450).
 
 **Inspector (right)** - the selected node's fields.
 - Drag left/right on a number to change it, or click it to type a value.
-- **Attach** picks a compiled script, **New** writes a new script file,
+- **Attach** picks a loaded script, **New** writes a new script file,
   **Detach** removes the script.
 
 **Toolbar** - New / Open / Save (Ctrl+S) / Save As, Undo (Ctrl+Z) / Redo
@@ -94,8 +94,7 @@ is ignored for collisions).
 
 ## C++ scripts
 
-Every `.cpp` file in `editor/scripts/` is compiled into the editor. A script is a
-class with `ready()` (once, when Play starts) and `process(delta)` (every
+Every `.cpp` file in `editor/scripts/` is a script. A script is a class with `ready()` (once, when Play starts) and `process(delta)` (every
 frame), registered with `REGISTER_SCRIPT`:
 
 ```cpp
@@ -117,8 +116,35 @@ REGISTER_SCRIPT(Spinner)
 
 To add one: select a node, press **New** under *Script* in the inspector and
 type a class name. The editor writes `editor/scripts/<name>.cpp` from a
-template and attaches it. Then edit the file, rebuild (`cmake --build build`),
-restart the editor and press Play.
+template and attaches it. Then open the file in your code editor.
+
+### Hot reloading
+
+Scripts reload while the editor runs. Save a script and, about a second later,
+the editor rebuilds them and loads the new code. You don't need to restart it,
+and it works while the game is playing too:
+
+- The toolbar shows *Scripts: compiling...*, then *Scripts: N loaded*. The
+  Output panel lists the scripts that were reloaded.
+- If the code doesn't compile, the compiler's errors appear in the Output panel
+  and the last working version keeps running. Fix the error, save, and it
+  reloads.
+- If the game is playing, every script is made again from the new code and
+  its `ready()` runs again. Nodes keep their positions and other properties,
+  but the script objects are new, so their member variables start over.
+- The button next to the status rebuilds and reloads by hand.
+
+How it works: the scripts are built into a separate library,
+`sprout_scripts` (`.so` on Linux and macOS). The editor watches
+`editor/scripts/`, runs `cmake --build <your build folder> --target sprout_scripts`
+in the background, and loads the new library in place of the old one. Both
+the editor and your scripts use the editor's own copy of the nodes and raylib.
+
+**Windows:** hot reloading is turned off there. The editor links raylib
+statically, and a Windows DLL can't use the raylib inside the editor's `.exe`.
+On Windows the scripts are compiled into the editor, so you rebuild and restart
+it after changing a script. You can also pick the mode yourself with
+`-DSPROUT_EDITOR_HOT_RELOAD=ON/OFF`.
 
 What a script can use:
 
@@ -149,10 +175,11 @@ editor/
 │   ├── nodes.*           <- the node types
 │   ├── scene_tree.*      <- runs a scene: scripts, process, queueFree, drawing
 │   ├── script.hpp        <- the Script base class and REGISTER_SCRIPT
+│   ├── hot_reload.*      <- watches, rebuilds and reloads the scripts library
 │   ├── scene_io.*        <- scenes as JSON files
 │   ├── assets.*          <- texture cache
 │   └── raygui_*          <- raygui and its dark theme
-├── scripts/              <- your C++ scripts (all compiled in)
+├── scripts/              <- your C++ scripts (built into sprout_scripts)
 └── project/
     ├── assets/           <- pictures
     └── scenes/           <- *.scene.json files
@@ -163,7 +190,6 @@ Scenes are plain JSON (`{"type": "Sprite2D", "name": ..., "properties": {...},
 
 ## Not there yet
 
-This is the bare minimum. Not included: hot-reloading scripts (you rebuild and
-restart), script variables in the inspector, instancing scenes inside scenes,
+This is the bare minimum. Not included: hot reloading on Windows, script variables in the inspector, instancing scenes inside scenes,
 animation, sound nodes, UI (Control) nodes, tilemaps, and exporting a game
 without the editor.
