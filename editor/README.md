@@ -74,6 +74,13 @@ window (800 x 450).
 **Toolbar** - New / Open / Save (Ctrl+S) / Save As, Undo (Ctrl+Z) / Redo
 (Ctrl+Y or Ctrl+Shift+Z), Play (F5) / Stop (F8, Esc).
 
+**UI size** - the editor follows your display scaling (for example 150% on
+many Windows laptops), and the window opens sized to fit your screen. Change it
+with the **- / +** buttons at the top right, or Ctrl + / Ctrl - (Ctrl 0 goes back
+to the display's scale). To force a size from the start, set the environment
+variable `SPROUT_EDITOR_UI_SCALE`, e.g. `SPROUT_EDITOR_UI_SCALE=1.5`. Press
+**Home** in the viewport to fit the game window back in view.
+
 ## Nodes
 
 | Node | What it's for |

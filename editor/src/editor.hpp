@@ -34,11 +34,16 @@ public:
     bool openScene(const std::string& relativePath);
     void log(const std::string& message, Color color = Color{200, 200, 200, 255});
 
-    std::string screenshotPath;  // if set, the next frame is saved to this file
+    std::string screenshotPath;
+
+    // Interface size: 1 = 100%, 1.5 = 150%. Starts at the system's display scale.
+    void setUiScale(float scale);
+    float uiScale() const { return uiScale_; }  // if set, the next frame is saved to this file
 
 private:
     // --- panels -----------------------------------------------------------
     void drawToolbar(Rectangle r);
+    void applyUiScale();  // makes everything drawn after it uiScale_ times bigger
     void drawSceneDock(Rectangle r);
     void drawFileSystem(Rectangle r);
     void drawInspector(Rectangle r);
@@ -116,11 +121,14 @@ private:
 
     raylib::Camera2D viewCam_{{0, 0}, {400, 225}, 0.0f, 1.0f};
     Rectangle viewportRect_{};
+    float uiScale_ = 1.0f;
+    Font uiFont_{};  // the interface font, loaded at the size it's shown on screen
     Rectangle inspectorRect_{};
     int mouseCursor_ = 0;
     bool swallowMouse_ = false;  // a popup closed on mouse press: ignore the mouse until it's released
     bool clipLocked_ = false;    // the GUI is locked because the mouse is outside a scroll area
     bool panning_ = false;
+    bool viewFramed_ = false;  // the view has been fitted to the game window
     enum class ViewDrag { None, Move, Rotate } viewDrag_ = ViewDrag::None;
     raylib::Vector2 grabOffset_{0, 0};
 

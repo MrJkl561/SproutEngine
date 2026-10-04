@@ -50,14 +50,17 @@ target_compile_features(sprout_editor PRIVATE cxx_std_20)
 target_include_directories(sprout_editor PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${raygui_SOURCE_DIR}/src"   # raygui.h
-    "${raygui_SOURCE_DIR}")      # styles/dark/style_dark.h
+    "${raygui_SOURCE_DIR}"       # styles/dark/style_dark.h
+    "${raylib_SOURCE_DIR}/src/external/glfw/include")  # GLFW, to read the display scale
 target_link_libraries(sprout_editor PRIVATE raylib_cpp nlohmann_json::nlohmann_json)
 
 # The editor opens the project folder and writes new scripts straight into the
 # source tree, so "New Script" just works.
 target_compile_definitions(sprout_editor PRIVATE
     SPROUT_EDITOR_PROJECT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/project"
-    SPROUT_EDITOR_SCRIPTS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/scripts")
+    SPROUT_EDITOR_SCRIPTS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/scripts"
+    # The dark theme's font (CC0), loaded at the right size for the UI scale.
+    SPROUT_EDITOR_FONT="${raygui_SOURCE_DIR}/styles/dark/PixelOperator.ttf")
 
 set(_editor_out "${SPROUT_OUTPUT_DIR}/sprout_editor")
 

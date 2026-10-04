@@ -19,6 +19,7 @@
 #include "raygui_include.hpp"
 #include "scene_io.hpp"
 #include "script.hpp"
+#include "ui_scale.hpp"
 
 namespace fs = std::filesystem;
 
@@ -30,9 +31,6 @@ namespace {
 // Look
 // ---------------------------------------------------------------------------
 constexpr float kToolbarH = 40;
-constexpr float kLeftW = 290;
-constexpr float kRightW = 340;
-constexpr float kOutputH = 170;
 constexpr float kHeaderH = 28;
 constexpr float kRowH = 24;
 
@@ -49,6 +47,17 @@ const Color kOrange{255, 160, 60, 255};
 const Color kFieldBg{24, 26, 31, 255};
 const Color kGood{120, 220, 140, 255};
 const Color kBad{255, 110, 100, 255};
+
+float gUiScale = 1.0f;  // Editor::uiScale(), for the helpers below
+
+float screenW() { return GetScreenWidth() / gUiScale; }  // the window in UI pixels
+float screenH() { return GetScreenHeight() / gUiScale; }
+
+// Scissor rectangles are in real screen pixels.
+void beginClip(Rectangle r) {
+    BeginScissorMode(static_cast<int>(std::floor(r.x * gUiScale)), static_cast<int>(std::floor(r.y * gUiScale)),
+                     static_cast<int>(std::ceil(r.width * gUiScale)), static_cast<int>(std::ceil(r.height * gUiScale)));
+}
 
 float textSize() { return static_cast<float>(GuiGetStyle(DEFAULT, TEXT_SIZE)); }
 
@@ -213,6 +222,7 @@ struct ClipLock {
 Editor::Editor(fs::path projectDir, fs::path scriptsDir)
     : projectDir_(std::move(projectDir)), scriptsDir_(std::move(scriptsDir)) {
     Assets::setProjectDir(projectDir_);
+    setUiScale(systemUiScale());
     setPrintHandler([this](const std::string& msg) { log(msg, Color{230, 230, 160, 255}); });
 
     std::error_code ec;
@@ -237,6 +247,10 @@ Editor::Editor(fs::path projectDir, fs::path scriptsDir)
 
 Editor::~Editor() {
     setPrintHandler(nullptr);
+    if (uiFont_.texture.id != 0) {
+        setEditorFont(GetFontDefault());
+        UnloadFont(uiFont_);
+    }
     playTree_.reset();
     scripts_.reset();  // after the game: scripts' code lives in the library
     gameTexture_.reset();
@@ -294,8 +308,13 @@ void Editor::frame() {
     if (GetTime() - lastScan_ > 2.0) rescanFiles();
     mouseCursor_ = MOUSE_CURSOR_DEFAULT;
 
-    float sw = static_cast<float>(GetScreenWidth());
-    float sh = static_cast<float>(GetScreenHeight());
+    SetMouseScale(1 / uiScale_, 1 / uiScale_);  // mouse positions in UI pixels
+    float sw = screenW();
+    float sh = screenH();
+    // Docks shrink a little on small windows so the viewport keeps some room.
+    float kLeftW = std::floor(std::clamp(sw * 0.19f, 220.0f, 290.0f));
+    float kRightW = std::floor(std::clamp(sw * 0.22f, 260.0f, 340.0f));
+    float kOutputH = std::floor(std::clamp(sh * 0.2f, 110.0f, 170.0f));
     float bodyH = sh - kToolbarH;
     Rectangle toolbar{0, 0, sw, kToolbarH};
     Rectangle sceneDock{0, kToolbarH, kLeftW, std::floor(bodyH * 0.55f)};
@@ -342,6 +361,7 @@ void Editor::frame() {
 
     BeginDrawing();
     ClearBackground(kBg);
+    applyUiScale();
 
     bool modal = popup_.open || dialog_.open || swallowMouse_;
     if (modal) GuiLock();
@@ -376,6 +396,34 @@ void Editor::frame() {
     }
 }
 
+void Editor::applyUiScale() {
+    rlDrawRenderBatchActive();
+    rlLoadIdentity();
+    rlScalef(uiScale_, uiScale_, 1);
+}
+
+void Editor::setUiScale(float scale) {
+    scale = std::clamp(std::round(scale * 4) / 4, 0.75f, 3.0f);
+    uiScale_ = scale;
+    gUiScale = scale;
+
+    // Load the font at the size it really appears on screen, so text stays sharp.
+    static const Font styleFont = GuiGetFont();  // the theme's own font, the fallback
+    Font old = uiFont_;
+    uiFont_ = Font{};
+#if defined(SPROUT_EDITOR_FONT)
+    if (FileExists(SPROUT_EDITOR_FONT)) {
+        uiFont_ = LoadFontEx(SPROUT_EDITOR_FONT, static_cast<int>(std::lround(16 * scale)), nullptr, 0);
+        if (uiFont_.texture.id != 0) {
+            SetTextureFilter(uiFont_.texture, TEXTURE_FILTER_BILINEAR);
+            setEditorFont(uiFont_);
+        }
+    }
+#endif
+    if (uiFont_.texture.id == 0 && old.texture.id != 0) setEditorFont(styleFont);
+    if (old.texture.id != 0) UnloadFont(old);
+}
+
 void Editor::handleShortcuts() {
     if (playTree_) {
         if (IsKeyPressed(KEY_F8) || IsKeyPressed(KEY_ESCAPE)) stop();
@@ -389,6 +437,9 @@ void Editor::handleShortcuts() {
         if (IsKeyPressed(KEY_Z)) shiftDown() ? redo() : undo();
         if (IsKeyPressed(KEY_Y)) redo();
         if (IsKeyPressed(KEY_D)) duplicateSelected();
+        if (IsKeyPressed(KEY_EQUAL) || IsKeyPressed(KEY_KP_ADD)) setUiScale(uiScale_ + 0.25f);
+        if (IsKeyPressed(KEY_MINUS) || IsKeyPressed(KEY_KP_SUBTRACT)) setUiScale(uiScale_ - 0.25f);
+        if (IsKeyPressed(KEY_ZERO) || IsKeyPressed(KEY_KP_0)) setUiScale(systemUiScale());
         if (IsKeyPressed(KEY_A))
             openPopup(GetMousePosition(), nodeTypeNames(), [this](int i) { addNode(nodeTypeNames()[i]); });
     }
@@ -433,31 +484,52 @@ void Editor::drawToolbar(Rectangle r) {
     if (GuiButton({x, y, 34, h}, GuiIconText(ICON_REDO, nullptr))) redo();
     x += 44;
     if (playing) GuiEnable();
-    drawText(scenePath_ + (dirty_ ? " (unsaved)" : ""), x, y + 6, dirty_ ? kOrange : kDim);
 
-    // Play / Stop in the middle, like Godot
-    float cx = r.width / 2 + 40;
+    // Play / Stop in the middle, like Godot (but never on top of the buttons)
+    float px = std::max(std::floor(r.width / 2 - 92), x);
     if (playing) GuiDisable();
-    if (GuiButton({cx - 92, y, 88, h}, GuiIconText(ICON_PLAYER_PLAY, "Play"))) play();
+    if (GuiButton({px, y, 88, h}, GuiIconText(ICON_PLAYER_PLAY, "Play"))) play();
     if (playing) GuiEnable();
     if (!playing) GuiDisable();
-    if (GuiButton({cx, y, 88, h}, GuiIconText(ICON_PLAYER_STOP, "Stop"))) stop();
+    if (GuiButton({px + 92, y, 88, h}, GuiIconText(ICON_PLAYER_STOP, "Stop"))) stop();
     if (!playing) GuiEnable();
+    x = px + 196;
 
     // Script hot reload status
     if (ScriptReloader::supported()) {
-        float sx = cx + 104;
-        if (GuiButton({sx, y, 34, h}, GuiIconText(ICON_ROTATE_FILL, nullptr))) scripts_->requestBuild();
+        if (GuiButton({x, y, 34, h}, GuiIconText(ICON_ROTATE_FILL, nullptr))) scripts_->requestBuild();
         std::string status = scripts_->isBuilding()        ? "Scripts: compiling..."
-                             : scripts_->lastBuildFailed() ? "Scripts: build failed (see Output)"
+                             : scripts_->lastBuildFailed() ? "Scripts: build failed"
                                                            : "Scripts: " + std::to_string(scripts_->scriptNames().size()) +
                                                                  " loaded";
         Color c = scripts_->isBuilding() ? kOrange : scripts_->lastBuildFailed() ? kBad : kDim;
-        drawText(status, sx + 42, y + 6, c);
+        drawText(status, x + 42, y + 6, c);
+        x += 42 + textWidth(status) + 16;
     }
 
-    std::string brand = "Sprout Editor 2D";
-    drawText(brand, r.width - textWidth(brand) - 14, y + 6, kAccent);
+    // Interface size, on the right (Ctrl + / Ctrl - / Ctrl 0 do the same)
+    float ux = r.width - 8 - 30;
+    if (GuiButton({ux, y, 30, h}, "+")) setUiScale(uiScale_ + 0.25f);
+    std::string pct = std::to_string(static_cast<int>(std::lround(uiScale_ * 100))) + "%";
+    ux -= 4 + textWidth("300%") + 4;
+    drawText(pct, ux + 4 + (textWidth("300%") - textWidth(pct)) / 2, y + 6, kText);
+    ux -= 34;
+    if (GuiButton({ux, y, 30, h}, "-")) setUiScale(uiScale_ - 0.25f);
+    ux -= textWidth("UI size") + 8;
+    drawText("UI size", ux, y + 6, kDim);
+
+    // The scene's file name fills whatever room is left (shortened from the left)
+    std::string path = scenePath_ + (dirty_ ? " (unsaved)" : "");
+    float room = ux - 16 - x;
+    if (room > 40) {
+        bool cut = false;
+        while (path.size() > 4 && textWidth((cut ? "..." : "") + path) > room) {
+            path.erase(0, 1);
+            cut = true;
+        }
+        if (cut) path = "..." + path;
+        drawText(path, ux - 16 - textWidth(path), y + 6, dirty_ ? kOrange : kDim);
+    }
 }
 
 // ===========================================================================
@@ -467,10 +539,11 @@ void Editor::drawSceneDock(Rectangle r) {
     drawHeader(r, "Scene");
 
     float y = r.y + kHeaderH + 4, x = r.x + 6;
-    if (GuiButton({x, y, 88, 26}, GuiIconText(ICON_CIRCLE_ADD, "Add"))) {
+    float addW = std::min(88.0f, r.width - 12 - 4 * 33 - 4);  // the other four buttons are 30 wide
+    if (GuiButton({x, y, addW, 26}, GuiIconText(ICON_CIRCLE_ADD, "Add"))) {
         openPopup({x, y + 28}, nodeTypeNames(), [this](int i) { addNode(nodeTypeNames()[i]); });
     }
-    x += 92;
+    x += addW + 4;
     if (GuiButton({x, y, 30, 26}, GuiIconText(ICON_FILE_COPY, nullptr))) duplicateSelected();
     x += 33;
     if (GuiButton({x, y, 30, 26}, GuiIconText(ICON_BIN, nullptr))) deleteSelected();
@@ -505,8 +578,7 @@ void Editor::drawSceneDock(Rectangle r) {
         return;
     }
 
-    BeginScissorMode(static_cast<int>(view.x), static_cast<int>(view.y), static_cast<int>(view.width),
-                     static_cast<int>(view.height));
+    beginClip(view);
     Vector2 mouse = GetMousePosition();
     bool canClick = !GuiIsLocked() && mouseIn(view);
     for (size_t i = 0; i < rows.size(); ++i) {
@@ -637,8 +709,7 @@ void Editor::drawFileSystem(Rectangle r) {
     Rectangle view{};
     GuiScrollPanel(area, nullptr, content, &filesScroll_, &view);
 
-    BeginScissorMode(static_cast<int>(view.x), static_cast<int>(view.y), static_cast<int>(view.width),
-                     static_cast<int>(view.height));
+    beginClip(view);
     Vector2 mouse = GetMousePosition();
     bool canClick = !GuiIsLocked() && mouseIn(view);
     for (size_t i = 0; i < rows.size(); ++i) {
@@ -873,6 +944,7 @@ void Editor::updateViewportInput(Rectangle r) {
             if (viewDrag_ == ViewDrag::Move) {
                 raylib::Vector2 p = world + grabOffset_;
                 if (ctrlDown()) p = raylib::Vector2{std::round(p.x / 8) * 8, std::round(p.y / 8) * 8};  // snap to the grid
+                else if (viewCam_.zoom <= 2) p = raylib::Vector2{std::round(p.x), std::round(p.y)};   // whole pixels
                 sel->setGlobalPosition(p);
                 mouseCursor_ = MOUSE_CURSOR_RESIZE_ALL;
             } else {
@@ -922,14 +994,25 @@ void Editor::drawViewport(Rectangle r) {
         return;
     }
     viewCam_.offset = {r.x + r.width / 2, r.y + r.height / 2};
+    if (!viewFramed_ || (IsKeyPressed(KEY_HOME) && !isTyping())) {
+        // Show the whole game window (at most 100%) when the editor starts, or on Home.
+        raylib::Vector2 game = editTree_.gameSize;
+        float fit = std::min((r.width - 40) / game.x, (r.height - 60) / game.y);
+        viewCam_.zoom = std::clamp(std::floor(fit * 20) / 20, 0.1f, 1.0f);
+        viewCam_.target = game / 2;
+        viewFramed_ = true;
+    }
     if (!GuiIsLocked()) updateViewportInput(r);
     viewCam_.offset = {r.x + r.width / 2, r.y + r.height / 2};
 
-    BeginScissorMode(static_cast<int>(r.x), static_cast<int>(r.y), static_cast<int>(r.width),
-                     static_cast<int>(r.height));
+    beginClip(r);
     DrawRectangleRec(r, Color{22, 24, 29, 255});
 
-    viewCam_.BeginMode();
+    // The view camera works in UI pixels; draw through a copy scaled to screen pixels.
+    raylib::Camera2D drawCam = viewCam_;
+    drawCam.offset = raylib::Vector2(viewCam_.offset) * uiScale_;
+    drawCam.zoom = viewCam_.zoom * uiScale_;
+    drawCam.BeginMode();
     drawGrid(r);
     float px = 1.0f / viewCam_.zoom;  // one screen pixel in world units
     DrawRectangleLinesEx({-px, -px, editTree_.gameSize.x + 2 * px, editTree_.gameSize.y + 2 * px}, 2 * px,
@@ -954,7 +1037,8 @@ void Editor::drawViewport(Rectangle r) {
         if (lr.width > 0 && lr.height > 0) drawLocalRect(*sel, lr, BLANK, kOrange, 2 * px);
         else DrawCircleLinesV(sel->globalPosition(), 9 * px, kOrange);
     }
-    viewCam_.EndMode();
+    drawCam.EndMode();
+    applyUiScale();
 
     // Move/rotate handle, drawn in screen space so it's the same size at any zoom
     if (sel) {
@@ -984,7 +1068,7 @@ void Editor::drawViewport(Rectangle r) {
     std::snprintf(info, sizeof info, "Zoom %d%%   Mouse %.0f, %.0f", static_cast<int>(viewCam_.zoom * 100 + 0.5f),
                   world.x, world.y);
     drawText(info, r.x + 10, r.y + 8, kDim);
-    drawText("Drag: move  Handle: rotate (Shift snaps)  Ctrl: grid snap  Wheel: zoom  Right/Middle drag: pan",
+    drawText("Drag: move  Handle: rotate (Shift snaps)  Ctrl: grid snap  Wheel: zoom  Right/Middle drag: pan  Home: show all",
              r.x + 10, r.y + r.height - 24, Fade(kDim, 0.8f));
     EndScissorMode();
     DrawRectangleLinesEx(r, 1, kBorder);
@@ -1218,8 +1302,7 @@ void Editor::drawInspector(Rectangle r) {
     Rectangle content{0, 0, area.width - 16, inspectorContentHeight_};
     Rectangle view{};
     GuiScrollPanel(area, nullptr, content, &inspectorScroll_, &view);
-    BeginScissorMode(static_cast<int>(view.x), static_cast<int>(view.y), static_cast<int>(view.width),
-                     static_cast<int>(view.height));
+    beginClip(view);
     ClipLock clip(view, clipLocked_);
 
     float x = view.x + 10, w = view.width - 20;
@@ -1310,8 +1393,7 @@ void Editor::drawOutput(Rectangle r) {
     }
     Rectangle view{};
     GuiScrollPanel(area, nullptr, content, &outputScroll_, &view);
-    BeginScissorMode(static_cast<int>(view.x), static_cast<int>(view.y), static_cast<int>(view.width),
-                     static_cast<int>(view.height));
+    beginClip(view);
     for (size_t i = 0; i < logLines_.size(); ++i) {
         float y = view.y + outputScroll_.y + 4 + i * lineH;
         if (y + lineH < view.y || y > view.y + view.height) continue;
@@ -1332,7 +1414,7 @@ void Editor::drawPopup() {
     float w = 160;
     for (auto& s : popup_.items) w = std::max(w, textWidth(s) + 32);
     float h = popup_.items.size() * kRowH + 8;
-    float sw = static_cast<float>(GetScreenWidth()), sh = static_cast<float>(GetScreenHeight());
+    float sw = screenW(), sh = screenH();
     Rectangle box{std::min(popup_.pos.x, sw - w - 4), std::min(popup_.pos.y, sh - h - 4), w, h};
 
     DrawRectangleRec({box.x + 4, box.y + 4, box.width, box.height}, Fade(BLACK, 0.4f));
@@ -1374,7 +1456,7 @@ void Editor::openTextDialog(std::string title, std::string message, std::string 
 
 void Editor::drawModal() {
     if (!dialog_.open) return;
-    float sw = static_cast<float>(GetScreenWidth()), sh = static_cast<float>(GetScreenHeight());
+    float sw = screenW(), sh = screenH();
     DrawRectangle(0, 0, static_cast<int>(sw), static_cast<int>(sh), Fade(BLACK, 0.5f));
     Rectangle box{sw / 2 - 220, sh / 2 - 85, 440, 170};
     bool cancel = GuiWindowBox(box, dialog_.title.c_str()) != 0;
