@@ -21,7 +21,7 @@ endif()
 
 set(SPROUT_GAME_NAME "game" CACHE STRING "The game's program name")
 set(SPROUT_GAME_PROJECT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../project" CACHE PATH "The project folder")
-set(SPROUT_GAME_SCRIPTS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../scripts" CACHE PATH "The C++ scripts folder")
+set(SPROUT_GAME_SCRIPTS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../project/scripts" CACHE PATH "The C++ scripts folder")
 
 include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/SproutDependencies.cmake")
 

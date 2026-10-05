@@ -18,6 +18,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -31,7 +32,12 @@ namespace s2d {
 
 class Editor {
 public:
-    Editor(std::filesystem::path projectDir, std::filesystem::path scriptsDir);
+    explicit Editor(std::filesystem::path projectDir);
+
+    // Set when the user picked another project in the Project Manager; the
+    // program then closes this editor and opens one for that project.
+    std::optional<std::filesystem::path> takeProjectSwitch();
+    void openProjectManager();
     ~Editor();
 
     void frame();  // handle input and draw one frame
@@ -120,9 +126,13 @@ private:
     void openPopup(Vector2 at, std::vector<std::string> items, std::function<void(int)> onPick);
     void openTextDialog(std::string title, std::string message, std::string initial,
                         std::function<void(const std::string&)> onOk);
-    bool isTyping() const { return !activeField_.empty() || dialog_.open || confirm_.open || export_.open; }
+    bool isTyping() const {
+        return !activeField_.empty() || dialog_.open || confirm_.open || export_.open || projects_.open;
+    }
 
     // --- exporting -----------------------------------------------------------
+    void drawProjectManager();
+    void switchProject(const std::filesystem::path& project);
     void openExportDialog();
     std::string defaultExportDir() const;  // editor/exports
     void drawExportDialog();
@@ -242,6 +252,21 @@ private:
         int width = 800, height = 450;
         bool nameEdit = false, dirEdit = false, widthEdit = false, heightEdit = false;
     } export_;
+
+    std::filesystem::path workDir_;  // this project's builds (scripts, exports)
+    std::optional<std::filesystem::path> switchTo_;
+    struct ProjectManagerDialog {
+        bool open = false;
+        int mode = 0;  // 0 the list, 1 new project, 2 open a folder
+        int selected = -1;
+        std::vector<std::filesystem::path> list;
+        raylib::Vector2 scroll{0, 0};
+        char name[64] = {};
+        char location[512] = {};
+        char path[512] = {};
+        bool nameEdit = false, locationEdit = false, pathEdit = false;
+        std::string error;
+    } projects_;
 
     struct ConfirmDialog {
         bool open = false;

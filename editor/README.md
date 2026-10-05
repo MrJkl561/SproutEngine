@@ -11,7 +11,7 @@ small node system (in `editor/src/`), modelled on Godot's.
 
 ```
 +--------------------------------------------------------------+
-| New  Open  Save  Save As  Undo Redo      Play  Stop          |
+| Projects New Open Save Save As Export   Play  Play Scene  Stop|
 +------------+------------------------------------+------------+
 | Scene      |                                    | Inspector  |
 | (node tree)|        2D viewport                 | (the       |
@@ -40,6 +40,35 @@ It opens `editor/project/` and its scene `scenes/main.scene.json`: a tiny
 platformer. Press **Play** (F5), run with the arrow keys, jump with Space and
 collect the coins, then walk into the door to reach level 2. Press **Stop** (F8
 or Esc) to go back to editing.
+
+## Projects
+
+Each game is its own project folder:
+
+```
+My Game/
+├── project.json    <- name, main scene, window size, export settings
+├── scenes/         <- *.scene.json
+├── assets/         <- pictures
+├── scripts/        <- the game's C++ scripts
+└── exports/        <- exported games (made by Export)
+```
+
+Press **Projects** at the left of the toolbar to open the Project Manager:
+
+- **Recent projects:** click one, then **Open** (or click it a second time).
+- **New Project...** makes a new project (with a first scene and the folders
+  above) in `SproutProjects` in your home folder, or wherever you choose.
+- **Open Folder...** opens any project folder by its path.
+- **Remove from List** only forgets it in the list; the files stay.
+
+The editor opens the project you had open last time. You can also name one when
+starting it: `sprout_editor "path/to/My Game"`. The demo project lives in
+`editor/project/`. Switching projects asks to save unsaved changes, then
+reopens the editor on the other project in the same window. Each project's
+scripts are built and hot reloaded in a build folder of its own
+(`<build>/projects/<name>-<id>/`), so the editor never needs rebuilding for a
+new project.
 
 ## Using it
 
@@ -148,7 +177,7 @@ install for the others (then press **Recheck**). It also sets:
 - **Game name:** the window title and the program's file name.
 - **Main scene:** the scene the game starts with.
 - **Window size:** the size of the game's screen (the purple frame in the viewport).
-- **Export to:** the folder to export to (default `editor/exports/`). Each platform
+- **Export to:** the folder to export to (default: the project's `exports/`). Each platform
   gets its own folder in it.
 
 These are saved in `project/project.json`. Exporting saves the open scene first.
@@ -213,7 +242,7 @@ is ignored for collisions).
 
 ## C++ scripts
 
-Every `.cpp` file in `editor/scripts/` is a script. A script is a class with `ready()` (once, when Play starts) and `process(delta)` (every
+Every `.cpp` file in the project's `scripts/` folder is a script. A script is a class with `ready()` (once, when Play starts) and `process(delta)` (every
 frame), registered with `REGISTER_SCRIPT`:
 
 ```cpp
@@ -234,7 +263,7 @@ REGISTER_SCRIPT(Spinner)
 ```
 
 To add one: select a node, press **New** under *Script* in the inspector and
-type a class name. The editor writes `editor/scripts/<name>.cpp` from a
+type a class name. The editor writes `scripts/<name>.cpp` (in the project) from a
 template and attaches it. Then open the file in your code editor.
 
 ### Script variables (shown in the inspector)
@@ -306,18 +335,21 @@ and it works while the game is playing too:
   but the script objects are new, so their member variables start over.
 - The button next to the status rebuilds and reloads by hand.
 
-How it works: the scripts are built into a separate library,
-`sprout_scripts` (`.dll` on Windows, `.so` on Linux and macOS). The editor
-watches `editor/scripts/`, runs `cmake --build <your build folder> --target sprout_scripts`
-in the background, and loads the new library in place of the old one. Both
+How it works: the project's scripts are built into a separate library,
+`sprout_scripts` (`.dll` on Windows, `.so` on Linux and macOS), by the small
+CMake project in `editor/scripts_module/`. The editor watches the project's
+`scripts/` folder, runs CMake on it in the background (in the project's own
+build folder, with the same build type as the editor), and loads the new
+library in place of the old one. Both
 the editor and your scripts use the editor's own copy of the nodes and raylib.
 The editor makes them available to the library: on Windows by exporting every
 raylib function from `raylib.h` and all of the editor's own code.
 
 **Windows notes:**
 - You need Visual Studio's compiler (the normal setup). With MinGW, hot
-  reloading is off and the scripts are compiled into the editor, so you rebuild
-  and restart it instead.
+  reloading is off: the scripts of one project (the demo's, or the folder you set
+  with `-DSPROUT_EDITOR_STATIC_SCRIPTS_DIR=...`) are compiled into the editor,
+  and you rebuild and restart it after changing them.
 - If you change the editor's own code (not a script) while it's running, the
   background build can't replace the running `sprout_editor.exe`. Close the
   editor and build normally.
@@ -344,15 +376,17 @@ editor/
 │   ├── hot_reload.*      <- watches, rebuilds and reloads the scripts library
 │   ├── export.*          <- the Export window's work: build + package per platform
 │   ├── project.*         <- project.json (game name, main scene, window size)
+│   ├── projects.*        <- recent projects, making new ones
 │   ├── scene_io.*        <- scenes as JSON files
 │   ├── assets.*          <- texture cache
 │   └── raygui_*          <- raygui and its dark theme
 ├── player/               <- the game runtime that exports are built from
-├── scripts/              <- your C++ scripts (built into sprout_scripts)
-└── project/
+├── scripts_module/       <- builds a project's scripts into the hot reload library
+└── project/              <- the demo project
     ├── project.json      <- game name, main scene, window size, export settings
     ├── assets/           <- pictures
-    └── scenes/           <- *.scene.json files (main, level2, player, coin, box, door)
+    ├── scenes/           <- *.scene.json files (main, level2, player, coin, box, door)
+    └── scripts/          <- its C++ scripts
 ```
 
 Scenes are plain JSON (`{"type": "Sprite2D", "name": ..., "properties": {...},

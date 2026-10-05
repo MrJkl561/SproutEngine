@@ -43,6 +43,23 @@ void copyTree(const fs::path& from, const fs::path& to) {
     if (ec) throw fs::filesystem_error("copying " + from.string(), from, to, ec);
 }
 
+// The project's files that go into a game: everything except exports, the
+// scripts' source code (they're compiled in) and hidden folders like .git.
+void stageProject(const fs::path& project, const fs::path& stage, const fs::path& outDir) {
+    std::error_code ec;
+    fs::remove_all(stage, ec);
+    fs::create_directories(stage, ec);
+    fs::path outAbs = fs::weakly_canonical(fs::absolute(outDir, ec), ec);
+    for (auto& entry : fs::directory_iterator(project, ec)) {
+        std::string name = entry.path().filename().string();
+        if (name == "exports" || name == "scripts" || name.empty() || name[0] == '.') continue;
+        fs::path abs = fs::weakly_canonical(fs::absolute(entry.path(), ec), ec);
+        if (abs == outAbs) continue;  // a custom export folder inside the project
+        if (entry.is_directory(ec)) copyTree(entry.path(), stage / name);
+        else fs::copy_file(entry.path(), stage / name, fs::copy_options::overwrite_existing);
+    }
+}
+
 }  // namespace
 
 std::string programName(const std::string& gameName) {
@@ -175,6 +192,8 @@ bool Exporter::exportOne(const ExportTarget& t, const std::string& program, cons
                          const fs::path& outDir) {
     say("== Exporting " + t.label + " ==", 3);
     fs::path build = paths_.workDir / t.id;
+    fs::path stage = build / "stage" / "project";
+    stageProject(paths_.projectDir, stage, outDir);
     fs::path deps = paths_.depsDir;
     std::string cmake = quote(paths_.cmake);
     std::string host = kHost;
@@ -188,7 +207,7 @@ bool Exporter::exportOne(const ExportTarget& t, const std::string& program, cons
     if (ninja && !(native && host == "windows")) configure += " -G Ninja";  // VS on Windows picks its own
     configure += " -DCMAKE_BUILD_TYPE=Release";
     configure += " -DSPROUT_GAME_NAME=" + program;
-    configure += " -DSPROUT_GAME_PROJECT_DIR=" + quote(paths_.projectDir);
+    configure += " -DSPROUT_GAME_PROJECT_DIR=" + quote(stage);
     configure += " -DSPROUT_GAME_SCRIPTS_DIR=" + quote(paths_.scriptsDir);
     configure += " -DFETCHCONTENT_SOURCE_DIR_RAYLIB=" + quote(deps / "raylib-src");
     configure += " -DFETCHCONTENT_SOURCE_DIR_RAYLIB_CPP=" + quote(deps / "raylib_cpp-src");
@@ -239,11 +258,11 @@ bool Exporter::exportOne(const ExportTarget& t, const std::string& program, cons
     } else if (t.id == "macos") {
         fs::path app = dest / (program + ".app");
         copyTree(out / (program + ".app"), app);
-        copyTree(paths_.projectDir, app / "Contents" / "Resources" / "project");
+        copyTree(stage, app / "Contents" / "Resources" / "project");
     } else {
         std::string exe = program + (t.id == "windows" ? ".exe" : "");
         fs::copy_file(out / exe, dest / exe);
-        copyTree(paths_.projectDir, dest / "project");
+        copyTree(stage, dest / "project");
     }
     say("Exported " + t.label + " to " + dest.string(), 1);
     return true;

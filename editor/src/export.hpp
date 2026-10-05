@@ -29,8 +29,8 @@ class Exporter {
 public:
     struct Paths {
         std::filesystem::path editorDir;   // editor/ (has player/ in it)
-        std::filesystem::path projectDir;  // editor/project
-        std::filesystem::path scriptsDir;  // editor/scripts
+        std::filesystem::path projectDir;  // the project folder
+        std::filesystem::path scriptsDir;  // its scripts/ folder
         std::filesystem::path workDir;     // where each platform is built
         std::filesystem::path depsDir;     // raylib etc. sources (the editor's own copies)
         std::string cmake;                 // the cmake program

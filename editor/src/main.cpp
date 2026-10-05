@@ -1,13 +1,13 @@
 // Sprout Editor: a small Godot-style 2D editor built on raylib, raylib-cpp and raygui.
 //
-//   sprout_editor [project folder]
-//   sprout_editor --check-scripts    load every C++ script without opening a
-//                                    window, then exit (used by CI)
-//   sprout_editor --export linux,web [output folder]
-//                                    export the game without opening a window
+//   sprout_editor [project folder]          open a project (default: the one open last time)
+//   sprout_editor [--project folder] --check-scripts
+//                                           build and load the project's C++ scripts without
+//                                           opening a window, then exit (used by CI)
+//   sprout_editor [--project folder] --export linux,web [output folder]
+//                                           export the game without opening a window
 //
-// With no folder it opens editor/project/ from the source tree, and new C++
-// scripts are written to editor/scripts/ so the next build compiles them in.
+// The command-line tools use the demo project (editor/project/) unless --project says otherwise.
 #include <raylib-cpp.hpp>
 
 #include <algorithm>
@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -23,6 +24,7 @@
 #include "export.hpp"
 #include "hot_reload.hpp"
 #include "project.hpp"
+#include "projects.hpp"
 #include "raygui_include.hpp"
 #include "script.hpp"
 #include "ui_scale.hpp"
@@ -30,24 +32,28 @@
 #ifndef SPROUT_EDITOR_PROJECT_DIR
 #define SPROUT_EDITOR_PROJECT_DIR "project"
 #endif
-#ifndef SPROUT_EDITOR_SCRIPTS_DIR
-#define SPROUT_EDITOR_SCRIPTS_DIR "scripts"
-#endif
+
+namespace fs = std::filesystem;
 
 namespace {
 
-// Loads the scripts (the hot reload library, if this build uses one) and makes
-// one of each, without a window. Proves the library loads and links on this
-// system: on Windows that's the part most likely to go wrong.
-int checkScripts() {
-    s2d::ScriptReloader reloader(SPROUT_EDITOR_SCRIPTS_DIR);
+// Loads the project's scripts (building the hot reload library first, if this
+// build uses one) and makes one of each, without a window. Proves the library
+// builds, loads and links on this system.
+int checkScripts(const fs::path& project) {
+    s2d::ScriptReloader reloader(project / "scripts", s2d::projects::workDir(project, SPROUT_EDITOR_BUILD_DIR) / "scripts");
     if (s2d::ScriptReloader::supported()) {
+        std::string output;
+        if (!reloader.buildNow(output)) {
+            std::printf("%s\nFAILED to build the scripts library.\n", output.c_str());
+            return 1;
+        }
         std::string error;
         if (!reloader.load(error)) {
             std::printf("FAILED to load the scripts library: %s\n", error.c_str());
             return 1;
         }
-        std::printf("Loaded the scripts library (hot reloading is on).\n");
+        std::printf("Built and loaded the scripts library (hot reloading is on).\n");
     } else {
         std::printf("Scripts are compiled into the editor (hot reloading is off).\n");
     }
@@ -64,12 +70,11 @@ int checkScripts() {
 
 // Exports the game from the command line, printing progress. Exit code 0 if
 // every platform worked.
-int exportGame(const std::string& targets, const std::string& outDir) {
-    std::filesystem::path project = SPROUT_EDITOR_PROJECT_DIR;
+int exportGame(const fs::path& project, const std::string& targets, const std::string& outDir) {
     s2d::ProjectSettings settings = s2d::ProjectSettings::load(project);
-    s2d::Exporter exporter({SPROUT_EDITOR_DIR, project, SPROUT_EDITOR_SCRIPTS_DIR,
-                            std::filesystem::path(SPROUT_EDITOR_BUILD_DIR) / "exports", SPROUT_EDITOR_DEPS_DIR,
-                            SPROUT_EDITOR_CMAKE});
+    s2d::Exporter exporter({SPROUT_EDITOR_DIR, project, project / "scripts",
+                            s2d::projects::workDir(project, SPROUT_EDITOR_BUILD_DIR) / "exports",
+                            SPROUT_EDITOR_DEPS_DIR, SPROUT_EDITOR_CMAKE});
     std::vector<std::string> ids;
     for (size_t start = 0; start <= targets.size();) {
         size_t comma = targets.find(',', start);
@@ -77,7 +82,7 @@ int exportGame(const std::string& targets, const std::string& outDir) {
         if (comma == std::string::npos) break;
         start = comma + 1;
     }
-    std::filesystem::path out = outDir.empty() ? std::filesystem::path(SPROUT_EDITOR_DIR) / "exports" : std::filesystem::path(outDir);
+    fs::path out = outDir.empty() ? project / "exports" : fs::path(outDir);
     bool started = exporter.start(ids, settings.name, out);
     bool failed = !started;
     auto print = [&] {
@@ -96,13 +101,43 @@ int exportGame(const std::string& targets, const std::string& outDir) {
     return failed ? 1 : 0;
 }
 
+// The project to open: the one named on the command line, else the one open
+// last time, else the demo project (else a new one in ~/SproutProjects).
+fs::path startupProject(const std::string& fromCommandLine) {
+    if (!fromCommandLine.empty()) return fromCommandLine;
+    s2d::projects::Recent recent = s2d::projects::loadRecent();
+    if (!recent.last.empty() && s2d::projects::isProject(recent.last)) return recent.last;
+    if (s2d::projects::isProject(SPROUT_EDITOR_PROJECT_DIR)) return SPROUT_EDITOR_PROJECT_DIR;
+    fs::path fresh = s2d::projects::defaultProjectsFolder() / "My Game";
+    std::string error;
+    if (!s2d::projects::isProject(fresh)) s2d::projects::createProject(fresh, "My Game", error);
+    return fresh;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
-    if (argc > 1 && std::string(argv[1]) == "--check-scripts") return checkScripts();
-    if (argc > 2 && std::string(argv[1]) == "--export") return exportGame(argv[2], argc > 3 ? argv[3] : "");
-    std::filesystem::path project = argc > 1 ? argv[1] : SPROUT_EDITOR_PROJECT_DIR;
-    std::filesystem::path scripts = SPROUT_EDITOR_SCRIPTS_DIR;
+    //   sprout_editor [project folder]
+    //   sprout_editor [--project folder] --check-scripts
+    //   sprout_editor [--project folder] --export linux,windows,web [output folder]
+    std::string projectArg, exportTargets, exportOut;
+    bool check = false, exporting = false;
+    for (int i = 1; i < argc; ++i) {
+        std::string a = argv[i];
+        if (a == "--project" && i + 1 < argc) projectArg = argv[++i];
+        else if (a == "--check-scripts") check = true;
+        else if (a == "--export" && i + 1 < argc) {
+            exporting = true;
+            exportTargets = argv[++i];
+            if (i + 1 < argc && std::string(argv[i + 1]).rfind("--", 0) != 0) exportOut = argv[++i];
+        } else if (a.rfind("--", 0) != 0) projectArg = a;
+    }
+    // The command-line tools use the demo project unless told otherwise.
+    if (check) return checkScripts(projectArg.empty() ? fs::path(SPROUT_EDITOR_PROJECT_DIR) : fs::path(projectArg));
+    if (exporting)
+        return exportGame(projectArg.empty() ? fs::path(SPROUT_EDITOR_PROJECT_DIR) : fs::path(projectArg), exportTargets,
+                          exportOut);
+    fs::path project = startupProject(projectArg);
 
     SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_VSYNC_HINT | FLAG_MSAA_4X_HINT);
     raylib::Window window(1280, 720, "Sprout Editor");
@@ -132,14 +167,26 @@ int main(int argc, char** argv) {
     long testFrames = framesEnv ? std::strtol(framesEnv, nullptr, 10) : 0;
     const char* screenshot = std::getenv("SPROUT_EDITOR_SCREENSHOT");
 
-    {
-        s2d::Editor editor(project, scripts);
-        editor.setUiScale(scale);
-        for (long frame = 1; !window.ShouldClose(); ++frame) {
-            if (screenshot && testFrames > 0 && frame == testFrames) editor.screenshotPath = screenshot;
-            editor.frame();
-            if (testFrames > 0 && frame >= testFrames) break;
-        }
-    }  // the editor frees its textures before the window closes
+    // One editor per project; picking another project in the Project Manager
+    // closes this one and opens the next in the same window.
+    long frame = 0;
+    while (true) {
+        s2d::projects::remember(project);
+        std::optional<fs::path> next;
+        {
+            s2d::Editor editor(project);
+            editor.setUiScale(scale);
+            while (!window.ShouldClose()) {
+                ++frame;
+                if (screenshot && testFrames > 0 && frame == testFrames) editor.screenshotPath = screenshot;
+                editor.frame();
+                if (testFrames > 0 && frame >= testFrames) break;
+                if ((next = editor.takeProjectSwitch())) break;
+            }
+            scale = editor.uiScale();
+        }  // the editor frees its textures and scripts before the next one (or the window) goes
+        if (!next) break;
+        project = *next;
+    }
     return 0;
 }

@@ -16,7 +16,51 @@ namespace s2d {
 
 bool ScriptReloader::supported() { return true; }
 
-ScriptReloader::ScriptReloader(fs::path scriptsDir) : scriptsDir_(std::move(scriptsDir)) { known_ = scanScripts(); }
+ScriptReloader::ScriptReloader(fs::path scriptsDir, fs::path workDir)
+    : scriptsDir_(std::move(scriptsDir)), workDir_(std::move(workDir)) {
+    known_ = scanScripts();
+}
+
+fs::path ScriptReloader::libraryPath() const {
+#if defined(_WIN32)
+    return workDir_ / "out" / "sprout_scripts.dll";
+#else
+    return workDir_ / "out" / "sprout_scripts.so";
+#endif
+}
+
+bool ScriptReloader::runBuild(std::string& output) const {
+    auto q = [](const fs::path& p) { return "\"" + p.generic_string() + "\""; };
+    std::string cmake = q(SPROUT_EDITOR_CMAKE);
+    std::error_code ec;
+    if (!fs::exists(workDir_ / "CMakeCache.txt", ec)) {
+        std::string cmd;
+        // First time for this project: set up its build folder.
+        cmd = cmake + " -S " + q(fs::path(SPROUT_EDITOR_DIR) / "scripts_module") + " -B " + q(workDir_);
+#if !defined(_WIN32)
+        if (!platform::findProgram("ninja").empty()) cmd += " -G Ninja";
+#endif
+        cmd += std::string(" -DCMAKE_BUILD_TYPE=") + SPROUT_EDITOR_BUILD_CONFIG;
+        cmd += " -DSPROUT_SCRIPTS_DIR=" + q(scriptsDir_);
+        cmd += " -DSPROUT_EDITOR_SRC=" + q(fs::path(SPROUT_EDITOR_DIR) / "src");
+        cmd += " -DSPROUT_DEPS_DIR=" + q(SPROUT_EDITOR_DEPS_DIR);
+#if defined(SPROUT_EDITOR_IMPLIB)
+        cmd += " -DSPROUT_EDITOR_IMPLIB=" + q(SPROUT_EDITOR_IMPLIB);
+#endif
+        if (platform::runCommand(cmd, output) != 0) {
+            fs::remove(workDir_ / "CMakeCache.txt", ec);  // try setting it up again next time
+            return false;
+        }
+    }
+    // The same build type as the editor (on Windows the two must match).
+    std::string build = cmake + " --build " + q(workDir_) + " --config " + SPROUT_EDITOR_BUILD_CONFIG;
+    return platform::runCommand(build, output) == 0;
+}
+
+bool ScriptReloader::buildNow(std::string& output) {
+    if (thread_.joinable()) thread_.join();
+    return runBuild(output);
+}
 
 ScriptReloader::~ScriptReloader() {
     if (thread_.joinable()) thread_.join();
@@ -59,10 +103,8 @@ void ScriptReloader::startBuild() {
     buildDone_ = false;
     if (thread_.joinable()) thread_.join();
     thread_ = std::thread([this] {
-        std::string cmd = std::string("\"") + SPROUT_EDITOR_CMAKE + "\" --build \"" + SPROUT_EDITOR_BUILD_DIR +
-                          "\" --target sprout_scripts --config \"" + SPROUT_EDITOR_BUILD_CONFIG + "\"";
         std::string output;
-        bool ok = platform::runCommand(cmd, output) == 0;
+        bool ok = runBuild(output);
         buildOk_ = ok;
         buildOutput_ = std::move(output);
         buildDone_ = true;  // published last; read by pollBuild() on the main thread
@@ -81,13 +123,13 @@ bool ScriptReloader::pollBuild(bool& ok, std::string& output) {
 
 bool ScriptReloader::libraryExists() const {
     std::error_code ec;
-    return fs::exists(SPROUT_EDITOR_SCRIPTS_MODULE, ec);
+    return fs::exists(libraryPath(), ec);
 }
 
 bool ScriptReloader::libraryOutOfDate() const {
     std::error_code ec;
     if (!libraryExists()) return true;
-    auto built = fs::last_write_time(SPROUT_EDITOR_SCRIPTS_MODULE, ec);
+    auto built = fs::last_write_time(libraryPath(), ec);
     for (auto& [path, time] : known_)
         if (time > built) return true;
     return false;
@@ -100,8 +142,8 @@ bool ScriptReloader::load(std::string& error) {
     // file name twice, and the build can replace the original while we run.
     fs::path copy = fs::temp_directory_path(ec) /
                     ("sprout_scripts_" + std::to_string(platform::processId()) + "_" + std::to_string(++loadCount_) +
-                     fs::path(SPROUT_EDITOR_SCRIPTS_MODULE).extension().string());
-    fs::copy_file(SPROUT_EDITOR_SCRIPTS_MODULE, copy, fs::copy_options::overwrite_existing, ec);
+                     libraryPath().extension().string());
+    fs::copy_file(libraryPath(), copy, fs::copy_options::overwrite_existing, ec);
     if (ec) {
         error = "couldn't copy the scripts library: " + ec.message();
         return false;
@@ -138,7 +180,11 @@ void ScriptReloader::unload() {
 #else  // scripts are compiled into the editor
 
 bool ScriptReloader::supported() { return false; }
-ScriptReloader::ScriptReloader(fs::path scriptsDir) : scriptsDir_(std::move(scriptsDir)) {}
+ScriptReloader::ScriptReloader(fs::path scriptsDir, fs::path workDir)
+    : scriptsDir_(std::move(scriptsDir)), workDir_(std::move(workDir)) {}
+fs::path ScriptReloader::libraryPath() const { return {}; }
+bool ScriptReloader::runBuild(std::string&) const { return true; }
+bool ScriptReloader::buildNow(std::string&) { return true; }
 ScriptReloader::~ScriptReloader() = default;
 std::map<std::string, fs::file_time_type> ScriptReloader::scanScripts() const { return {}; }
 void ScriptReloader::update(double) {}

@@ -4,8 +4,8 @@
 #  Built together with the rest of Sprout (option SPROUT_BUILD_EDITOR), or on
 #  its own:   cmake -S editor -B build-editor && cmake --build build-editor
 #
-#  Every .cpp file in scripts/ is built into the sprout_scripts library, which
-#  the editor rebuilds and reloads by itself when a script changes.
+#  Each project's C++ scripts (<project>/scripts/*.cpp) are built into a library
+#  by scripts_module/, which the editor rebuilds and reloads by itself.
 # =============================================================================
 cmake_minimum_required(VERSION 3.25)
 
@@ -25,9 +25,13 @@ endif()
 file(GLOB SPROUT_EDITOR_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.hpp")
+# Without hot reloading, one project's scripts are compiled into the editor
+# (the demo project's, unless you point this somewhere else).
+set(SPROUT_EDITOR_STATIC_SCRIPTS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/project/scripts" CACHE PATH
+    "Without hot reloading: the scripts folder compiled into the editor")
 file(GLOB SPROUT_EDITOR_SCRIPTS CONFIGURE_DEPENDS
-    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/*.hpp")
+    "${SPROUT_EDITOR_STATIC_SCRIPTS_DIR}/*.cpp"
+    "${SPROUT_EDITOR_STATIC_SCRIPTS_DIR}/*.hpp")
 
 # Hot reloading: the scripts are built as a separate library that the editor
 # rebuilds and reloads whenever a script file changes. The library uses the
@@ -59,7 +63,7 @@ target_link_libraries(sprout_editor PRIVATE raylib_cpp nlohmann_json::nlohmann_j
 # source tree, so "New Script" just works.
 target_compile_definitions(sprout_editor PRIVATE
     SPROUT_EDITOR_PROJECT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/project"
-    SPROUT_EDITOR_SCRIPTS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/scripts"
+    SPROUT_EDITOR_STATIC_SCRIPTS_DIR="${SPROUT_EDITOR_STATIC_SCRIPTS_DIR}"
     # The dark theme's font (CC0), loaded at the right size for the UI scale.
     SPROUT_EDITOR_FONT="${raygui_SOURCE_DIR}/styles/dark/PixelOperator.ttf"
     # For rebuilding scripts and exporting games: CMake, the build folder, and the
@@ -90,42 +94,15 @@ if(SPROUT_EDITOR_HOT_RELOAD)
         set_target_properties(sprout_editor PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
     endif()
 
-    # src/module/ holds an empty file so the library builds even with no scripts.
-    add_library(sprout_scripts MODULE
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/module/scripts_module.cpp"
-        ${SPROUT_EDITOR_SCRIPTS})
-    target_compile_features(sprout_scripts PRIVATE cxx_std_20)
-    target_include_directories(sprout_scripts PRIVATE
-        "${CMAKE_CURRENT_SOURCE_DIR}/src"
-        "$<TARGET_PROPERTY:raylib,INTERFACE_INCLUDE_DIRECTORIES>"
-        "$<TARGET_PROPERTY:raylib_cpp,INTERFACE_INCLUDE_DIRECTORIES>")
-    # Link against the editor: node types, print(), raylib all come from it.
-    target_link_libraries(sprout_scripts PRIVATE sprout_editor)
-    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-        # Lets an old copy of the library really unload when a new one is loaded.
-        target_compile_options(sprout_scripts PRIVATE -fno-gnu-unique)
-    endif()
-    if(MSVC)
-        target_compile_options(sprout_scripts PRIVATE /W4 /permissive- /utf-8)
-    else()
-        target_compile_options(sprout_scripts PRIVATE -Wall -Wextra -Wpedantic)
-    endif()
-    set_target_properties(sprout_scripts PROPERTIES
-        PREFIX ""
-        LIBRARY_OUTPUT_DIRECTORY "${_editor_out}"
-        RUNTIME_OUTPUT_DIRECTORY "${_editor_out}")  # Windows puts DLLs in the "runtime" folder
-    foreach(config Debug Release RelWithDebInfo MinSizeRel)
-        string(TOUPPER "${config}" config)
-        set_target_properties(sprout_scripts PROPERTIES
-            LIBRARY_OUTPUT_DIRECTORY_${config} "${_editor_out}"
-            RUNTIME_OUTPUT_DIRECTORY_${config} "${_editor_out}")
-    endforeach()
-
     # What the editor needs to rebuild and load the scripts by itself.
+    # Each project's scripts are built by scripts_module/ (the editor runs CMake
+    # for it), with the same build type as the editor.
     target_compile_definitions(sprout_editor PRIVATE
         SPROUT_EDITOR_HOT_RELOAD=1
-        SPROUT_EDITOR_SCRIPTS_MODULE="$<TARGET_FILE:sprout_scripts>"
         SPROUT_EDITOR_BUILD_CONFIG="$<CONFIG>")
+    if(WIN32)
+        target_compile_definitions(sprout_editor PRIVATE SPROUT_EDITOR_IMPLIB="$<TARGET_LINKER_FILE:sprout_editor>")
+    endif()
 else()
     target_link_libraries(sprout_editor PRIVATE raylib)
 endif()

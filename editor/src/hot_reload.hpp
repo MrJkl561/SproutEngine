@@ -1,9 +1,10 @@
 // Hot reloading of C++ scripts.
 //
-// The scripts in editor/scripts/ are built into a separate library
-// (sprout_scripts). ScriptReloader watches that folder, rebuilds the library
-// with CMake in the background when a file changes, and loads the new build:
-// each REGISTER_SCRIPT in it adds the script to the ScriptRegistry again.
+// A project's scripts (<project>/scripts/*.cpp) are built into a library
+// (sprout_scripts) by editor/scripts_module, in a build folder of the
+// project's own. ScriptReloader watches the scripts folder, rebuilds the
+// library with CMake in the background when a file changes, and loads the new
+// build: each REGISTER_SCRIPT in it adds the script to the ScriptRegistry again.
 //
 // Before unload() / load(), every Script object made from the old library must
 // be destroyed (their code lives in it); the editor takes care of that.
@@ -20,7 +21,8 @@ namespace s2d {
 
 class ScriptReloader {
 public:
-    explicit ScriptReloader(std::filesystem::path scriptsDir);
+    // workDir: where this project's scripts library is built.
+    ScriptReloader(std::filesystem::path scriptsDir, std::filesystem::path workDir);
     ~ScriptReloader();
     ScriptReloader(const ScriptReloader&) = delete;
     ScriptReloader& operator=(const ScriptReloader&) = delete;
@@ -31,6 +33,7 @@ public:
     // Checks the scripts folder for changes and starts a build when needed.
     void update(double now);
     void requestBuild();  // rebuild as soon as possible
+    bool buildNow(std::string& output);  // build and wait (for the command line)
 
     // True once, when a build has finished. ok/output describe how it went.
     bool pollBuild(bool& ok, std::string& output);
@@ -49,7 +52,11 @@ private:
     std::map<std::string, std::filesystem::file_time_type> scanScripts() const;
     void startBuild();
 
+    std::filesystem::path libraryPath() const;
+    bool runBuild(std::string& output) const;  // configure (the first time) + build
+
     std::filesystem::path scriptsDir_;
+    std::filesystem::path workDir_;
     std::map<std::string, std::filesystem::file_time_type> known_;
     [[maybe_unused]] double lastScan_ = -100;
     [[maybe_unused]] bool pending_ = false;

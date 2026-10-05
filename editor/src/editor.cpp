@@ -18,6 +18,7 @@
 #include "assets.hpp"
 #include "raygui_include.hpp"
 #include "export.hpp"
+#include "projects.hpp"
 #include "scene_io.hpp"
 #include "script.hpp"
 #include "ui_scale.hpp"
@@ -220,8 +221,9 @@ struct ClipLock {
 // ===========================================================================
 // Setup
 // ===========================================================================
-Editor::Editor(fs::path projectDir, fs::path scriptsDir)
-    : projectDir_(std::move(projectDir)), scriptsDir_(std::move(scriptsDir)) {
+Editor::Editor(fs::path projectDir)
+    : projectDir_(std::move(projectDir)), scriptsDir_(projectDir_ / "scripts"),
+      workDir_(projects::workDir(projectDir_, SPROUT_EDITOR_BUILD_DIR)) {
     Assets::setProjectDir(projectDir_);
     setUiScale(systemUiScale());
     setPrintHandler([this](const std::string& msg) { log(msg, Color{230, 230, 160, 255}); });
@@ -232,19 +234,22 @@ Editor::Editor(fs::path projectDir, fs::path scriptsDir)
     ensureDefaultAssets();
     rescanFiles();
 
-    log("Sprout Editor - project: " + projectDir_.string());
-    scripts_ = std::make_unique<ScriptReloader>(scriptsDir_);
+    settings_ = ProjectSettings::load(projectDir_);
+    log("Sprout Editor - project '" + settings_.name + "' in " + projectDir_.string());
+    scripts_ = std::make_unique<ScriptReloader>(scriptsDir_, workDir_ / "scripts");
     if (ScriptReloader::supported()) {
         log("C++ scripts in " + scriptsDir_.string() + " reload automatically when you save them.");
         if (scripts_->libraryExists()) reloadScripts();
-        if (scripts_->libraryOutOfDate()) scripts_->requestBuild();
+        if (scripts_->libraryOutOfDate()) {
+            if (!scripts_->libraryExists()) log("Building this project's scripts (the first time takes a little longer)...");
+            scripts_->requestBuild();
+        }
     } else {
         log(std::to_string(ScriptRegistry::names().size()) + " C++ scripts compiled in, from " + scriptsDir_.string());
     }
-    settings_ = ProjectSettings::load(projectDir_);
     editTree_.gameSize = raylib::Vector2{static_cast<float>(settings_.width), static_cast<float>(settings_.height)};
     exporter_ = std::make_unique<Exporter>(Exporter::Paths{
-        SPROUT_EDITOR_DIR, projectDir_, scriptsDir_, fs::path(SPROUT_EDITOR_BUILD_DIR) / "exports",
+        SPROUT_EDITOR_DIR, projectDir_, scriptsDir_, workDir_ / "exports",
         SPROUT_EDITOR_DEPS_DIR, SPROUT_EDITOR_CMAKE});
     scenePath_ = settings_.mainScene;
     if (!openScene(scenePath_)) newScene();
@@ -372,7 +377,7 @@ void Editor::frame() {
     applyUiScale();
 
     pumpExport();
-    bool modal = popup_.open || dialog_.open || confirm_.open || export_.open || swallowMouse_;
+    bool modal = popup_.open || dialog_.open || confirm_.open || export_.open || projects_.open || swallowMouse_;
     if (modal) GuiLock();
     {
         // While the game runs the scene can't be edited (it's a copy that's playing).
@@ -401,7 +406,7 @@ void Editor::frame() {
     EndDrawing();
 
     SetMouseCursor(mouseCursor_);
-    std::string title = "Sprout Editor - " + scenePath_ + (dirty_ ? " *" : "") + (playTree_ ? "  [playing]" : "");
+    std::string title = "Sprout Editor - " + settings_.name + " - " + scenePath_ + (dirty_ ? " *" : "") + (playTree_ ? "  [playing]" : "");
     if (title != windowTitle_) {
         windowTitle_ = title;
         SetWindowTitle(title.c_str());
@@ -469,6 +474,8 @@ void Editor::drawToolbar(Rectangle r) {
     float x = 8, y = 6, h = 28;
     bool playing = playTree_ != nullptr;
     if (playing) GuiDisable();
+    if (GuiButton({x, y, 100, h}, GuiIconText(ICON_FILETYPE_HOME, "Projects"))) openProjectManager();
+    x += 108;
     if (GuiButton({x, y, 76, h}, GuiIconText(ICON_FILE_NEW, "New"))) confirmUnsaved([this] { newScene(); });
     x += 80;
     if (GuiButton({x, y, 80, h}, GuiIconText(ICON_FOLDER_FILE_OPEN, "Open"))) {
@@ -742,7 +749,7 @@ void Editor::drawFileSystem(Rectangle r) {
             lastKind = files_[i].kind;
             const char* title = lastKind == FileEntry::Texture ? "res://assets"
                                 : lastKind == FileEntry::Scene ? "res://scenes"
-                                                               : "C++ scripts (editor/scripts)";
+                                                               : "res://scripts (C++)";
             rows.push_back({true, title, 0});
         }
         rows.push_back({false, files_[i].label, i});
@@ -1675,9 +1682,166 @@ void Editor::openTextDialog(std::string title, std::string message, std::string 
 }
 
 // ===========================================================================
+// Projects
+// ===========================================================================
+std::optional<fs::path> Editor::takeProjectSwitch() {
+    auto next = switchTo_;
+    switchTo_.reset();
+    return next;
+}
+
+void Editor::openProjectManager() {
+    if (playTree_) stop();
+    activeField_.clear();
+    projects_ = ProjectManagerDialog{};
+    projects_.open = true;
+    for (auto& p : projects::loadRecent().list)
+        if (projects::isProject(p)) projects_.list.push_back(p);
+    std::error_code ec;
+    fs::path current = fs::weakly_canonical(fs::absolute(projectDir_, ec), ec);
+    for (size_t i = 0; i < projects_.list.size(); ++i)
+        if (projects_.list[i] == current) projects_.selected = static_cast<int>(i);
+    std::snprintf(projects_.location, sizeof projects_.location, "%s",
+                  projects::defaultProjectsFolder().string().c_str());
+}
+
+void Editor::switchProject(const fs::path& project) {
+    std::error_code ec;
+    fs::path target = fs::weakly_canonical(fs::absolute(project, ec), ec);
+    fs::path current = fs::weakly_canonical(fs::absolute(projectDir_, ec), ec);
+    if (target == current) {
+        projects_.open = false;  // already open
+        return;
+    }
+    confirmUnsaved([this, target] {
+        projects_.open = false;
+        switchTo_ = target;
+    });
+}
+
+void Editor::drawProjectManager() {
+    float sw = screenW(), sh = screenH();
+    DrawRectangle(0, 0, static_cast<int>(sw), static_cast<int>(sh), Fade(BLACK, 0.55f));
+    float bw = std::min(720.0f, sw - 40), bh = std::min(520.0f, sh - 40);
+    Rectangle box{std::floor((sw - bw) / 2), std::floor((sh - bh) / 2), bw, bh};
+    const char* titles[] = {"Projects", "New Project", "Open Project Folder"};
+    bool close = GuiWindowBox(box, titles[projects_.mode]) != 0;
+    bool editing = projects_.nameEdit || projects_.locationEdit || projects_.pathEdit;
+    float x = box.x + 16, w = box.width - 32, y = box.y + 40;
+    float by = box.y + box.height - 44;  // the button row
+
+    if (projects_.mode == 0) {
+        // The list of projects
+        float listW = w - 190;
+        Rectangle area{x, y, listW, by - y - 10};
+        const float rowH = 46;
+        Rectangle content{0, 0, area.width - 16, std::max(1.0f, projects_.list.size() * rowH)};
+        Rectangle view{};
+        GuiScrollPanel(area, nullptr, content, &projects_.scroll, &view);
+        beginClip(view);
+        std::error_code ec;
+        fs::path current = fs::weakly_canonical(fs::absolute(projectDir_, ec), ec);
+        Vector2 mouse = GetMousePosition();
+        for (size_t i = 0; i < projects_.list.size(); ++i) {
+            Rectangle row{view.x, view.y + projects_.scroll.y + i * rowH, view.width, rowH};
+            bool hover = !GuiIsLocked() && CheckCollisionPointRec(mouse, row) && CheckCollisionPointRec(mouse, view);
+            if (static_cast<int>(i) == projects_.selected) DrawRectangleRec(row, kSelect);
+            else if (hover) DrawRectangleRec(row, kHover);
+            const fs::path& p = projects_.list[i];
+            std::string name = projects::projectName(p) + (p == current ? "   (open now)" : "");
+            drawText(name, row.x + 10, row.y + 5, p == current ? kGood : kText);
+            drawText(p.string(), row.x + 10, row.y + 25, kDim);
+            if (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                if (projects_.selected == static_cast<int>(i)) switchProject(p);  // a second click opens it
+                projects_.selected = static_cast<int>(i);
+            }
+        }
+        if (projects_.list.empty()) drawText("No projects yet: make one with New Project.", view.x + 10, view.y + 10, kDim);
+        EndScissorMode();
+
+        // Buttons on the right
+        float bx = x + listW + 14, bw2 = w - listW - 14;
+        bool hasSel = projects_.selected >= 0 && projects_.selected < static_cast<int>(projects_.list.size());
+        if (!hasSel) GuiDisable();
+        if (GuiButton({bx, y, bw2, 30}, GuiIconText(ICON_FOLDER_FILE_OPEN, "Open"))) switchProject(projects_.list[projects_.selected]);
+        if (!hasSel) GuiEnable();
+        if (GuiButton({bx, y + 38, bw2, 30}, GuiIconText(ICON_FOLDER_ADD, "New Project..."))) {
+            projects_.mode = 1;
+            projects_.error.clear();
+            std::snprintf(projects_.name, sizeof projects_.name, "My Game");
+        }
+        if (GuiButton({bx, y + 76, bw2, 30}, GuiIconText(ICON_FOLDER_OPEN, "Open Folder..."))) {
+            projects_.mode = 2;
+            projects_.error.clear();
+        }
+        if (!hasSel) GuiDisable();
+        if (GuiButton({bx, y + 130, bw2, 30}, GuiIconText(ICON_CROSS, "Remove from List"))) {
+            projects::forget(projects_.list[projects_.selected]);
+            projects_.list.erase(projects_.list.begin() + projects_.selected);
+            projects_.selected = -1;
+        }
+        if (!hasSel) GuiEnable();
+        drawText("Removing only forgets it here;", bx, y + 168, kDim);
+        drawText("its files stay on disk.", bx, y + 186, kDim);
+        if (GuiButton({box.x + box.width - 106, by, 90, 30}, "Close")) close = true;
+    } else if (projects_.mode == 1) {
+        const float labelW = 110;
+        drawText("Name", x, y + 5, kDim);
+        if (GuiTextBox({x + labelW, y, w - labelW, 26}, projects_.name, sizeof projects_.name, projects_.nameEdit))
+            projects_.nameEdit = !projects_.nameEdit;
+        y += 36;
+        drawText("Location", x, y + 5, kDim);
+        if (GuiTextBox({x + labelW, y, w - labelW, 26}, projects_.location, sizeof projects_.location,
+                       projects_.locationEdit))
+            projects_.locationEdit = !projects_.locationEdit;
+        y += 40;
+        std::string folder;
+        for (char c : std::string(projects_.name)) folder += (c == '/' || c == '\\' || c == ':') ? '_' : c;
+        fs::path target = fs::path(projects_.location) / folder;
+        drawText("The project will be made in:", x, y, kDim);
+        drawText(target.string(), x, y + 20, kAccent);
+        drawText("with scenes/, assets/ and scripts/ folders and a first scene.", x, y + 44, kDim);
+        if (GuiButton({box.x + box.width - 210, by, 100, 30}, "Back")) projects_.mode = 0;
+        if (GuiButton({box.x + box.width - 106, by, 90, 30}, "Create")) {
+            std::string error;
+            if (folder.empty()) {
+                projects_.error = "Give the project a name.";
+            } else if (projects::createProject(target, projects_.name, error)) {
+                projects::remember(target);
+                switchProject(target);
+            } else {
+                projects_.error = error;
+            }
+        }
+    } else {
+        drawText("Folder", x, y + 5, kDim);
+        if (GuiTextBox({x + 110, y, w - 110, 26}, projects_.path, sizeof projects_.path, projects_.pathEdit))
+            projects_.pathEdit = !projects_.pathEdit;
+        y += 40;
+        drawText("Type or paste the path of a project folder (the one with project.json in it).", x, y, kDim);
+        if (GuiButton({box.x + box.width - 210, by, 100, 30}, "Back")) projects_.mode = 0;
+        if (GuiButton({box.x + box.width - 106, by, 90, 30}, "Open")) {
+            fs::path p = projects_.path;
+            if (!projects::isProject(p)) {
+                projects_.error = "That folder isn't a Sprout project (no project.json or scenes/ in it).";
+            } else {
+                projects::remember(p);
+                switchProject(p);
+            }
+        }
+    }
+    if (!projects_.error.empty()) drawText(projects_.error, x, by + 6, kBad);
+
+    if (close || (IsKeyPressed(KEY_ESCAPE) && !editing)) {
+        if (projects_.mode != 0) projects_.mode = 0;
+        else projects_.open = false;
+    }
+}
+
+// ===========================================================================
 // Export
 // ===========================================================================
-std::string Editor::defaultExportDir() const { return (fs::path(SPROUT_EDITOR_DIR) / "exports").string(); }
+std::string Editor::defaultExportDir() const { return (projectDir_ / "exports").string(); }
 
 void Editor::openExportDialog() {
     if (playTree_) return;
@@ -1837,6 +2001,7 @@ void Editor::requestOpenScene(const std::string& scenePath) {
 
 void Editor::drawModal() {
     if (export_.open) drawExportDialog();
+    if (projects_.open) drawProjectManager();
     if (confirm_.open) {
         float sw = screenW(), sh = screenH();
         DrawRectangle(0, 0, static_cast<int>(sw), static_cast<int>(sh), Fade(BLACK, 0.5f));
