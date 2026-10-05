@@ -1,0 +1,75 @@
+{
+  "format": "sprout-editor-scene",
+  "root": {
+    "children": [
+      {
+        "children": [],
+        "name": "Sprite2D",
+        "properties": {
+          "centered": true,
+          "flip_h": false,
+          "flip_v": false,
+          "modulate": [
+            255,
+            255,
+            255,
+            255
+          ],
+          "offset": [
+            0.0,
+            0.0
+          ],
+          "position": [
+            0.0,
+            0.0
+          ],
+          "rotation": 0.0,
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "texture": "assets/box.png",
+          "visible": true
+        },
+        "type": "Sprite2D"
+      },
+      {
+        "children": [],
+        "name": "CollisionShape2D",
+        "properties": {
+          "disabled": false,
+          "position": [
+            0.0,
+            0.0
+          ],
+          "rotation": 0.0,
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "size": [
+            64.0,
+            64.0
+          ],
+          "visible": true
+        },
+        "type": "CollisionShape2D"
+      }
+    ],
+    "name": "Box",
+    "properties": {
+      "position": [
+        250.0,
+        378.0
+      ],
+      "rotation": 0.0,
+      "scale": [
+        1.0,
+        1.0
+      ],
+      "visible": true
+    },
+    "type": "StaticBody2D"
+  },
+  "version": 1
+}

@@ -17,8 +17,10 @@
 
 #include "assets.hpp"
 #include "raygui_include.hpp"
+#include "export.hpp"
 #include "scene_io.hpp"
 #include "script.hpp"
+#include "ui_scale.hpp"
 
 namespace fs = std::filesystem;
 
@@ -30,9 +32,6 @@ namespace {
 // Look
 // ---------------------------------------------------------------------------
 constexpr float kToolbarH = 40;
-constexpr float kLeftW = 290;
-constexpr float kRightW = 340;
-constexpr float kOutputH = 170;
 constexpr float kHeaderH = 28;
 constexpr float kRowH = 24;
 
@@ -49,6 +48,17 @@ const Color kOrange{255, 160, 60, 255};
 const Color kFieldBg{24, 26, 31, 255};
 const Color kGood{120, 220, 140, 255};
 const Color kBad{255, 110, 100, 255};
+
+float gUiScale = 1.0f;  // Editor::uiScale(), for the helpers below
+
+float screenW() { return GetScreenWidth() / gUiScale; }  // the window in UI pixels
+float screenH() { return GetScreenHeight() / gUiScale; }
+
+// Scissor rectangles are in real screen pixels.
+void beginClip(Rectangle r) {
+    BeginScissorMode(static_cast<int>(std::floor(r.x * gUiScale)), static_cast<int>(std::floor(r.y * gUiScale)),
+                     static_cast<int>(std::ceil(r.width * gUiScale)), static_cast<int>(std::ceil(r.height * gUiScale)));
+}
 
 float textSize() { return static_cast<float>(GuiGetStyle(DEFAULT, TEXT_SIZE)); }
 
@@ -213,6 +223,7 @@ struct ClipLock {
 Editor::Editor(fs::path projectDir, fs::path scriptsDir)
     : projectDir_(std::move(projectDir)), scriptsDir_(std::move(scriptsDir)) {
     Assets::setProjectDir(projectDir_);
+    setUiScale(systemUiScale());
     setPrintHandler([this](const std::string& msg) { log(msg, Color{230, 230, 160, 255}); });
 
     std::error_code ec;
@@ -230,6 +241,12 @@ Editor::Editor(fs::path projectDir, fs::path scriptsDir)
     } else {
         log(std::to_string(ScriptRegistry::names().size()) + " C++ scripts compiled in, from " + scriptsDir_.string());
     }
+    settings_ = ProjectSettings::load(projectDir_);
+    editTree_.gameSize = raylib::Vector2{static_cast<float>(settings_.width), static_cast<float>(settings_.height)};
+    exporter_ = std::make_unique<Exporter>(Exporter::Paths{
+        SPROUT_EDITOR_DIR, projectDir_, scriptsDir_, fs::path(SPROUT_EDITOR_BUILD_DIR) / "exports",
+        SPROUT_EDITOR_DEPS_DIR, SPROUT_EDITOR_CMAKE});
+    scenePath_ = settings_.mainScene;
     if (!openScene(scenePath_)) newScene();
     undoStack_.clear();
     dirty_ = false;
@@ -237,6 +254,10 @@ Editor::Editor(fs::path projectDir, fs::path scriptsDir)
 
 Editor::~Editor() {
     setPrintHandler(nullptr);
+    if (uiFont_.texture.id != 0) {
+        setEditorFont(GetFontDefault());
+        UnloadFont(uiFont_);
+    }
     playTree_.reset();
     scripts_.reset();  // after the game: scripts' code lives in the library
     gameTexture_.reset();
@@ -294,8 +315,13 @@ void Editor::frame() {
     if (GetTime() - lastScan_ > 2.0) rescanFiles();
     mouseCursor_ = MOUSE_CURSOR_DEFAULT;
 
-    float sw = static_cast<float>(GetScreenWidth());
-    float sh = static_cast<float>(GetScreenHeight());
+    SetMouseScale(1 / uiScale_, 1 / uiScale_);  // mouse positions in UI pixels
+    float sw = screenW();
+    float sh = screenH();
+    // Docks shrink a little on small windows so the viewport keeps some room.
+    float kLeftW = std::floor(std::clamp(sw * 0.19f, 220.0f, 290.0f));
+    float kRightW = std::floor(std::clamp(sw * 0.22f, 260.0f, 340.0f));
+    float kOutputH = std::floor(std::clamp(sh * 0.2f, 110.0f, 170.0f));
     float bodyH = sh - kToolbarH;
     Rectangle toolbar{0, 0, sw, kToolbarH};
     Rectangle sceneDock{0, kToolbarH, kLeftW, std::floor(bodyH * 0.55f)};
@@ -342,8 +368,10 @@ void Editor::frame() {
 
     BeginDrawing();
     ClearBackground(kBg);
+    applyUiScale();
 
-    bool modal = popup_.open || dialog_.open || swallowMouse_;
+    pumpExport();
+    bool modal = popup_.open || dialog_.open || confirm_.open || export_.open || swallowMouse_;
     if (modal) GuiLock();
     {
         // While the game runs the scene can't be edited (it's a copy that's playing).
@@ -358,8 +386,11 @@ void Editor::frame() {
     }
     if (modal) GuiUnlock();
     finishDrag();
-    drawPopup();
+    // Dialogs, then popups on top (a dialog can open a popup, e.g. to pick a scene).
+    if (popup_.open) GuiLock();
     drawModal();
+    if (popup_.open) GuiUnlock();
+    drawPopup();
 
     if (!screenshotPath.empty()) {
         rlDrawRenderBatchActive();  // flush pending drawing so it's in the picture
@@ -376,6 +407,34 @@ void Editor::frame() {
     }
 }
 
+void Editor::applyUiScale() {
+    rlDrawRenderBatchActive();
+    rlLoadIdentity();
+    rlScalef(uiScale_, uiScale_, 1);
+}
+
+void Editor::setUiScale(float scale) {
+    scale = std::clamp(std::round(scale * 4) / 4, 0.75f, 3.0f);
+    uiScale_ = scale;
+    gUiScale = scale;
+
+    // Load the font at the size it really appears on screen, so text stays sharp.
+    static const Font styleFont = GuiGetFont();  // the theme's own font, the fallback
+    Font old = uiFont_;
+    uiFont_ = Font{};
+#if defined(SPROUT_EDITOR_FONT)
+    if (FileExists(SPROUT_EDITOR_FONT)) {
+        uiFont_ = LoadFontEx(SPROUT_EDITOR_FONT, static_cast<int>(std::lround(16 * scale)), nullptr, 0);
+        if (uiFont_.texture.id != 0) {
+            SetTextureFilter(uiFont_.texture, TEXTURE_FILTER_BILINEAR);
+            setEditorFont(uiFont_);
+        }
+    }
+#endif
+    if (uiFont_.texture.id == 0 && old.texture.id != 0) setEditorFont(styleFont);
+    if (old.texture.id != 0) UnloadFont(old);
+}
+
 void Editor::handleShortcuts() {
     if (playTree_) {
         if (IsKeyPressed(KEY_F8) || IsKeyPressed(KEY_ESCAPE)) stop();
@@ -389,6 +448,9 @@ void Editor::handleShortcuts() {
         if (IsKeyPressed(KEY_Z)) shiftDown() ? redo() : undo();
         if (IsKeyPressed(KEY_Y)) redo();
         if (IsKeyPressed(KEY_D)) duplicateSelected();
+        if (IsKeyPressed(KEY_EQUAL) || IsKeyPressed(KEY_KP_ADD)) setUiScale(uiScale_ + 0.25f);
+        if (IsKeyPressed(KEY_MINUS) || IsKeyPressed(KEY_KP_SUBTRACT)) setUiScale(uiScale_ - 0.25f);
+        if (IsKeyPressed(KEY_ZERO) || IsKeyPressed(KEY_KP_0)) setUiScale(systemUiScale());
         if (IsKeyPressed(KEY_A))
             openPopup(GetMousePosition(), nodeTypeNames(), [this](int i) { addNode(nodeTypeNames()[i]); });
     }
@@ -405,7 +467,7 @@ void Editor::drawToolbar(Rectangle r) {
     float x = 8, y = 6, h = 28;
     bool playing = playTree_ != nullptr;
     if (playing) GuiDisable();
-    if (GuiButton({x, y, 76, h}, GuiIconText(ICON_FILE_NEW, "New"))) newScene();
+    if (GuiButton({x, y, 76, h}, GuiIconText(ICON_FILE_NEW, "New"))) confirmUnsaved([this] { newScene(); });
     x += 80;
     if (GuiButton({x, y, 80, h}, GuiIconText(ICON_FOLDER_FILE_OPEN, "Open"))) {
         std::vector<std::string> scenes;
@@ -414,7 +476,7 @@ void Editor::drawToolbar(Rectangle r) {
         if (scenes.empty()) {
             log("No scenes in " + (projectDir_ / "scenes").string() + " yet.", kDim);
         } else {
-            openPopup({x, y + h + 2}, scenes, [this, scenes](int i) { openScene(scenes[i]); });
+            openPopup({x, y + h + 2}, scenes, [this, scenes](int i) { requestOpenScene(scenes[i]); });
         }
     }
     x += 84;
@@ -428,36 +490,64 @@ void Editor::drawToolbar(Rectangle r) {
         });
     }
     x += 96;
+    if (GuiButton({x, y, 84, h}, GuiIconText(ICON_FILE_EXPORT, "Export"))) openExportDialog();
+    x += 88;
     if (GuiButton({x, y, 34, h}, GuiIconText(ICON_UNDO, nullptr))) undo();
     x += 36;
     if (GuiButton({x, y, 34, h}, GuiIconText(ICON_REDO, nullptr))) redo();
     x += 44;
     if (playing) GuiEnable();
-    drawText(scenePath_ + (dirty_ ? " (unsaved)" : ""), x, y + 6, dirty_ ? kOrange : kDim);
 
-    // Play / Stop in the middle, like Godot
-    float cx = r.width / 2 + 40;
+    // Play / Stop in the middle, like Godot (but never on top of the buttons)
+    float px = std::max(std::floor(r.width / 2 - 92), x);
     if (playing) GuiDisable();
-    if (GuiButton({cx - 92, y, 88, h}, GuiIconText(ICON_PLAYER_PLAY, "Play"))) play();
+    if (GuiButton({px, y, 88, h}, GuiIconText(ICON_PLAYER_PLAY, "Play"))) play();
     if (playing) GuiEnable();
     if (!playing) GuiDisable();
-    if (GuiButton({cx, y, 88, h}, GuiIconText(ICON_PLAYER_STOP, "Stop"))) stop();
+    if (GuiButton({px + 92, y, 88, h}, GuiIconText(ICON_PLAYER_STOP, "Stop"))) stop();
     if (!playing) GuiEnable();
+    x = px + 196;
 
     // Script hot reload status
     if (ScriptReloader::supported()) {
-        float sx = cx + 104;
-        if (GuiButton({sx, y, 34, h}, GuiIconText(ICON_ROTATE_FILL, nullptr))) scripts_->requestBuild();
+        if (GuiButton({x, y, 34, h}, GuiIconText(ICON_ROTATE_FILL, nullptr))) scripts_->requestBuild();
         std::string status = scripts_->isBuilding()        ? "Scripts: compiling..."
-                             : scripts_->lastBuildFailed() ? "Scripts: build failed (see Output)"
+                             : scripts_->lastBuildFailed() ? "Scripts: build failed"
                                                            : "Scripts: " + std::to_string(scripts_->scriptNames().size()) +
                                                                  " loaded";
         Color c = scripts_->isBuilding() ? kOrange : scripts_->lastBuildFailed() ? kBad : kDim;
-        drawText(status, sx + 42, y + 6, c);
+        drawText(status, x + 42, y + 6, c);
+        x += 42 + textWidth(status) + 16;
+    }
+    if (exporter_ && exporter_->busy()) {
+        std::string status = "Exporting " + exporter_->currentLabel() + "...";
+        drawText(status, x, y + 6, kOrange);
+        x += textWidth(status) + 16;
     }
 
-    std::string brand = "Sprout Editor 2D";
-    drawText(brand, r.width - textWidth(brand) - 14, y + 6, kAccent);
+    // Interface size, on the right (Ctrl + / Ctrl - / Ctrl 0 do the same)
+    float ux = r.width - 8 - 30;
+    if (GuiButton({ux, y, 30, h}, "+")) setUiScale(uiScale_ + 0.25f);
+    std::string pct = std::to_string(static_cast<int>(std::lround(uiScale_ * 100))) + "%";
+    ux -= 4 + textWidth("300%") + 4;
+    drawText(pct, ux + 4 + (textWidth("300%") - textWidth(pct)) / 2, y + 6, kText);
+    ux -= 34;
+    if (GuiButton({ux, y, 30, h}, "-")) setUiScale(uiScale_ - 0.25f);
+    ux -= textWidth("UI size") + 8;
+    drawText("UI size", ux, y + 6, kDim);
+
+    // The scene's file name fills whatever room is left (shortened from the left)
+    std::string path = scenePath_ + (dirty_ ? " (unsaved)" : "");
+    float room = ux - 16 - x;
+    if (room > 40) {
+        bool cut = false;
+        while (path.size() > 4 && textWidth((cut ? "..." : "") + path) > room) {
+            path.erase(0, 1);
+            cut = true;
+        }
+        if (cut) path = "..." + path;
+        drawText(path, ux - 16 - textWidth(path), y + 6, dirty_ ? kOrange : kDim);
+    }
 }
 
 // ===========================================================================
@@ -467,10 +557,26 @@ void Editor::drawSceneDock(Rectangle r) {
     drawHeader(r, "Scene");
 
     float y = r.y + kHeaderH + 4, x = r.x + 6;
-    if (GuiButton({x, y, 88, 26}, GuiIconText(ICON_CIRCLE_ADD, "Add"))) {
+    float addW = std::min(88.0f, r.width - 12 - 5 * 33 - 4);  // the other five buttons are 30 wide
+    if (GuiButton({x, y, addW, 26}, GuiIconText(ICON_CIRCLE_ADD, addW >= 64 ? "Add" : nullptr))) {
         openPopup({x, y + 28}, nodeTypeNames(), [this](int i) { addNode(nodeTypeNames()[i]); });
     }
-    x += 92;
+    x += addW + 4;
+    // Instance a scene (like Godot's chain-link button)
+    if (GuiButton({x, y, 30, 26}, GuiIconText(ICON_LAYERS, nullptr))) {
+        std::vector<std::string> scenes;
+        for (auto& f : files_)
+            if (f.kind == FileEntry::Scene && f.path != scenePath_) scenes.push_back(f.path);
+        if (scenes.empty()) {
+            log("No other scenes to instance yet. Make one: select a node and use 'Save Branch as Scene'.", kDim);
+        } else {
+            openPopup({x, y + 28}, scenes, [this, scenes](int i) {
+                Node* parent = selected_ ? selected_ : editTree_.root();
+                instanceScene(scenes[i], parent);
+            });
+        }
+    }
+    x += 33;
     if (GuiButton({x, y, 30, 26}, GuiIconText(ICON_FILE_COPY, nullptr))) duplicateSelected();
     x += 33;
     if (GuiButton({x, y, 30, 26}, GuiIconText(ICON_BIN, nullptr))) deleteSelected();
@@ -490,7 +596,7 @@ void Editor::drawSceneDock(Rectangle r) {
     std::vector<Row> rows;
     std::function<void(Node*, int)> collect = [&](Node* n, int depth) {
         rows.push_back({n, depth});
-        if (n->collapsed) return;
+        if (n->collapsed) return;  // (instanced scenes start folded up)
         for (auto& c : n->children()) collect(c.get(), depth + 1);
     };
     if (root) collect(root, 0);
@@ -505,8 +611,7 @@ void Editor::drawSceneDock(Rectangle r) {
         return;
     }
 
-    BeginScissorMode(static_cast<int>(view.x), static_cast<int>(view.y), static_cast<int>(view.width),
-                     static_cast<int>(view.height));
+    beginClip(view);
     Vector2 mouse = GetMousePosition();
     bool canClick = !GuiIsLocked() && mouseIn(view);
     for (size_t i = 0; i < rows.size(); ++i) {
@@ -520,12 +625,19 @@ void Editor::drawSceneDock(Rectangle r) {
 
         float ix = row.x + 6 + rows[i].depth * 16.0f;
         Rectangle arrow{ix, row.y + 4, 16, 16};
-        if (!n->children().empty()) {
+        bool foldable = !n->children().empty();
+        if (foldable) {
             GuiDrawIcon(n->collapsed ? ICON_ARROW_RIGHT_FILL : ICON_ARROW_DOWN_FILL, static_cast<int>(ix),
                         static_cast<int>(row.y + 4), 1, kDim);
         }
         GuiDrawIcon(iconFor(n), static_cast<int>(ix + 18), static_cast<int>(row.y + 4), 1, colorFor(n));
-        drawText(n->name, ix + 40, row.y + 4, kText);
+        // Nodes that come from an instanced scene are drawn in a softer colour.
+        drawText(n->name + (n->instanceMissing ? "  (missing scene)" : ""), ix + 40, row.y + 4,
+                 n->instanceMissing ? kBad : n->inInstance ? Color{150, 175, 215, 255} : kText);
+        if (!n->sceneFile.empty()) {  // instanced scene: a scene icon at the right
+            GuiDrawIcon(ICON_LAYERS, static_cast<int>(row.x + row.width - 46), static_cast<int>(row.y + 4), 1,
+                        n->instanceMissing ? kBad : kAccent);
+        }
         if (!n->scriptName.empty()) {
             Color sc = ScriptRegistry::has(n->scriptName) ? kGood : kOrange;
             GuiDrawIcon(ICON_FILETYPE_TEXT, static_cast<int>(row.x + row.width - 24), static_cast<int>(row.y + 4), 1,
@@ -544,7 +656,7 @@ void Editor::drawSceneDock(Rectangle r) {
         }
 
         if (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !playTree_) {
-            if (!n->children().empty() && CheckCollisionPointRec(mouse, arrow)) {
+            if (foldable && CheckCollisionPointRec(mouse, arrow)) {
                 n->collapsed = !n->collapsed;
             } else {
                 select(n);
@@ -637,8 +749,7 @@ void Editor::drawFileSystem(Rectangle r) {
     Rectangle view{};
     GuiScrollPanel(area, nullptr, content, &filesScroll_, &view);
 
-    BeginScissorMode(static_cast<int>(view.x), static_cast<int>(view.y), static_cast<int>(view.width),
-                     static_cast<int>(view.height));
+    beginClip(view);
     Vector2 mouse = GetMousePosition();
     bool canClick = !GuiIsLocked() && mouseIn(view);
     for (size_t i = 0; i < rows.size(); ++i) {
@@ -694,7 +805,7 @@ void Editor::activateFile(size_t index) {
                 log("Drag " + f.path + " into the viewport to make a Sprite2D, or select a Sprite2D first.", kDim);
             }
             break;
-        case FileEntry::Scene: openScene(f.path); break;
+        case FileEntry::Scene: requestOpenScene(f.path); break;
         case FileEntry::Script:
             if (f.scriptClass.empty()) {
                 log(f.label + " has no REGISTER_SCRIPT(...) line, so it can't be attached.", kBad);
@@ -747,15 +858,13 @@ void Editor::finishDrag() {
         if (f.kind == FileEntry::Texture) {
             createSpriteAt(f.path, world);
         } else if (f.kind == FileEntry::Scene) {
-            openScene(f.path);
+            instanceScene(f.path, editTree_.root(), &world);  // drop a scene in: instance it there
         } else if (Node2D* hit = pickNode(world)) {
-            // Clicking a sprite or shape inside a physics body picks the body, so
-            // the whole thing moves together. Pick the child in the Scene dock to
-            // move it on its own.
-            if (hit != selected_ && dynamic_cast<CollisionObject2D*>(hit->parent())) hit = hit->parent2D();
-            select(hit);
+            select(selectableFor(hit));
             activateFile(d.file);
         }
+    } else if (dropTarget_ && f.kind == FileEntry::Scene) {
+        instanceScene(f.path, dropTarget_);  // onto a node in the tree: instance it as a child
     } else if (dropTarget_) {
         select(dropTarget_);
         activateFile(d.file);
@@ -766,6 +875,11 @@ void Editor::finishDrag() {
 
 void Editor::reparent(Node* node, Node* target, int zone) {
     if (!node || !target || node == target || node->isAncestorOf(target) || !node->parent()) return;
+    if (lockedByInstance(node, "moved")) return;
+    if ((zone == 0 && (!target->sceneFile.empty() || target->inInstance)) || (zone != 0 && target->inInstance)) {
+        log("Nodes can't be added inside an instanced scene here; open its scene file to change what's in it.", kDim);
+        return;
+    }
     Node* newParent = target;
     int index = -1;
     if (zone != 0) {
@@ -797,6 +911,19 @@ raylib::Vector2 Editor::rotateHandlePos() const {
 
 bool Editor::overRotateHandle(Vector2 mouse) {
     return selected_ && selected_->as<Node2D>() && rotateHandlePos().Distance(mouse) < 10;
+}
+
+Node2D* Editor::selectableFor(Node2D* hit) {
+    if (hit == selected_) return hit;  // keep dragging what's already selected
+    // Part of an instanced scene: select the instance (edit the rest in its own file).
+    Node* n = hit;
+    while (n->inInstance && n->parent()) n = n->parent();
+    if (auto* n2 = n->as<Node2D>()) hit = n2;
+    // A sprite or shape inside a physics body picks the body, so the whole thing
+    // moves together. Pick the child in the Scene dock to move it on its own.
+    if (hit != selected_ && hit->sceneFile.empty() && dynamic_cast<CollisionObject2D*>(hit->parent()))
+        hit = hit->parent2D();
+    return hit;
 }
 
 Node2D* Editor::pickNode(Vector2 world) {
@@ -851,10 +978,7 @@ void Editor::updateViewportInput(Rectangle r) {
         if (sel && overRotateHandle(mouse)) {
             viewDrag_ = ViewDrag::Rotate;
         } else if (Node2D* hit = pickNode(world)) {
-            // Clicking a sprite or shape inside a physics body picks the body, so
-            // the whole thing moves together. Pick the child in the Scene dock to
-            // move it on its own.
-            if (hit != selected_ && dynamic_cast<CollisionObject2D*>(hit->parent())) hit = hit->parent2D();
+            hit = selectableFor(hit);
             select(hit);
             viewDrag_ = ViewDrag::Move;
             grabOffset_ = hit->globalPosition() - world;
@@ -873,6 +997,7 @@ void Editor::updateViewportInput(Rectangle r) {
             if (viewDrag_ == ViewDrag::Move) {
                 raylib::Vector2 p = world + grabOffset_;
                 if (ctrlDown()) p = raylib::Vector2{std::round(p.x / 8) * 8, std::round(p.y / 8) * 8};  // snap to the grid
+                else if (viewCam_.zoom <= 2) p = raylib::Vector2{std::round(p.x), std::round(p.y)};   // whole pixels
                 sel->setGlobalPosition(p);
                 mouseCursor_ = MOUSE_CURSOR_RESIZE_ALL;
             } else {
@@ -922,14 +1047,25 @@ void Editor::drawViewport(Rectangle r) {
         return;
     }
     viewCam_.offset = {r.x + r.width / 2, r.y + r.height / 2};
+    if (!viewFramed_ || (IsKeyPressed(KEY_HOME) && !isTyping())) {
+        // Show the whole game window (at most 100%) when the editor starts, or on Home.
+        raylib::Vector2 game = editTree_.gameSize;
+        float fit = std::min((r.width - 40) / game.x, (r.height - 60) / game.y);
+        viewCam_.zoom = std::clamp(std::floor(fit * 20) / 20, 0.1f, 1.0f);
+        viewCam_.target = game / 2;
+        viewFramed_ = true;
+    }
     if (!GuiIsLocked()) updateViewportInput(r);
     viewCam_.offset = {r.x + r.width / 2, r.y + r.height / 2};
 
-    BeginScissorMode(static_cast<int>(r.x), static_cast<int>(r.y), static_cast<int>(r.width),
-                     static_cast<int>(r.height));
+    beginClip(r);
     DrawRectangleRec(r, Color{22, 24, 29, 255});
 
-    viewCam_.BeginMode();
+    // The view camera works in UI pixels; draw through a copy scaled to screen pixels.
+    raylib::Camera2D drawCam = viewCam_;
+    drawCam.offset = raylib::Vector2(viewCam_.offset) * uiScale_;
+    drawCam.zoom = viewCam_.zoom * uiScale_;
+    drawCam.BeginMode();
     drawGrid(r);
     float px = 1.0f / viewCam_.zoom;  // one screen pixel in world units
     DrawRectangleLinesEx({-px, -px, editTree_.gameSize.x + 2 * px, editTree_.gameSize.y + 2 * px}, 2 * px,
@@ -954,7 +1090,8 @@ void Editor::drawViewport(Rectangle r) {
         if (lr.width > 0 && lr.height > 0) drawLocalRect(*sel, lr, BLANK, kOrange, 2 * px);
         else DrawCircleLinesV(sel->globalPosition(), 9 * px, kOrange);
     }
-    viewCam_.EndMode();
+    drawCam.EndMode();
+    applyUiScale();
 
     // Move/rotate handle, drawn in screen space so it's the same size at any zoom
     if (sel) {
@@ -984,7 +1121,7 @@ void Editor::drawViewport(Rectangle r) {
     std::snprintf(info, sizeof info, "Zoom %d%%   Mouse %.0f, %.0f", static_cast<int>(viewCam_.zoom * 100 + 0.5f),
                   world.x, world.y);
     drawText(info, r.x + 10, r.y + 8, kDim);
-    drawText("Drag: move  Handle: rotate (Shift snaps)  Ctrl: grid snap  Wheel: zoom  Right/Middle drag: pan",
+    drawText("Drag: move  Handle: rotate (Shift snaps)  Ctrl: grid snap  Wheel: zoom  Right/Middle drag: pan  Home: show all",
              r.x + 10, r.y + r.height - 24, Fade(kDim, 0.8f));
     EndScissorMode();
     DrawRectangleLinesEx(r, 1, kBorder);
@@ -1130,7 +1267,21 @@ void Editor::propertyRow(Property& p, float x, float& y, float width) {
     std::string id = std::to_string(reinterpret_cast<uintptr_t>(selected_)) + "/" + p.name;
     std::string label = p.name;
     std::replace(label.begin(), label.end(), '_', ' ');
-    drawText(label, x, y + 4, kDim);
+
+    // Changed from the original scene (this node is part of an instance)? Show it, with a revert button.
+    if (inspectorOriginal_.is_object() && inspectorOriginal_.contains(p.name) && inspectorCurrent_.contains(p.name) &&
+        inspectorOriginal_[p.name] != inspectorCurrent_[p.name]) {
+        DrawRectangleRec({x - 6, y + 4, 3, 16}, kOrange);
+        drawText(label, x, y + 4, kOrange);
+        if (GuiButton({x + labelW - 26, y + 2, 22, 20}, GuiIconText(ICON_UNDO, nullptr))) {
+            touch();
+            nlohmann::json one;
+            one[p.name] = inspectorOriginal_[p.name];
+            applyProperties(*selected_, one);
+        }
+    } else {
+        drawText(label, x, y + 4, kDim);
+    }
 
     switch (p.kind) {
         case PropKind::Section: break;
@@ -1218,8 +1369,7 @@ void Editor::drawInspector(Rectangle r) {
     Rectangle content{0, 0, area.width - 16, inspectorContentHeight_};
     Rectangle view{};
     GuiScrollPanel(area, nullptr, content, &inspectorScroll_, &view);
-    BeginScissorMode(static_cast<int>(view.x), static_cast<int>(view.y), static_cast<int>(view.width),
-                     static_cast<int>(view.height));
+    beginClip(view);
     ClipLock clip(view, clipLocked_);
 
     float x = view.x + 10, w = view.width - 20;
@@ -1229,9 +1379,38 @@ void Editor::drawInspector(Rectangle r) {
     drawText(selected_->typeName(), x + 24, y + 2, kText);
     y += 30;
 
+    // In an instanced scene? Find the original values, to mark what this copy changed.
+    Node* instanceRoot = selected_;
+    while (instanceRoot->inInstance && instanceRoot->parent()) instanceRoot = instanceRoot->parent();
+    if (instanceRoot->sceneFile.empty() || instanceRoot->instanceMissing) instanceRoot = nullptr;
+    inspectorOriginal_ = nullptr;
+    if (instanceRoot) {
+        std::string key = std::to_string(reinterpret_cast<uintptr_t>(instanceRoot)) + instanceRoot->sceneFile;
+        if (key != originalKey_ || GetTime() - originalTime_ > 0.5) {  // the original file may have changed
+            originalTree_ = instanceSource(instanceRoot->sceneFile);
+            originalKey_ = key;
+            originalTime_ = GetTime();
+        }
+        Node* original = !originalTree_ ? nullptr
+                         : instanceRoot == selected_
+                             ? originalTree_.get()
+                             : originalTree_->getNode(pathBetween(instanceRoot, selected_));
+        if (original) {
+            inspectorOriginal_ = propertiesToJson(*original);
+            inspectorCurrent_ = propertiesToJson(*selected_);
+        }
+    }
+
     Property nameProp{"name", PropKind::String, &selected_->name};
     std::string oldName = selected_->name;
-    propertyRow(nameProp, x, y, w);
+    if (selected_->inInstance) {
+        // Changes inside an instance are remembered by node name, so it stays fixed.
+        drawText("name", x, y + 4, kDim);
+        drawText(selected_->name, x + 112, y + 4, kText);
+        y += 30;
+    } else {
+        propertyRow(nameProp, x, y, w);
+    }
     if (selected_->name.empty()) selected_->name = oldName;
     if (selected_->name != oldName && selected_->parent()) {
         std::string wanted = selected_->name;
@@ -1280,7 +1459,57 @@ void Editor::drawInspector(Rectangle r) {
         touch();
         selected_->scriptName.clear();
     }
-    y += 40;
+    y += 34;
+
+    // Scene: instancing (like Godot's "instance" and "Save Branch as Scene")
+    if (selected_->parent()) {
+        Property sceneSection{"Scene", PropKind::Section};
+        propertyRow(sceneSection, x, y, w);
+        if (selected_->inInstance) {
+            Node* root = selected_;
+            while (root->inInstance && root->parent()) root = root->parent();
+            drawText("Part of the instance '" + root->name + "'.", x, y + 4, kDim);
+            drawText("Changes here only affect this copy;", x, y + 24, kDim);
+            drawText("orange fields differ from the original.", x, y + 44, kDim);
+            y += 70;
+            if (GuiButton({x, y, w, 26}, GuiIconText(ICON_FOLDER_FILE_OPEN, "Open Original Scene")))
+                requestOpenScene(root->sceneFile);
+        } else if (!selected_->sceneFile.empty()) {
+            drawText("Instance of", x, y + 4, kDim);
+            drawText(selected_->sceneFile, x + textWidth("Instance of") + 8, y + 4,
+                     selected_->instanceMissing ? kBad : kAccent);
+            y += 26;
+            if (selected_->instanceMissing) {
+                drawText("That file is missing.", x, y + 4, kBad);
+                y += 26;
+            } else {
+                drawText("Changes here only affect this copy.", x, y + 4, kDim);
+                drawText("Edit the original to change every copy.", x, y + 24, kDim);
+                y += 50;
+            }
+            float hw = (w - 4) / 2;
+            if (GuiButton({x, y, w, 26}, GuiIconText(ICON_FOLDER_FILE_OPEN, "Open Original Scene")) &&
+                !selected_->instanceMissing)
+                requestOpenScene(selected_->sceneFile);
+            y += 30;
+            if (GuiButton({x, y, hw, 26}, GuiIconText(ICON_UNDO, "Reset Copy")) && !selected_->instanceMissing)
+                resetInstance(selected_);
+            if (GuiButton({x + hw + 4, y, hw, 26}, GuiIconText(ICON_LINK_BOXES, "Make Local"))) makeLocal(selected_);
+        } else {
+            drawText("Move this node and its children", x, y + 4, kDim);
+            drawText("into their own scene file:", x, y + 24, kDim);
+            y += 48;
+            if (GuiButton({x, y, w, 26}, GuiIconText(ICON_FILE_SAVE, "Save Branch as Scene"))) {
+                Node* target = selected_;
+                openTextDialog("Save Branch as Scene", "New scene file (inside the project):",
+                               "scenes/" + snakeCase(pascalCase(selected_->name)) + ".scene.json",
+                               [this, target](const std::string& p) {
+                                   if (selected_ == target) saveBranchAsScene(target, p);
+                               });
+            }
+        }
+        y += 40;
+    }
     inspectorContentHeight_ = y - top + 8;
     EndScissorMode();
 }
@@ -1310,8 +1539,7 @@ void Editor::drawOutput(Rectangle r) {
     }
     Rectangle view{};
     GuiScrollPanel(area, nullptr, content, &outputScroll_, &view);
-    BeginScissorMode(static_cast<int>(view.x), static_cast<int>(view.y), static_cast<int>(view.width),
-                     static_cast<int>(view.height));
+    beginClip(view);
     for (size_t i = 0; i < logLines_.size(); ++i) {
         float y = view.y + outputScroll_.y + 4 + i * lineH;
         if (y + lineH < view.y || y > view.y + view.height) continue;
@@ -1332,7 +1560,7 @@ void Editor::drawPopup() {
     float w = 160;
     for (auto& s : popup_.items) w = std::max(w, textWidth(s) + 32);
     float h = popup_.items.size() * kRowH + 8;
-    float sw = static_cast<float>(GetScreenWidth()), sh = static_cast<float>(GetScreenHeight());
+    float sw = screenW(), sh = screenH();
     Rectangle box{std::min(popup_.pos.x, sw - w - 4), std::min(popup_.pos.y, sh - h - 4), w, h};
 
     DrawRectangleRec({box.x + 4, box.y + 4, box.width, box.height}, Fade(BLACK, 0.4f));
@@ -1372,9 +1600,191 @@ void Editor::openTextDialog(std::string title, std::string message, std::string 
     moveTextCursorToEnd();
 }
 
+// ===========================================================================
+// Export
+// ===========================================================================
+std::string Editor::defaultExportDir() const { return (fs::path(SPROUT_EDITOR_DIR) / "exports").string(); }
+
+void Editor::openExportDialog() {
+    if (playTree_) return;
+    activeField_.clear();
+    export_ = ExportDialog{};
+    export_.open = true;
+    export_.targets = exporter_->detectTargets();
+    for (auto& t : export_.targets) {
+        bool wanted = settings_.exportTargets.empty()
+                          ? t.available && (t.id == "linux" || t.id == "windows" || t.id == "macos")
+                          : std::find(settings_.exportTargets.begin(), settings_.exportTargets.end(), t.id) !=
+                                settings_.exportTargets.end();
+        export_.chosen.push_back(wanted && t.available);
+    }
+    std::snprintf(export_.name, sizeof export_.name, "%s", settings_.name.c_str());
+    std::string dir = settings_.exportDir.empty() ? defaultExportDir() : settings_.exportDir;
+    std::snprintf(export_.dir, sizeof export_.dir, "%s", dir.c_str());
+    export_.width = settings_.width;
+    export_.height = settings_.height;
+}
+
+void Editor::drawExportDialog() {
+    float sw = screenW(), sh = screenH();
+    DrawRectangle(0, 0, static_cast<int>(sw), static_cast<int>(sh), Fade(BLACK, 0.5f));
+    float bw = std::min(640.0f, sw - 40), bh = std::min(520.0f, sh - 40);
+    Rectangle box{std::floor((sw - bw) / 2), std::floor((sh - bh) / 2), bw, bh};
+    bool close = GuiWindowBox(box, "Export Game") != 0;
+    bool editing = export_.nameEdit || export_.dirEdit || export_.widthEdit || export_.heightEdit;
+
+    float x = box.x + 16, w = box.width - 32, y = box.y + 40;
+    const float labelW = 130;
+    auto label = [&](const char* text) { drawText(text, x, y + 5, kDim); };
+
+    label("Game name");
+    if (GuiTextBox({x + labelW, y, w - labelW, 26}, export_.name, sizeof export_.name, export_.nameEdit))
+        export_.nameEdit = !export_.nameEdit;
+    y += 34;
+
+    label("Main scene");
+    if (GuiButton({x + labelW, y, w - labelW, 26}, settings_.mainScene.c_str())) {
+        std::vector<std::string> scenes;
+        for (auto& f : files_)
+            if (f.kind == FileEntry::Scene) scenes.push_back(f.path);
+        if (!scenes.empty())
+            openPopup({x + labelW, y + 28}, scenes, [this, scenes](int i) { settings_.mainScene = scenes[i]; });
+    }
+    y += 34;
+
+    label("Window size");
+    if (GuiValueBox({x + labelW, y, 90, 26}, nullptr, &export_.width, 64, 4096, export_.widthEdit))
+        export_.widthEdit = !export_.widthEdit;
+    drawText("x", x + labelW + 98, y + 5, kDim);
+    if (GuiValueBox({x + labelW + 114, y, 90, 26}, nullptr, &export_.height, 64, 4096, export_.heightEdit))
+        export_.heightEdit = !export_.heightEdit;
+    y += 42;
+
+    drawText("Platforms", x, y, kAccent);
+    y += 26;
+    for (size_t i = 0; i < export_.targets.size(); ++i) {
+        const ExportTarget& t = export_.targets[i];
+        bool on = export_.chosen[i];
+        if (!t.available) GuiDisable();
+        GuiCheckBox({x + 4, y + 4, 18, 18}, nullptr, &on);
+        if (!t.available) GuiEnable();
+        export_.chosen[i] = on && t.available;
+        drawText(t.label, x + 32, y + 4, t.available ? kText : kDim);
+        drawText(t.available ? "ready" : "not available", x + 120, y + 4, t.available ? kGood : kOrange);
+        // The note, shortened to fit
+        std::string note = t.note;
+        float room = w - 250;
+        while (note.size() > 4 && textWidth(note) > room) note = note.substr(0, note.size() - 4) + "...";
+        drawText(note, x + 240, y + 4, kDim);
+        y += 30;
+    }
+    y += 8;
+
+    label("Export to");
+    if (GuiTextBox({x + labelW, y, w - labelW, 26}, export_.dir, sizeof export_.dir, export_.dirEdit))
+        export_.dirEdit = !export_.dirEdit;
+    y += 34;
+    drawText("Each platform goes in its own folder inside it (linux/, windows/, macos/, web/).", x, y, kDim);
+
+    // Bottom row
+    float by = box.y + box.height - 44;
+    bool busy = exporter_->busy();
+    if (busy) {
+        drawText("Exporting " + exporter_->currentLabel() + "... (see Output)", x, by + 6, kOrange);
+    } else if (std::none_of(export_.chosen.begin(), export_.chosen.end(), [](bool b) { return b; })) {
+        drawText("Tick a platform to export.", x, by + 6, kDim);
+    }
+    float bx = box.x + box.width - 16;
+    bx -= 90;
+    if (GuiButton({bx, by, 90, 30}, "Close")) close = true;
+    bx -= 100;
+    if (busy) GuiDisable();
+    if (GuiButton({bx, by, 96, 30}, GuiIconText(ICON_FILE_EXPORT, "Export"))) startExport();
+    if (busy) GuiEnable();
+    bx -= 100;
+    if (GuiButton({bx, by, 96, 30}, GuiIconText(ICON_ROTATE_FILL, "Recheck"))) {
+        auto chosen = export_.chosen;
+        export_.targets = exporter_->detectTargets();
+        for (size_t i = 0; i < export_.targets.size(); ++i) export_.chosen[i] = chosen[i] && export_.targets[i].available;
+    }
+
+    if (close || (IsKeyPressed(KEY_ESCAPE) && !editing)) {
+        // Keep what was typed for next time.
+        settings_.name = export_.name;
+        settings_.width = export_.width;
+        settings_.height = export_.height;
+        settings_.exportDir = export_.dir == defaultExportDir() ? "" : export_.dir;
+        export_.open = false;
+    }
+}
+
+void Editor::startExport() {
+    if (!fs::exists(projectDir_ / settings_.mainScene)) {
+        log("The main scene " + settings_.mainScene + " doesn't exist. Pick another one.", kBad);
+        return;
+    }
+    if (dirty_) {
+        saveScene();  // the export uses the files on disk
+        if (dirty_) return;
+    }
+    settings_.name = export_.name;
+    settings_.width = export_.width;
+    settings_.height = export_.height;
+    settings_.exportDir = export_.dir == defaultExportDir() ? "" : export_.dir;  // keep project.json portable
+    settings_.exportTargets.clear();
+    for (size_t i = 0; i < export_.targets.size(); ++i)
+        if (export_.chosen[i]) settings_.exportTargets.push_back(export_.targets[i].id);
+    if (!settings_.save(projectDir_)) log("Couldn't save project.json.", kBad);
+    editTree_.gameSize = raylib::Vector2{static_cast<float>(settings_.width), static_cast<float>(settings_.height)};
+    if (settings_.exportTargets.empty()) return;
+    log("Exporting '" + settings_.name + "' (the first export for a platform takes a few minutes)...", kAccent);
+    exporter_->start(settings_.exportTargets, settings_.name, export_.dir);
+}
+
+void Editor::pumpExport() {
+    if (!exporter_) return;
+    for (auto& line : exporter_->takeLines()) {
+        Color c = line.kind == 1 ? kGood : line.kind == 2 ? kBad : line.kind == 3 ? kAccent : Color{120, 125, 135, 255};
+        log(line.text, c);
+    }
+}
+
+void Editor::confirmUnsaved(std::function<void()> then) {
+    if (!dirty_ || !editTree_.root() || playTree_) {
+        then();
+        return;
+    }
+    confirm_ = ConfirmDialog{true, "Save changes to " + scenePath_ + " first?", std::move(then)};
+}
+
+void Editor::requestOpenScene(const std::string& scenePath) {
+    confirmUnsaved([this, scenePath] { openScene(scenePath); });
+}
+
 void Editor::drawModal() {
+    if (export_.open) drawExportDialog();
+    if (confirm_.open) {
+        float sw = screenW(), sh = screenH();
+        DrawRectangle(0, 0, static_cast<int>(sw), static_cast<int>(sh), Fade(BLACK, 0.5f));
+        Rectangle box{sw / 2 - 230, sh / 2 - 70, 460, 140};
+        bool cancel = GuiWindowBox(box, "Unsaved changes") != 0;
+        GuiLabel({box.x + 14, box.y + 40, box.width - 28, 24}, confirm_.message.c_str());
+        int choice = -1;
+        if (GuiButton({box.x + box.width - 318, box.y + 94, 96, 30}, "Save")) choice = 0;
+        if (GuiButton({box.x + box.width - 216, box.y + 94, 110, 30}, "Don't Save")) choice = 1;
+        if (GuiButton({box.x + box.width - 100, box.y + 94, 86, 30}, "Cancel") || IsKeyPressed(KEY_ESCAPE)) cancel = true;
+        if (cancel) {
+            confirm_.open = false;
+        } else if (choice >= 0) {
+            auto then = confirm_.then;
+            confirm_.open = false;
+            if (choice == 0) saveScene();
+            if (!dirty_ || choice == 1) then();  // don't go on if saving failed
+        }
+        return;
+    }
     if (!dialog_.open) return;
-    float sw = static_cast<float>(GetScreenWidth()), sh = static_cast<float>(GetScreenHeight());
+    float sw = screenW(), sh = screenH();
     DrawRectangle(0, 0, static_cast<int>(sw), static_cast<int>(sh), Fade(BLACK, 0.5f));
     Rectangle box{sw / 2 - 220, sh / 2 - 85, 440, 170};
     bool cancel = GuiWindowBox(box, dialog_.title.c_str()) != 0;
@@ -1553,14 +1963,115 @@ void Editor::addNode(const std::string& type) {
         return;
     }
     Node* parent = selected_ ? selected_ : editTree_.root();
+    if (!parent->sceneFile.empty() || parent->inInstance) {
+        log("Can't add nodes inside an instanced scene here; open its scene file to change what's in it "
+            "(or select another node).",
+            kDim);
+        return;
+    }
     node->name = uniqueChildName(parent, type);
     Node* raw = parent->addChild(std::move(node));
     parent->collapsed = false;
     select(raw);
 }
 
+void Editor::instanceScene(const std::string& scenePath, Node* parent, const Vector2* world) {
+    if (playTree_) return;
+    if (sceneUses(scenePath, scenePath_)) {
+        log("Can't put " + scenePath + " inside " + scenePath_ + ": it would contain itself.", kBad);
+        return;
+    }
+    nlohmann::json link;
+    link["instance"] = scenePath;
+    auto node = nodeFromJson(link);
+    if (!node || node->instanceMissing) return;  // nodeFromJson already said why
+    touch();
+    if (!editTree_.root()) {
+        auto root = createNode("Node2D");
+        root->name = "Main";
+        setRoot(std::move(root));
+    }
+    if (!parent) parent = editTree_.root();
+    while (parent->inInstance && parent->parent()) parent = parent->parent();
+    if (!parent->sceneFile.empty() && parent->parent()) parent = parent->parent();  // not inside another instance
+    node->name = uniqueChildName(parent, node->name);
+    Node* raw = parent->addChild(std::move(node));
+    if (auto* n2 = raw->as<Node2D>(); n2 && world) {
+        raylib::Vector2 p = *world;
+        if (ctrlDown()) p = raylib::Vector2{std::round(p.x / 8) * 8, std::round(p.y / 8) * 8};
+        else p = raylib::Vector2{std::round(p.x), std::round(p.y)};
+        n2->setGlobalPosition(p);
+    }
+    parent->collapsed = false;
+    select(raw);
+    log("Instanced " + scenePath + " as '" + raw->name + "'");
+}
+
+void Editor::saveBranchAsScene(Node* node, const std::string& scenePath) {
+    if (!node || !node->parent() || !node->sceneFile.empty()) return;
+    if (scenePath.empty() || scenePath == scenePath_) {
+        log("Pick a different file name for the new scene.", kBad);
+        return;
+    }
+    if (fs::exists(projectDir_ / scenePath)) {
+        log(scenePath + " already exists. Pick another name (or instance that scene instead).", kBad);
+        return;
+    }
+    std::string error;
+    if (!s2d::saveScene(*node, projectDir_ / scenePath, &error)) {
+        log("Couldn't save " + scenePath + ": " + error, kBad);
+        return;
+    }
+    touch();
+    node->sceneFile = scenePath;
+    markInstanceChildren(*node, true);
+    rescanFiles();
+    log("Saved '" + node->name + "' as " + scenePath + ". It's now an instance of that scene.", kGood);
+    log("Save this scene too (Ctrl+S) to keep the link.", kDim);
+}
+
+void Editor::resetInstance(Node* node) {
+    if (!node || node->sceneFile.empty() || !node->parent()) return;
+    auto fresh = instanceSource(node->sceneFile);
+    if (!fresh) return;
+    touch();
+    // Keep where it is and what it's called; everything else goes back to the original.
+    fresh->name = node->name;
+    auto* oldPlace = node->as<Node2D>();
+    if (auto* n2 = fresh->as<Node2D>(); n2 && oldPlace) {
+        n2->position = oldPlace->position;
+        n2->rotation = oldPlace->rotation;
+        n2->scale = oldPlace->scale;
+    }
+    fresh->collapsed = node->collapsed;
+    Node* parent = node->parent();
+    int index = node->indexInParent();
+    select(nullptr);
+    node->detach();  // freed here
+    Node* raw = parent->addChild(std::move(fresh), index);
+    select(raw);
+    log("Reset '" + raw->name + "' to match " + raw->sceneFile + " (kept its position).");
+}
+
+void Editor::makeLocal(Node* node) {
+    if (!node || node->sceneFile.empty()) return;
+    touch();
+    log("'" + node->name + "' is no longer linked to " + node->sceneFile + "; its nodes are now part of this scene.");
+    node->sceneFile.clear();
+    node->instanceMissing = false;
+    markInstanceChildren(*node, false);
+}
+
+bool Editor::lockedByInstance(Node* node, const char* action) {
+    if (!node || !node->inInstance) return false;
+    log(std::string("'") + node->name + "' belongs to an instanced scene, so it can't be " + action +
+            " here. Open the original scene to change it there (that changes every copy).",
+        kDim);
+    return true;
+}
+
 void Editor::deleteSelected() {
-    if (!selected_) return;
+    if (!selected_ || lockedByInstance(selected_, "deleted")) return;
     touch();
     if (!selected_->parent()) {
         setRoot(nullptr);
@@ -1573,7 +2084,7 @@ void Editor::deleteSelected() {
 }
 
 void Editor::duplicateSelected() {
-    if (!selected_) return;
+    if (!selected_ || lockedByInstance(selected_, "duplicated")) return;
     if (!selected_->parent()) {
         log("The root node can't be duplicated.", kDim);
         return;
@@ -1588,7 +2099,7 @@ void Editor::duplicateSelected() {
 }
 
 void Editor::moveSelected(int direction) {
-    if (!selected_ || !selected_->parent()) return;
+    if (!selected_ || !selected_->parent() || lockedByInstance(selected_, "reordered")) return;
     Node* parent = selected_->parent();
     int index = selected_->indexInParent() + direction;
     if (index < 0 || index >= static_cast<int>(parent->children().size())) return;

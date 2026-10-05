@@ -45,25 +45,26 @@ public:
     const std::vector<std::string>& scriptNames() const { return names_; }
 
 private:
+    // ([[maybe_unused]]: these aren't used when hot reloading is turned off.)
     std::map<std::string, std::filesystem::file_time_type> scanScripts() const;
     void startBuild();
 
     std::filesystem::path scriptsDir_;
     std::map<std::string, std::filesystem::file_time_type> known_;
-    double lastScan_ = -100;
-    bool pending_ = false;
-    double changedAt_ = 0;
+    [[maybe_unused]] double lastScan_ = -100;
+    [[maybe_unused]] bool pending_ = false;
+    [[maybe_unused]] double changedAt_ = 0;
 
     std::thread thread_;
     bool building_ = false;
     bool lastBuildFailed_ = false;
     std::atomic<bool> buildDone_{false};
-    bool buildOk_ = false;
+    [[maybe_unused]] bool buildOk_ = false;
     std::string buildOutput_;
 
     void* handle_ = nullptr;
     std::filesystem::path loadedCopy_;
-    int loadCount_ = 0;
+    [[maybe_unused]] int loadCount_ = 0;
     std::vector<std::string> names_;  // scripts registered by the loaded library
 };
 

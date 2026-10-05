@@ -74,6 +74,98 @@ window (800 x 450).
 **Toolbar** - New / Open / Save (Ctrl+S) / Save As, Undo (Ctrl+Z) / Redo
 (Ctrl+Y or Ctrl+Shift+Z), Play (F5) / Stop (F8, Esc).
 
+**UI size** - the editor follows your display scaling (for example 150% on
+many Windows laptops), and the window opens sized to fit your screen. Change it
+with the **- / +** buttons at the top right, or Ctrl + / Ctrl - (Ctrl 0 goes back
+to the display's scale). To force a size from the start, set the environment
+variable `SPROUT_EDITOR_UI_SCALE`, e.g. `SPROUT_EDITOR_UI_SCALE=1.5`. Press
+**Home** in the viewport to fit the game window back in view.
+
+## Scenes inside scenes
+
+Like in Godot, a scene can be placed inside another scene. Build the player
+once in `player.scene.json` (body, sprite, collision shape, script), then put
+it into every level. The demo works like this: `main.scene.json` uses
+`player.scene.json`, `coin.scene.json` (three times) and `box.scene.json`.
+
+- **Place a scene:** drag a `.scene.json` from the FileSystem into the viewport
+  (it goes where you drop it) or onto a node in the Scene dock (it becomes that
+  node's child). The scene button next to **Add** does the same from a list.
+- **Make a scene out of part of one:** select a node and press **Save Branch
+  as Scene** in the inspector. That node and its children are saved to a new
+  file and replaced by a copy of it. This is how you split a big level up.
+- In the Scene dock a placed scene has a scene icon, and its nodes are tinted.
+  Click the arrow to see them. In the viewport, clicking anything in it
+  selects the whole copy.
+
+**The original is the template; each copy can be changed on its own:**
+
+- Changing the original scene (open it, edit, save) changes every copy in
+  every level.
+- Changing a copy in a level only changes that copy. That covers its position
+  and also anything inside it: select the copy's sprite in the Scene dock and
+  give it another colour, and only that copy changes. The level file stores
+  just those differences ("overrides").
+- Anything you didn't change in a copy keeps following the original.
+- In the inspector, values a copy changed are **orange** with a revert button
+  that sets them back to the original's value. **Reset Copy** throws away all of
+  the copy's changes (it keeps its position).
+- What's *in* a copy (adding, deleting or moving its nodes) comes from the
+  original, so change that in the original scene. **Make Local** cuts the link
+  and turns the copy into ordinary nodes of the level.
+- **Open Original Scene** opens the template. If you have unsaved changes, the
+  editor asks whether to save them first.
+
+Scripts can make copies while the game runs:
+
+```cpp
+node()->addChild(instantiate("scenes/coin.scene.json"));
+```
+
+If a scene file is moved or deleted, the levels using it show "(missing
+scene)" in red and keep the link, so putting the file back fixes them. A scene
+can't be placed inside itself.
+
+## Exporting your game
+
+Press **Export** in the toolbar to turn the project into a game other people can
+play, without the editor:
+
+| Platform | What you get | What this computer needs |
+|---|---|---|
+| Linux | `linux/<Game>` + `project/` | Linux |
+| Windows | `windows/<Game>.exe` + `project/` | Windows, or [MinGW-w64](https://www.mingw-w64.org/) on Linux/macOS (`sudo apt install mingw-w64`, `brew install mingw-w64`) |
+| macOS | `macos/<Game>.app` | a Mac (Apple's compiler and SDK only run on macOS) |
+| Web | `web/index.html` + `.js`, `.wasm`, `.data` | [Emscripten](https://emscripten.org/docs/getting_started/downloads.html) (emsdk) |
+
+The Export window shows which platforms are ready on this computer, and what to
+install for the others (then press **Recheck**). It also sets:
+
+- **Game name:** the window title and the program's file name.
+- **Main scene:** the scene the game starts with.
+- **Window size:** the size of the game's screen (the purple frame in the viewport).
+- **Export to:** the folder to export to (default `editor/exports/`). Each platform
+  gets its own folder in it.
+
+These are saved in `project/project.json`. Exporting saves the open scene first.
+
+How it works: the game runtime in `editor/player/` (nodes, scenes and your
+scripts, without the editor) is built with CMake for each platform, then
+copied next to your `project/` folder (scenes and assets). The first export for a
+platform builds raylib for it and takes a minute or two; later exports are quick.
+Nothing is downloaded: it reuses the libraries the editor was built with.
+
+- **Windows:** the `.exe` needs nothing installed. Zip the `windows/` folder to
+  share it.
+- **Web:** browsers won't open the game straight from the disk. Serve the folder
+  (`python -m http.server` in it, then open http://localhost:8000) or upload
+  it to a site like itch.io as an HTML game.
+- **Emscripten** has to be on the PATH, or `EMSDK` set, when the editor starts.
+  Start the editor from a terminal where you ran `emsdk_env` (on Windows, web
+  exports also need [Ninja](https://ninja-build.org/)).
+- Exporting from the command line works too, e.g.
+  `sprout_editor --export linux,windows,web [folder]`.
+
 ## Nodes
 
 | Node | What it's for |
@@ -135,35 +227,29 @@ and it works while the game is playing too:
 - The button next to the status rebuilds and reloads by hand.
 
 How it works: the scripts are built into a separate library,
-`sprout_scripts` (`.so` on Linux and macOS). The editor watches
-`editor/scripts/`, runs `cmake --build <your build folder> --target sprout_scripts`
+`sprout_scripts` (`.dll` on Windows, `.so` on Linux and macOS). The editor
+watches `editor/scripts/`, runs `cmake --build <your build folder> --target sprout_scripts`
 in the background, and loads the new library in place of the old one. Both
 the editor and your scripts use the editor's own copy of the nodes and raylib.
+The editor makes them available to the library: on Windows by exporting every
+raylib function from `raylib.h` and all of the editor's own code.
 
-**Windows:** hot reloading is turned off there. The editor links raylib
-statically, and a Windows DLL can't use the raylib inside the editor's `.exe`.
-On Windows the scripts are compiled into the editor, so you rebuild and restart
-it after changing a script. You can also pick the mode yourself with
-`-DSPROUT_EDITOR_HOT_RELOAD=ON/OFF`.
+**Windows notes:**
+- You need Visual Studio's compiler (the normal setup). With MinGW, hot
+  reloading is off and the scripts are compiled into the editor, so you rebuild
+  and restart it instead.
+- If you change the editor's own code (not a script) while it's running, the
+  background build can't replace the running `sprout_editor.exe`. Close the
+  editor and build normally.
+- If the editor runs under the Visual Studio debugger, the debugger can hold the
+  scripts' `.pdb` file open, so a rebuild may fail. Run it without debugging
+  (Ctrl+F5) for hot reloading.
+- Scripts can use everything in `raylib.h`. rlgl and raygui functions aren't
+  available to scripts on Windows.
 
-What a script can use:
-
-| | |
-|---|---|
-| `node()` | the node it's attached to |
-| `self<T>()` | the node as a type, e.g. `self<CharacterBody2D>()` (nullptr if it isn't one) |
-| `getNode("Child")`, `getNode("../Sibling")` | nodes by path |
-| `findNode("Score")`, `findNode<Label>("Score")` | a node by name anywhere in the scene |
-| `node()->queueFree()` | remove the node at the end of the frame |
-| `node()->addChild(createNode("Sprite2D"))` | make new nodes while playing |
-| `print("text")` | write to the Output panel |
-| everything in raylib | input (`IsKeyDown(KEY_SPACE)`), sound, drawing, ... |
-
-Tip: to set a whole vector, write `me->position = Vector2{100, 200};`
-(raylib-cpp needs the type name there).
-
-The included scripts are `player_controller.cpp` (platformer movement),
-`coin.cpp` (collectibles with a score label) and `spinner.cpp`.
+You can pick the mode yourself with `-DSPROUT_EDITOR_HOT_RELOAD=ON/OFF`.
+`sprout_editor --check-scripts` loads every script without opening a window
+and tells you whether they all work.
 
 ## Files
 
@@ -176,13 +262,17 @@ editor/
 │   ├── scene_tree.*      <- runs a scene: scripts, process, queueFree, drawing
 │   ├── script.hpp        <- the Script base class and REGISTER_SCRIPT
 │   ├── hot_reload.*      <- watches, rebuilds and reloads the scripts library
+│   ├── export.*          <- the Export window's work: build + package per platform
+│   ├── project.*         <- project.json (game name, main scene, window size)
 │   ├── scene_io.*        <- scenes as JSON files
 │   ├── assets.*          <- texture cache
 │   └── raygui_*          <- raygui and its dark theme
+├── player/               <- the game runtime that exports are built from
 ├── scripts/              <- your C++ scripts (built into sprout_scripts)
 └── project/
+    ├── project.json      <- game name, main scene, window size, export settings
     ├── assets/           <- pictures
-    └── scenes/           <- *.scene.json files
+    └── scenes/           <- *.scene.json files (main, player, coin, box)
 ```
 
 Scenes are plain JSON (`{"type": "Sprite2D", "name": ..., "properties": {...},
@@ -190,6 +280,6 @@ Scenes are plain JSON (`{"type": "Sprite2D", "name": ..., "properties": {...},
 
 ## Not there yet
 
-This is the bare minimum. Not included: hot reloading on Windows, script variables in the inspector, instancing scenes inside scenes,
-animation, sound nodes, UI (Control) nodes, tilemaps, and exporting a game
-without the editor.
+This is the bare minimum. Not included: changing scenes while the game runs,
+script variables in the inspector, animation, sound nodes, UI (Control) nodes,
+tilemaps, and Android/iOS exports.

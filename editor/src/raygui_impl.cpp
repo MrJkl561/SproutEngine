@@ -41,6 +41,13 @@ void loadEditorStyle() {
 
 // raygui keeps one cursor for every text box; it's clamped to the text length
 // on the next draw, so a huge value puts it at the end.
+void setEditorFont(Font font) {
+    GuiSetFont(font);
+    guiIconFontOffsetY = 0;  // icons were baked into the old font; draw them as pixels instead
+    GuiSetStyle(DEFAULT, TEXT_SIZE, 16);
+    GuiSetStyle(DEFAULT, TEXT_SPACING, 1);
+}
+
 void moveTextCursorToEnd() { textBoxCursorIndex = 1 << 20; }
 
 }  // namespace s2d

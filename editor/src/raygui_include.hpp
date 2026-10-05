@@ -35,5 +35,6 @@
 
 namespace s2d {
 void loadEditorStyle();      // raygui's dark theme
-void moveTextCursorToEnd();  // for a text box that just started editing
+void moveTextCursorToEnd();
+void setEditorFont(Font font);  // the font every control uses  // for a text box that just started editing
 }

@@ -13,14 +13,18 @@
 
 #include <raylib-cpp.hpp>
 
+#include <nlohmann/json.hpp>
+
 #include <filesystem>
 #include <functional>
 #include <memory>
 #include <string>
 #include <vector>
 
+#include "export.hpp"
 #include "hot_reload.hpp"
 #include "nodes.hpp"
+#include "project.hpp"
 #include "scene_tree.hpp"
 
 namespace s2d {
@@ -34,11 +38,16 @@ public:
     bool openScene(const std::string& relativePath);
     void log(const std::string& message, Color color = Color{200, 200, 200, 255});
 
-    std::string screenshotPath;  // if set, the next frame is saved to this file
+    std::string screenshotPath;
+
+    // Interface size: 1 = 100%, 1.5 = 150%. Starts at the system's display scale.
+    void setUiScale(float scale);
+    float uiScale() const { return uiScale_; }  // if set, the next frame is saved to this file
 
 private:
     // --- panels -----------------------------------------------------------
     void drawToolbar(Rectangle r);
+    void applyUiScale();  // makes everything drawn after it uiScale_ times bigger
     void drawSceneDock(Rectangle r);
     void drawFileSystem(Rectangle r);
     void drawInspector(Rectangle r);
@@ -64,6 +73,16 @@ private:
 
     // --- actions ----------------------------------------------------------
     void newScene();
+    // Instanced scenes
+    void instanceScene(const std::string& scenePath, Node* parent, const Vector2* world = nullptr);
+    void saveBranchAsScene(Node* node, const std::string& scenePath);
+    void makeLocal(Node* node);
+    void resetInstance(Node* node);  // throw away this copy's changes
+    bool lockedByInstance(Node* node, const char* action);  // true (and says why) inside an instance
+    Node2D* selectableFor(Node2D* hit);  // what clicking `hit` in the viewport selects
+    // Asks "Save changes?" first if the scene has unsaved changes.
+    void confirmUnsaved(std::function<void()> then);
+    void requestOpenScene(const std::string& scenePath);
     void saveScene();
     void play();
     void stop();
@@ -99,7 +118,14 @@ private:
     void openPopup(Vector2 at, std::vector<std::string> items, std::function<void(int)> onPick);
     void openTextDialog(std::string title, std::string message, std::string initial,
                         std::function<void(const std::string&)> onOk);
-    bool isTyping() const { return !activeField_.empty() || dialog_.open; }
+    bool isTyping() const { return !activeField_.empty() || dialog_.open || confirm_.open || export_.open; }
+
+    // --- exporting -----------------------------------------------------------
+    void openExportDialog();
+    std::string defaultExportDir() const;  // editor/exports
+    void drawExportDialog();
+    void startExport();
+    void pumpExport();  // moves the exporter's progress lines into the Output panel
 
     // --- state ------------------------------------------------------------
     std::filesystem::path projectDir_;
@@ -116,11 +142,14 @@ private:
 
     raylib::Camera2D viewCam_{{0, 0}, {400, 225}, 0.0f, 1.0f};
     Rectangle viewportRect_{};
+    float uiScale_ = 1.0f;
+    Font uiFont_{};  // the interface font, loaded at the size it's shown on screen
     Rectangle inspectorRect_{};
     int mouseCursor_ = 0;
     bool swallowMouse_ = false;  // a popup closed on mouse press: ignore the mouse until it's released
     bool clipLocked_ = false;    // the GUI is locked because the mouse is outside a scroll area
     bool panning_ = false;
+    bool viewFramed_ = false;  // the view has been fitted to the game window
     enum class ViewDrag { None, Move, Rotate } viewDrag_ = ViewDrag::None;
     raylib::Vector2 grabOffset_{0, 0};
 
@@ -137,6 +166,13 @@ private:
     std::string openColorPicker_;
     raylib::Vector2 inspectorScroll_{0, 0};
     float inspectorContentHeight_ = 0;
+    // For a node in an instanced scene: its values in the original scene, to
+    // show which ones this copy changed (with a revert button).
+    nlohmann::json inspectorOriginal_;
+    nlohmann::json inspectorCurrent_;
+    std::unique_ptr<Node> originalTree_;
+    std::string originalKey_;
+    double originalTime_ = -100;
 
     // Scene dock
     raylib::Vector2 treeScroll_{0, 0};
@@ -186,6 +222,24 @@ private:
         char text[128] = {};
         std::function<void(const std::string&)> onOk;
     } dialog_;
+
+    ProjectSettings settings_;
+    std::unique_ptr<Exporter> exporter_;
+    struct ExportDialog {
+        bool open = false;
+        std::vector<ExportTarget> targets;
+        std::vector<bool> chosen;
+        char name[64] = {};
+        char dir[512] = {};
+        int width = 800, height = 450;
+        bool nameEdit = false, dirEdit = false, widthEdit = false, heightEdit = false;
+    } export_;
+
+    struct ConfirmDialog {
+        bool open = false;
+        std::string message;
+        std::function<void()> then;
+    } confirm_;
 };
 
 }  // namespace s2d

@@ -1,0 +1,36 @@
+{
+  "format": "sprout-editor-scene",
+  "version": 1,
+  "root": {
+    "type": "CharacterBody2D",
+    "name": "Player",
+    "script": "PlayerController",
+    "properties": {
+      "position": [
+        0,
+        0
+      ]
+    },
+    "children": [
+      {
+        "type": "Sprite2D",
+        "name": "Sprite2D",
+        "properties": {
+          "texture": "assets/player.png"
+        },
+        "children": []
+      },
+      {
+        "type": "CollisionShape2D",
+        "name": "CollisionShape2D",
+        "properties": {
+          "size": [
+            32,
+            48
+          ]
+        },
+        "children": []
+      }
+    ]
+  }
+}
