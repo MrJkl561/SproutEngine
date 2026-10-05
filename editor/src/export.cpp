@@ -36,7 +36,7 @@ std::string quoteNative(fs::path p) { return "\"" + p.make_preferred().string() 
 
 fs::path emcmakeIn(const fs::path& emsdk) {
 #if defined(_WIN32)
-    const char* names[] = {"emcmake.bat"};
+    const char* names[] = {"emcmake.exe", "emcmake.bat"};  // newer Emscripten has .exe launchers
 #else
     const char* names[] = {"emcmake"};
 #endif
