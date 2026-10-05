@@ -105,6 +105,7 @@ int main() {
         return 1;
     }
     game.tree.setRoot(std::move(root));
+    game.tree.setCurrentScene(settings.mainScene);
     game.tree.start();
 
 #if defined(PLATFORM_WEB)

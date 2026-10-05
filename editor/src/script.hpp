@@ -51,6 +51,14 @@ public:
 
     SceneTree* tree() const { return node_ ? node_->tree() : nullptr; }
 
+    // Switch to another scene at the end of this frame, or restart this one.
+    void changeScene(const std::string& scenePath) const {
+        if (SceneTree* t = tree()) t->changeScene(scenePath);
+    }
+    void reloadScene() const {
+        if (SceneTree* t = tree()) t->reloadScene();
+    }
+
 private:
     friend class SceneTree;
     Node* node_ = nullptr;

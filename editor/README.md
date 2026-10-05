@@ -38,7 +38,8 @@ Or build only the editor: `cmake -S editor -B build-editor && cmake --build buil
 
 It opens `editor/project/` and its scene `scenes/main.scene.json`: a tiny
 platformer. Press **Play** (F5), run with the arrow keys, jump with Space and
-collect the coins. Press **Stop** (F8 or Esc) to go back to editing.
+collect the coins, then walk into the door to reach level 2. Press **Stop** (F8
+or Esc) to go back to editing.
 
 ## Using it
 
@@ -71,8 +72,10 @@ window (800 x 450).
 - **Attach** picks a loaded script, **New** writes a new script file,
   **Detach** removes the script.
 
-**Toolbar** - New / Open / Save (Ctrl+S) / Save As, Undo (Ctrl+Z) / Redo
-(Ctrl+Y or Ctrl+Shift+Z), Play (F5) / Stop (F8, Esc).
+**Toolbar** - New / Open / Save (Ctrl+S) / Save As, Export, Undo (Ctrl+Z) / Redo
+(Ctrl+Y or Ctrl+Shift+Z). **Play** (F5) starts the game from its main scene (set
+in the Export window), **Play Scene** (F6) plays the scene you're editing, and
+**Stop** (F8, Esc) goes back to editing.
 
 **UI size** - the editor follows your display scaling (for example 150% on
 many Windows laptops), and the window opens sized to fit your screen. Change it
@@ -86,7 +89,8 @@ variable `SPROUT_EDITOR_UI_SCALE`, e.g. `SPROUT_EDITOR_UI_SCALE=1.5`. Press
 Like in Godot, a scene can be placed inside another scene. Build the player
 once in `player.scene.json` (body, sprite, collision shape, script), then put
 it into every level. The demo works like this: `main.scene.json` uses
-`player.scene.json`, `coin.scene.json` (three times) and `box.scene.json`.
+`player.scene.json`, `coin.scene.json` (three times), `box.scene.json` and
+`door.scene.json`, and so does `level2.scene.json`.
 
 - **Place a scene:** drag a `.scene.json` from the FileSystem into the viewport
   (it goes where you drop it) or onto a node in the Scene dock (it becomes that
@@ -166,6 +170,29 @@ Nothing is downloaded: it reuses the libraries the editor was built with.
 - Exporting from the command line works too, e.g.
   `sprout_editor --export linux,windows,web [folder]`.
 
+## Changing scenes while the game runs
+
+A game is usually several scenes: a title screen, level 1, level 2... A script
+switches between them with `changeScene`:
+
+```cpp
+changeScene("scenes/level2.scene.json");   // go to another scene
+reloadScene();                             // start this scene again
+```
+
+The switch happens at the end of the frame, so a script can safely call it on
+its own scene. The old scene and all its scripts are freed, then the new scene's
+scripts get `ready()`. To keep something from one scene to the next (a score,
+lives), put it in `tree()->values`, which lasts until the game stops:
+
+```cpp
+tree()->values["coins"] += 1;
+```
+
+The demo has two levels. `door.scene.json` uses the `LevelExit` script (edit
+its list of levels in `scripts/level_exit.cpp`), coins carry over, and falling off
+the world restarts the level.
+
 ## Nodes
 
 | Node | What it's for |
@@ -209,6 +236,31 @@ REGISTER_SCRIPT(Spinner)
 To add one: select a node, press **New** under *Script* in the inspector and
 type a class name. The editor writes `editor/scripts/<name>.cpp` from a
 template and attaches it. Then open the file in your code editor.
+
+What a script can use:
+
+| | |
+|---|---|
+| `node()` | the node it's attached to |
+| `self<T>()` | the node as a type, e.g. `self<CharacterBody2D>()` (nullptr if it isn't one) |
+| `getNode("Child")`, `getNode("../Sibling")` | nodes by path |
+| `findNode("Score")`, `findNode<Label>("Score")` | a node by name anywhere in the scene |
+| `node()->queueFree()` | remove the node at the end of the frame |
+| `node()->addChild(createNode("Sprite2D"))` | make new nodes while playing |
+| `node()->addChild(instantiate("scenes/coin.scene.json"))` | make a copy of a scene while playing |
+| `changeScene("scenes/level2.scene.json")` | switch to another scene (at the end of this frame) |
+| `reloadScene()` | start the current scene again (e.g. when the player dies) |
+| `tree()->currentScene()` | the path of the scene that's running |
+| `tree()->values["coins"]` | numbers kept across scene changes (score, lives...) |
+| `print("text")` | write to the Output panel |
+| everything in raylib | input (`IsKeyDown(KEY_SPACE)`), sound, drawing, ... |
+
+Tip: to set a whole vector, write `me->position = Vector2{100, 200};`
+(raylib-cpp needs the type name there).
+
+The included scripts are `player_controller.cpp` (platformer movement),
+`coin.cpp` (collectibles with a score that carries across levels),
+`level_exit.cpp` (a door to the next level) and `spinner.cpp`.
 
 ### Hot reloading
 
@@ -272,7 +324,7 @@ editor/
 └── project/
     ├── project.json      <- game name, main scene, window size, export settings
     ├── assets/           <- pictures
-    └── scenes/           <- *.scene.json files (main, player, coin, box)
+    └── scenes/           <- *.scene.json files (main, level2, player, coin, box, door)
 ```
 
 Scenes are plain JSON (`{"type": "Sprite2D", "name": ..., "properties": {...},
@@ -280,6 +332,5 @@ Scenes are plain JSON (`{"type": "Sprite2D", "name": ..., "properties": {...},
 
 ## Not there yet
 
-This is the bare minimum. Not included: changing scenes while the game runs,
-script variables in the inspector, animation, sound nodes, UI (Control) nodes,
+This is the bare minimum. Not included: script variables in the inspector, animation, sound nodes, UI (Control) nodes,
 tilemaps, and Android/iOS exports.

@@ -30,11 +30,8 @@ public:
 
         body->moveAndSlide();
 
-        // Fell off the world? Start again at the top.
-        if (body->position.y > 2000) {
-            body->position = Vector2{100, 100};
-            body->velocity = Vector2{0, 0};
-        }
+        // Fell off the world? Start the level again.
+        if (body->globalPosition().y > 1000) reloadScene();
     }
 };
 

@@ -1,0 +1,86 @@
+{
+  "format": "sprout-editor-scene",
+  "version": 1,
+  "root": {
+    "type": "Area2D",
+    "name": "Door",
+    "script": "LevelExit",
+    "properties": {},
+    "children": [
+      {
+        "type": "ColorRect",
+        "name": "Frame",
+        "properties": {
+          "position": [
+            -18,
+            -30
+          ],
+          "size": [
+            36,
+            60
+          ],
+          "color": [
+            90,
+            60,
+            40,
+            255
+          ]
+        },
+        "children": []
+      },
+      {
+        "type": "ColorRect",
+        "name": "Opening",
+        "properties": {
+          "position": [
+            -13,
+            -25
+          ],
+          "size": [
+            26,
+            55
+          ],
+          "color": [
+            20,
+            16,
+            24,
+            255
+          ]
+        },
+        "children": []
+      },
+      {
+        "type": "ColorRect",
+        "name": "Knob",
+        "properties": {
+          "position": [
+            5,
+            2
+          ],
+          "size": [
+            4,
+            4
+          ],
+          "color": [
+            230,
+            190,
+            80,
+            255
+          ]
+        },
+        "children": []
+      },
+      {
+        "type": "CollisionShape2D",
+        "name": "CollisionShape2D",
+        "properties": {
+          "size": [
+            26,
+            56
+          ]
+        },
+        "children": []
+      }
+    ]
+  }
+}

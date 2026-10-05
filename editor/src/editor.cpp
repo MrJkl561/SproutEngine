@@ -442,7 +442,8 @@ void Editor::handleShortcuts() {
     }
     if (isTyping() || popup_.open) return;
 
-    if (IsKeyPressed(KEY_F5)) play();
+    if (IsKeyPressed(KEY_F5)) play(true);
+    if (IsKeyPressed(KEY_F6)) play(false);
     if (ctrlDown()) {
         if (IsKeyPressed(KEY_S)) saveScene();
         if (IsKeyPressed(KEY_Z)) shiftDown() ? redo() : undo();
@@ -499,14 +500,16 @@ void Editor::drawToolbar(Rectangle r) {
     if (playing) GuiEnable();
 
     // Play / Stop in the middle, like Godot (but never on top of the buttons)
-    float px = std::max(std::floor(r.width / 2 - 92), x);
+    // Play runs the game from its main scene (F5); Play Scene runs the one being edited (F6).
+    float px = std::max(std::floor(r.width / 2 - 150), x);
     if (playing) GuiDisable();
-    if (GuiButton({px, y, 88, h}, GuiIconText(ICON_PLAYER_PLAY, "Play"))) play();
+    if (GuiButton({px, y, 84, h}, GuiIconText(ICON_PLAYER_PLAY, "Play"))) play(true);
+    if (GuiButton({px + 88, y, 120, h}, GuiIconText(ICON_FILETYPE_PLAY, "Play Scene"))) play(false);
     if (playing) GuiEnable();
     if (!playing) GuiDisable();
-    if (GuiButton({px + 92, y, 88, h}, GuiIconText(ICON_PLAYER_STOP, "Stop"))) stop();
+    if (GuiButton({px + 212, y, 84, h}, GuiIconText(ICON_PLAYER_STOP, "Stop"))) stop();
     if (!playing) GuiEnable();
-    x = px + 196;
+    x = px + 312;
 
     // Script hot reload status
     if (ScriptReloader::supported()) {
@@ -1878,11 +1881,26 @@ void Editor::saveScene() {
     }
 }
 
-void Editor::play() {
+void Editor::play(bool mainScene) {
     if (playTree_) return;
-    if (!editTree_.root()) {
-        log("Add some nodes before pressing Play.", kBad);
-        return;
+    // The main scene, unless it's the one open here (then play it with any unsaved edits).
+    std::string scene = mainScene ? settings_.mainScene : scenePath_;
+    std::unique_ptr<Node> root;
+    if (scene == scenePath_) {
+        if (!editTree_.root()) {
+            log("Add some nodes before pressing Play.", kBad);
+            return;
+        }
+        root = cloneNode(*editTree_.root());
+    } else {
+        std::string error;
+        root = s2d::loadScene(projectDir_ / scene, &error);
+        if (!root) {
+            log("Couldn't load the main scene " + scene + ": " + error +
+                    " (set it in the Export window, or use Play Scene).",
+                kBad);
+            return;
+        }
     }
     activeField_.clear();
     scrubField_.clear();
@@ -1890,8 +1908,9 @@ void Editor::play() {
     playTree_ = std::make_unique<SceneTree>();
     playTree_->gameSize = editTree_.gameSize;
     playTree_->clearColor = editTree_.clearColor;
-    playTree_->setRoot(cloneNode(*editTree_.root()));
-    log("Playing " + scenePath_ + " ...", kAccent);
+    playTree_->setRoot(std::move(root));
+    playTree_->setCurrentScene(scene);
+    log("Playing " + scene + " ...", kAccent);
     try {
         playTree_->start();
     } catch (const std::exception& e) {

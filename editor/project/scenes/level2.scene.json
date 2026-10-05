@@ -1,0 +1,258 @@
+{
+  "format": "sprout-editor-scene",
+  "version": 1,
+  "root": {
+    "type": "Node2D",
+    "name": "Level2",
+    "properties": {},
+    "children": [
+      {
+        "type": "ColorRect",
+        "name": "Background",
+        "properties": {
+          "size": [
+            800,
+            450
+          ],
+          "color": [
+            56,
+            38,
+            72,
+            255
+          ]
+        },
+        "children": []
+      },
+      {
+        "type": "StaticBody2D",
+        "name": "Floor",
+        "properties": {
+          "position": [
+            400,
+            430
+          ]
+        },
+        "children": [
+          {
+            "type": "ColorRect",
+            "name": "Ground",
+            "properties": {
+              "position": [
+                -400,
+                -20
+              ],
+              "size": [
+                800,
+                40
+              ],
+              "color": [
+                96,
+                70,
+                120,
+                255
+              ]
+            },
+            "children": []
+          },
+          {
+            "type": "CollisionShape2D",
+            "name": "CollisionShape2D",
+            "properties": {
+              "size": [
+                800,
+                40
+              ]
+            },
+            "children": []
+          }
+        ]
+      },
+      {
+        "type": "StaticBody2D",
+        "name": "StepLow",
+        "properties": {
+          "position": [
+            260,
+            350
+          ]
+        },
+        "children": [
+          {
+            "type": "ColorRect",
+            "name": "Look",
+            "properties": {
+              "position": [
+                -70,
+                -12
+              ],
+              "size": [
+                140,
+                24
+              ],
+              "color": [
+                160,
+                120,
+                190,
+                255
+              ]
+            },
+            "children": []
+          },
+          {
+            "type": "CollisionShape2D",
+            "name": "CollisionShape2D",
+            "properties": {
+              "size": [
+                140,
+                24
+              ]
+            },
+            "children": []
+          }
+        ]
+      },
+      {
+        "type": "StaticBody2D",
+        "name": "StepHigh",
+        "properties": {
+          "position": [
+            470,
+            270
+          ]
+        },
+        "children": [
+          {
+            "type": "ColorRect",
+            "name": "Look",
+            "properties": {
+              "position": [
+                -70,
+                -12
+              ],
+              "size": [
+                140,
+                24
+              ],
+              "color": [
+                160,
+                120,
+                190,
+                255
+              ]
+            },
+            "children": []
+          },
+          {
+            "type": "CollisionShape2D",
+            "name": "CollisionShape2D",
+            "properties": {
+              "size": [
+                140,
+                24
+              ]
+            },
+            "children": []
+          }
+        ]
+      },
+      {
+        "type": "CharacterBody2D",
+        "name": "Player",
+        "instance": "scenes/player.scene.json",
+        "properties": {
+          "position": [
+            60,
+            380
+          ]
+        }
+      },
+      {
+        "type": "Area2D",
+        "name": "Coin",
+        "instance": "scenes/coin.scene.json",
+        "properties": {
+          "position": [
+            260,
+            310
+          ]
+        }
+      },
+      {
+        "type": "Area2D",
+        "name": "Coin2",
+        "instance": "scenes/coin.scene.json",
+        "properties": {
+          "position": [
+            470,
+            230
+          ]
+        }
+      },
+      {
+        "type": "Area2D",
+        "name": "Coin3",
+        "instance": "scenes/coin.scene.json",
+        "properties": {
+          "position": [
+            620,
+            390
+          ]
+        }
+      },
+      {
+        "type": "Area2D",
+        "name": "Door",
+        "instance": "scenes/door.scene.json",
+        "properties": {
+          "position": [
+            765,
+            380
+          ]
+        }
+      },
+      {
+        "type": "Label",
+        "name": "Score",
+        "properties": {
+          "position": [
+            16,
+            12
+          ],
+          "text": "Coins: 0",
+          "font_size": 24
+        },
+        "children": []
+      },
+      {
+        "type": "Label",
+        "name": "LevelName",
+        "properties": {
+          "position": [
+            640,
+            14
+          ],
+          "text": "Level 2",
+          "font_size": 24,
+          "color": [
+            230,
+            210,
+            255,
+            255
+          ]
+        },
+        "children": []
+      },
+      {
+        "type": "Camera2D",
+        "name": "Camera2D",
+        "properties": {
+          "position": [
+            400,
+            225
+          ]
+        },
+        "children": []
+      }
+    ]
+  }
+}

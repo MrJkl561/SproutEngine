@@ -3,6 +3,7 @@
 #pragma once
 
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 
@@ -28,6 +29,20 @@ public:
     bool isPlaying() const { return playing_; }
     float delta() const { return delta_; }
 
+    // Changing scenes while the game runs (like Godot's change_scene_to_file).
+    // The switch happens at the end of the current frame, so a script can call
+    // it on its own scene: every node and script of the old scene is freed,
+    // then the new scene's scripts get ready(). Paths are inside the project,
+    // e.g. "scenes/level2.scene.json".
+    void changeScene(const std::string& scenePath);
+    void reloadScene();  // start the current scene again (e.g. after the player dies)
+    const std::string& currentScene() const { return currentScene_; }
+    void setCurrentScene(const std::string& scenePath) { currentScene_ = scenePath; }
+
+    // Values kept while the game runs, across scene changes (score, lives...):
+    //   tree()->values["coins"] += 1;
+    std::map<std::string, double> values;
+
     // Hot reloading: destroy every node's script, then make them again (and
     // call ready()) from whatever scripts are registered now.
     void dropScripts();
@@ -46,7 +61,11 @@ private:
     void attachScripts(Node* node);
     void readyRecursive(Node* node);
 
+    void switchScene();
+
     std::unique_ptr<Node> root_;
+    std::string currentScene_;
+    std::string pendingScene_;  // set by changeScene(), done at the end of process()
     bool playing_ = false;
     float delta_ = 1.0f / 60.0f;
 };

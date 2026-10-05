@@ -213,6 +213,17 @@
         "type": "Area2D"
       },
       {
+        "type": "Area2D",
+        "name": "Door",
+        "instance": "scenes/door.scene.json",
+        "properties": {
+          "position": [
+            765,
+            380
+          ]
+        }
+      },
+      {
         "children": [],
         "name": "Icon",
         "properties": {

@@ -3,6 +3,8 @@
 #include <map>
 #include <vector>
 
+#include "assets.hpp"
+#include "scene_io.hpp"
 #include "script.hpp"
 
 namespace s2d {
@@ -95,6 +97,31 @@ void SceneTree::process(float delta) {
         }
     };
     sweep(root_.get());
+
+    if (!pendingScene_.empty()) switchScene();
+}
+
+void SceneTree::changeScene(const std::string& scenePath) { pendingScene_ = scenePath; }
+
+void SceneTree::reloadScene() { pendingScene_ = currentScene_; }
+
+void SceneTree::switchScene() {
+    std::string path = pendingScene_;
+    pendingScene_.clear();
+    std::string error;
+    auto next = loadScene(Assets::projectDir() / path, &error);
+    if (!next) {
+        print("Couldn't change to scene '" + path + "': " + error);
+        return;  // keep playing the current one
+    }
+    setRoot(nullptr);  // the old scene and its scripts go first
+    setRoot(std::move(next));
+    currentScene_ = path;
+    print("Changed scene to " + path);
+    if (playing_) {
+        attachScripts(root_.get());
+        readyRecursive(root_.get());
+    }
 }
 
 void SceneTree::draw(const DrawOptions& options) {

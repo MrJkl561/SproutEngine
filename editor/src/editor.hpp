@@ -84,7 +84,7 @@ private:
     void confirmUnsaved(std::function<void()> then);
     void requestOpenScene(const std::string& scenePath);
     void saveScene();
-    void play();
+    void play(bool mainScene);  // Play (the project's main scene) or Play Scene (this one)
     void stop();
     void updateScripts();  // hot reloading: watch, rebuild, reload
     void reloadScripts();
