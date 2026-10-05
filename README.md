@@ -115,6 +115,31 @@ few minutes. After that it's quick.
 Visual Studio, VS Code or CLion? See
 [Building from a code editor](docs/01-installing.md#building-from-a-code-editor).)
 
+### Build scripts
+
+The [`scripts/`](scripts/) folder has ready-made scripts for each kind of build
+(`.bat` for Windows, `.sh` for macOS and Linux). Run them from the repository
+folder:
+
+| What | Windows | macOS / Linux |
+|---|---|---|
+| Build everything | `scripts\build.bat` | `scripts/build.sh` |
+| A Debug build | `scripts\build.bat debug` | `scripts/build.sh debug` |
+| Build and open the editor | `scripts\run-editor.bat` | `scripts/run-editor.sh` |
+| Run the unit tests | `scripts\test.bat` | `scripts/test.sh` |
+| Export a game | `scripts\export.bat windows,web [project] [folder]` | `scripts/export.sh linux,web [project] [folder]` |
+| Set up web exports (once) | `scripts\setup-web.bat [emsdk folder]` | `scripts/setup-web.sh [emsdk folder]` |
+
+They build into `build-x64\` or `build-arm64\` on Windows (for this PC's own CPU;
+add `x64` or `arm64` to choose) and `build-release/` or `build-debug/` on
+macOS and Linux.
+
+**ARM64:** Sprout builds and runs on ARM64 as well as x86-64: Windows on ARM,
+ARM64 Linux (e.g. a Raspberry Pi 5) and Apple Silicon Macs. The editor's
+Windows export makes an x64 `.exe` that runs on every Windows PC, and there's a
+separate "Windows ARM64" export for native ARM64 games. Mac exports are
+universal apps (Apple Silicon and Intel).
+
 ## The editor (experimental)
 
 There's also a small **Godot-style 2D editor** in [`editor/`](editor/README.md):
