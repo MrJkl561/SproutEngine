@@ -228,9 +228,9 @@ bool Exporter::setUpEmsdk(const fs::path& emsdk) {
         const char* noInput = " </dev/null";
 #endif
         bool ok = true;
-        std::vector<std::string> steps;
-        if (emcmakeIn(emsdk).empty()) steps.push_back("install latest");  // already there: only activate
-        steps.push_back("activate latest");
+        // install is quick when everything's there ("already installed"), and makes sure
+        // nothing is missing (activate fails if, say, node wasn't downloaded)
+        std::vector<std::string> steps{"install latest", "activate latest"};
         for (const std::string& step : steps) {
             say("emsdk " + step + "...");
             std::string output;
