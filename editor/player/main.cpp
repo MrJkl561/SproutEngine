@@ -84,9 +84,15 @@ int main() {
     s2d::ProjectSettings settings = s2d::ProjectSettings::load(project);
 
 #if !defined(PLATFORM_WEB)
-    SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_VSYNC_HINT | FLAG_MSAA_4X_HINT);
+    // No MSAA: the game is drawn into a texture, which MSAA doesn't smooth anyway,
+    // and some GPUs (like virtual Macs) can't open a window with it.
+    SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_VSYNC_HINT);
 #endif
     InitWindow(settings.width, settings.height, settings.name.c_str());
+    if (!IsWindowReady()) {
+        TraceLog(LOG_ERROR, "GAME: couldn't open a window");
+        return 1;
+    }
     SetExitKey(KEY_NULL);  // Esc belongs to the game
     SetTargetFPS(60);
 
