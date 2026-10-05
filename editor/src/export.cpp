@@ -210,22 +210,36 @@ bool Exporter::setUpEmsdk(const fs::path& emsdk) {
         say("== Setting up Emscripten in " + emsdk.string() + " ==", 3);
         say("This downloads about 1 GB the first time, so it can take a while.");
 #if defined(_WIN32)
+        // emsdk's own Python (once a first install has fetched it) runs emsdk.py
+        // directly: no emsdk.bat, no nested cmd.exe.
         std::string tool = quoteNative(emsdk / "emsdk.bat");
+        std::error_code ec;
+        for (fs::directory_iterator it(emsdk / "python", ec), end; !ec && it != end; it.increment(ec))
+            if (fs::exists(it->path() / "python.exe", ec)) {
+                tool = "set \"PYTHONHOME=\" && set \"PYTHONPATH=\" && " + quoteNative(it->path() / "python.exe") + " " +
+                       quoteNative(emsdk / "emsdk.py");
+                break;
+            }
         std::string cd = std::string(kEmsdkArch) + "cd /d " + quoteNative(emsdk) + " && ";
+        const char* noInput = " <nul";
 #else
         std::string tool = "./emsdk";
         std::string cd = "cd " + quote(emsdk) + " && ";
+        const char* noInput = " </dev/null";
 #endif
         bool ok = true;
-        for (const char* step : {"install latest", "activate latest"}) {
-            say(std::string("emsdk ") + step + "...");
+        std::vector<std::string> steps;
+        if (emcmakeIn(emsdk).empty()) steps.push_back("install latest");  // already there: only activate
+        steps.push_back("activate latest");
+        for (const std::string& step : steps) {
+            say("emsdk " + step + "...");
             std::string output;
-            int code = platform::runCommand(cd + tool + " " + step, output, [&](const std::string& line) {
+            int code = platform::runCommand(cd + tool + " " + step + noInput, output, [&](const std::string& line) {
                 bool bad = line.find("error") != std::string::npos || line.find("Error") != std::string::npos;
                 say("  " + line, bad ? 2 : 0);
             });
             if (code != 0) {
-                say(std::string("emsdk ") + step + " failed (exit code " + std::to_string(code) + ").", 2);
+                say("emsdk " + step + " failed (exit code " + std::to_string(code) + ").", 2);
 #if defined(_WIN32)
                 say("If it says Python wasn't found: install Python from python.org (tick \"Add python.exe to "
                     "PATH\"), restart the editor and press Set Up again.", 2);
@@ -298,7 +312,12 @@ std::vector<ExportTarget> Exporter::detectTargets() const {
     if (tools.emcmake.empty() && emsdk.empty()) {
         web.note = "Needs Emscripten: get emsdk (emscripten.org), then pick its folder below.";
     } else if (tools.emcmake.empty()) {
-        web.note = "emsdk found but not installed yet: press Set Up below.";
+        std::error_code ec;
+        web.note = emcmakeIn(emsdk).empty()
+                       ? "emsdk found, but Emscripten isn't installed in it yet: press Set Up below."
+                   : !fs::exists(emsdk / ".emscripten", ec)
+                       ? "Emscripten is installed but not activated (no .emscripten file): press Set Up below."
+                       : "emsdk found but not ready: press Set Up below.";
     } else if (host == "windows" && findNinja().empty()) {
         web.note = "Also needs Ninja: winget install Ninja-build.Ninja (or Visual Studio's C++ CMake tools).";
     } else {
