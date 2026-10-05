@@ -307,6 +307,7 @@ Editor::Editor(fs::path projectDir)
     loadEditorStyle();
     loadLayout();
     codeEditor_ = loadCodeEditor();
+    completions_.setFolders(fs::path(SPROUT_EDITOR_DIR) / "src", SPROUT_EDITOR_DEPS_DIR, scriptsDir_);
     setUiScale(systemUiScale());
     setPrintHandler([this](const std::string& msg) { log(msg, theme().colors.scriptPrint); });
 
@@ -2589,6 +2590,7 @@ TextDocument* Editor::openDocument(const fs::path& file, int line, int column) {
             return nullptr;
         }
         setDiagnostics(*fresh);
+        if (fresh->language == Language::Cpp) fresh->completer = &completions_;
         doc = fresh.get();
         docs_.push_back(std::move(fresh));
     }
@@ -2812,9 +2814,17 @@ void Editor::drawMainTabs(Rectangle r) {
         }
         x += w + 4;
     }
-    if (mainView_ == MainView::Script)
-        drawText("Ctrl+S save   Ctrl+F find   Ctrl+H replace   Ctrl+G go to line   Ctrl+/ comment", x + 12,
-                 std::floor(r.y + (r.height - 16) / 2), kDim);
+    if (mainView_ == MainView::Script) {
+        // As many shortcut hints as fit
+        std::string hints;
+        for (const char* h : {"Ctrl+S save", "Ctrl+Space suggest", "Ctrl+F find", "Ctrl+H replace", "Ctrl+G go to line",
+                              "Ctrl+/ comment"}) {
+            std::string more = hints.empty() ? h : hints + "   " + h;
+            if (x + 12 + textWidth(more) > r.x + r.width - 8) break;
+            hints = more;
+        }
+        drawText(hints, x + 12, std::floor(r.y + (r.height - 16) / 2), kDim);
+    }
 }
 
 void Editor::drawFindBar(Rectangle r, TextDocument& doc) {

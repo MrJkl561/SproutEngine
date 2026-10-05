@@ -344,6 +344,7 @@ private:
     } sheet_;
 
     CodeEditor codeEditor_;
+    CompletionIndex completions_;  // autocomplete for the Script tab
 
     enum class MainView { View2D, Script } mainView_ = MainView::View2D;
     std::vector<std::unique_ptr<TextDocument>> docs_;

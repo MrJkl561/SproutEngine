@@ -332,6 +332,12 @@ the Inspector, by right-clicking a script or scene in the FileSystem dock, or by
 making a **New** script (it opens straight away). Each open file gets a tab.
 
 - C++ and JSON syntax colors, line numbers, auto-indent, undo/redo
+- **Autocomplete** as you type (or **Ctrl+Space**): the engine's classes and
+  functions with their comments, raylib, common `std::` names, and what your
+  own scripts declare. It follows chains like `self<CharacterBody2D>()->` or
+  `body->velocity.` to show the right members. **Enter/Tab** accepts, **Esc**
+  closes. It reads the engine headers directly, so new engine functions show
+  up by themselves.
 - **Ctrl+S** saves (scripts then hot reload by themselves), **Ctrl+Shift+S**
   saves every open file
 - **Ctrl+F** find, **Ctrl+H** replace, **F3** next match, **Ctrl+G** go to line,
@@ -517,6 +523,7 @@ editor/
 │   ├── theme.*           <- what a theme can set (Theme)
 │   ├── code_editor.*     <- opening files in VS Code, Visual Studio...
 │   ├── text_editor.*     <- the Script tab's text editor
+│   ├── autocomplete.*    <- its suggestions (reads the engine and raylib headers)
 │   └── raygui_*          <- raygui and its widget styles
 ├── theme/                <- theme files (default_theme.cpp, light_theme.cpp) and their pictures
 ├── player/               <- the game runtime that exports are built from

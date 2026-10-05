@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 
+#include "autocomplete.hpp"
+
 namespace s2d {
 
 enum class Language { Text, Cpp, Json };
@@ -69,6 +71,7 @@ public:
     bool redo();
 
     bool hoverText = false;  // after draw(): the mouse is over the text (show the I-beam cursor)
+    CompletionIndex* completer = nullptr;  // autocomplete for C++ files (set by the Editor)
 
 private:
     struct Pos {
@@ -131,7 +134,19 @@ private:
     std::filesystem::file_time_type diskTime_{};
 
     // Mouse
-    bool selecting_ = false, draggingBar_ = false;
+    bool selecting_ = false, draggingBar_ = false, draggingHBar_ = false;
+    float hbarGrab_ = 0;
+
+    // Autocomplete popup
+    void updateCompletion(bool forced);
+    bool completionKeys();  // true if the key went to the popup
+    void acceptCompletion();
+    void drawCompletion(Rectangle r, const TextStyle& style);
+    bool acOpen_ = false, acForced_ = false;
+    std::vector<Completion> acItems_;
+    int acSel_ = 0, acTop_ = 0;
+    Pos acStart_;
+    Rectangle acRect_{};
     float barGrab_ = 0;
     double lastClickTime_ = -10;
     Pos lastClickPos_;

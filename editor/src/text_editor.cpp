@@ -424,6 +424,78 @@ void TextDocument::typeChar(int codepoint) {
         }
     }
     insert(std::string(utf8, size));
+
+    // Autocomplete: while typing a name, or after . -> ::
+    if (completer && language == Language::Cpp) {
+        const std::string& line = lines_[cursor_.line];
+        char before = cursor_.col >= 2 ? line[cursor_.col - 2] : '\0';
+        bool word = codepoint < 128 && (std::isalnum(codepoint) || codepoint == '_');
+        bool member = codepoint == '.' || (codepoint == '>' && before == '-') || (codepoint == ':' && before == ':');
+        if (word || member) updateCompletion(word && acOpen_ && acForced_);
+        else acOpen_ = false;
+    }
+}
+
+void TextDocument::updateCompletion(bool forced) {
+    if (!completer || language != Language::Cpp) {
+        acOpen_ = false;
+        return;
+    }
+    std::string prefix;
+    std::vector<Completion> items = completer->complete(lines_, cursor_.line, cursor_.col, path, prefix, forced);
+    if (items.empty()) {
+        acOpen_ = false;
+        return;
+    }
+    acItems_ = std::move(items);
+    acStart_ = {cursor_.line, cursor_.col - static_cast<int>(prefix.size())};
+    acSel_ = acTop_ = 0;
+    acForced_ = forced;
+    acOpen_ = true;
+}
+
+bool TextDocument::completionKeys() {
+    if (!acOpen_) return false;
+    int n = static_cast<int>(acItems_.size());
+    if (pressed(KEY_DOWN)) acSel_ = (acSel_ + 1) % n;
+    else if (pressed(KEY_UP)) acSel_ = (acSel_ - 1 + n) % n;
+    else if (pressed(KEY_PAGE_DOWN)) acSel_ = std::min(n - 1, acSel_ + 8);
+    else if (pressed(KEY_PAGE_UP)) acSel_ = std::max(0, acSel_ - 8);
+    else if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER) || IsKeyPressed(KEY_TAB)) acceptCompletion();
+    else if (IsKeyPressed(KEY_ESCAPE)) acOpen_ = false;
+    else {
+        if (pressed(KEY_LEFT) || pressed(KEY_RIGHT) || pressed(KEY_HOME) || pressed(KEY_END)) acOpen_ = false;
+        return false;
+    }
+    return true;
+}
+
+void TextDocument::acceptCompletion() {
+    if (!acOpen_ || acSel_ < 0 || acSel_ >= static_cast<int>(acItems_.size())) return;
+    const Completion c = acItems_[acSel_];
+    acOpen_ = false;
+    beginEdit(EditKind::Other);
+    // Replace the whole name under the cursor
+    const std::string& line = lines_[cursor_.line];
+    Pos end = cursor_;
+    while (end.col < static_cast<int>(line.size()) && isWordByte(static_cast<unsigned char>(line[end.col]))) ++end.col;
+    anchor_ = acStart_.line == cursor_.line ? acStart_ : cursor_;
+    cursor_ = end;
+    insert(c.name);
+    if (c.kind == Completion::Kind::Function) {
+        const std::string& now = lines_[cursor_.line];
+        char next = cursor_.col < static_cast<int>(now.size()) ? now[cursor_.col] : '\0';
+        if (next != '(' && next != '<') {
+            if (c.templated) {
+                insert("<>()");
+                cursor_.col -= 3;  // between < and >
+            } else {
+                insert("()");
+                if (c.params) cursor_.col -= 1;
+            }
+            anchor_ = cursor_;
+        }
+    }
 }
 
 void TextDocument::newline() {
@@ -753,6 +825,11 @@ void TextDocument::updateHighlight() {
 // ---------------------------------------------------------------------------
 void TextDocument::handleKeys() {
     bool ctrl = ctrlDown(), shift = shiftDown();
+    if (completionKeys()) {
+        while (GetCharPressed() > 0) {
+        }
+        return;
+    }
     if (!ctrl) {
         for (int ch = GetCharPressed(); ch > 0; ch = GetCharPressed())
             if (ch >= 32 && ch != 127) typeChar(ch);
@@ -811,6 +888,10 @@ void TextDocument::handleKeys() {
             beginEdit(EditKind::Other);
         }
         eraseSelection();
+        if (acOpen_) {
+            if (cursor_.line != acStart_.line || cursor_.col < acStart_.col) acOpen_ = false;
+            else updateCompletion(acForced_);
+        }
     }
     if (pressed(KEY_DELETE)) {
         if (!hasSelection()) {
@@ -837,6 +918,7 @@ void TextDocument::handleKeys() {
     }
 
     if (ctrl) {
+        if (IsKeyPressed(KEY_SPACE)) updateCompletion(true);  // Ctrl+Space: suggest now
         if (IsKeyPressed(KEY_A)) {
             anchor_ = {0, 0};
             cursor_ = {static_cast<int>(lines_.size()) - 1, static_cast<int>(lines_.back().size())};
@@ -901,16 +983,41 @@ void TextDocument::draw(Rectangle r, bool focused, bool mouse, const TextStyle& 
     float thumbH = std::max(24.0f, vbar.height * std::min(1.0f, area_.height / contentH));
     auto thumbY = [&] { return vbar.y + (maxY > 0 ? scroll_.y / maxY : 0) * (vbar.height - thumbH); };
 
-    if (inside) {
-        float wheel = GetMouseWheelMove();
-        if (wheel != 0) {
-            if (shiftDown()) scroll_.x -= wheel * charW_ * 6;
-            else scroll_.y -= wheel * lineH_ * 3;
+    Rectangle hbar{area_.x, r.y + r.height - bar, area_.width, bar};
+    float thumbW = maxX > 0 ? std::max(24.0f, hbar.width * area_.width / (area_.width + maxX)) : hbar.width;
+    auto thumbX = [&] { return hbar.x + (maxX > 0 ? scroll_.x / maxX : 0) * (hbar.width - thumbW); };
+
+    bool overPopup = acOpen_ && mouse && CheckCollisionPointRec(m, acRect_);
+    if (inside || overPopup) {
+        Vector2 wheel = GetMouseWheelMoveV();
+        if (overPopup) {
+            acTop_ -= static_cast<int>(wheel.y * 3);
+        } else {
+            if (shiftDown()) scroll_.x -= wheel.y * charW_ * 6;
+            else scroll_.y -= wheel.y * lineH_ * 3;
+            scroll_.x -= wheel.x * charW_ * 6;  // sideways on a touchpad
         }
     }
-    hoverText = inside && CheckCollisionPointRec(m, area_);
-    if (inside && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
-        if (CheckCollisionPointRec(m, vbar)) {
+    hoverText = inside && !overPopup && CheckCollisionPointRec(m, area_);
+    if (overPopup && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+        int row = acTop_ + static_cast<int>((m.y - acRect_.y - 2) / lineH_);
+        if (row >= 0 && row < static_cast<int>(acItems_.size())) {
+            acSel_ = row;
+            acceptCompletion();
+        }
+    } else if (inside && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+        acOpen_ = false;
+        if (CheckCollisionPointRec(m, hbar)) {
+            if (maxX > 0) {
+                float tx = thumbX();
+                if (m.x >= tx && m.x <= tx + thumbW) {
+                    draggingHBar_ = true;
+                    hbarGrab_ = m.x - tx;
+                } else {
+                    scroll_.x += (m.x < tx ? -1 : 1) * area_.width;
+                }
+            }
+        } else if (CheckCollisionPointRec(m, vbar)) {
             float ty = thumbY();
             if (m.y >= ty && m.y <= ty + thumbH) {
                 draggingBar_ = true;
@@ -938,6 +1045,11 @@ void TextDocument::draw(Rectangle r, bool focused, bool mouse, const TextStyle& 
             keepCursorVisible_ = false;
             blinkStart_ = now;
         }
+    }
+    if (draggingHBar_) {
+        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && hbar.width > thumbW)
+            scroll_.x = (m.x - hbarGrab_ - hbar.x) / (hbar.width - thumbW) * maxX;
+        else draggingHBar_ = false;
     }
     if (draggingBar_) {
         if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && vbar.height > thumbH)
@@ -1064,12 +1176,121 @@ void TextDocument::draw(Rectangle r, bool focused, bool mouse, const TextStyle& 
         DrawRectangleRec({vbar.x + 2, y, vbar.width - 4, 3}, d.error ? c.error : c.warning);
     }
     if (maxY > 0) DrawRectangleRec({vbar.x + 3, thumbY(), vbar.width - 6, thumbH}, Fade(c.lineNumbers, draggingBar_ ? 0.8f : 0.5f));
-    Rectangle hbar{area_.x, r.y + r.height - bar, area_.width, bar};
     DrawRectangleRec({r.x, hbar.y, r.width, bar}, Fade(c.lineNumbers, 0.08f));
-    if (maxX > 0) {
-        float w = std::max(24.0f, hbar.width * area_.width / (area_.width + maxX));
-        float x = hbar.x + scroll_.x / maxX * (hbar.width - w);
-        DrawRectangleRec({x, hbar.y + 3, w, bar - 6}, Fade(c.lineNumbers, 0.5f));
+    if (maxX > 0)
+        DrawRectangleRec({thumbX(), hbar.y + 3, thumbW, bar - 6}, Fade(c.lineNumbers, draggingHBar_ ? 0.8f : 0.5f));
+
+    drawCompletion(r, style);
+}
+
+void TextDocument::drawCompletion(Rectangle r, const TextStyle& style) {
+    acRect_ = {};
+    if (!acOpen_ || acItems_.empty()) return;
+    const auto& c = theme().code;
+    const Font& font = style.font;
+    float size = style.fontSize;
+    float lineTop = area_.y + cursor_.line * lineH_ - scroll_.y;
+    if (lineTop < area_.y - lineH_ || lineTop > area_.y + area_.height) return;  // scrolled away
+
+    int n = static_cast<int>(acItems_.size());
+    int visible = std::min(n, 9);
+    acSel_ = std::clamp(acSel_, 0, n - 1);
+    if (acSel_ < acTop_) acTop_ = acSel_;
+    if (acSel_ >= acTop_ + visible) acTop_ = acSel_ - visible + 1;
+    acTop_ = std::clamp(acTop_, 0, n - visible);
+
+    auto width = [&](const std::string& s) { return MeasureTextEx(font, s.c_str(), size, 1).x; };
+    auto fit = [&](std::string s, float max) {
+        if (width(s) <= max) return s;
+        while (!s.empty() && width(s + "...") > max) s.pop_back();
+        return s + "...";
+    };
+    // What to show to the right of a name
+    auto hint = [](const Completion& item) -> std::string {
+        if (item.kind == Completion::Kind::Function) {
+            size_t open = item.detail.find('(');
+            std::string params = open == std::string::npos ? "()" : item.detail.substr(open);
+            return params + "  " + item.type;
+        }
+        if (item.kind == Completion::Kind::Type) return item.detail.substr(0, item.detail.find(' '));
+        return item.type;
+    };
+
+    float icon = lineH_;
+    float nameW = 0, hintW = 0;
+    for (int i = acTop_; i < acTop_ + visible; ++i) {
+        nameW = std::max(nameW, width(acItems_[i].name));
+        hintW = std::max(hintW, width(hint(acItems_[i])));
+    }
+    float w = std::clamp(icon + nameW + 28 + std::min(hintW, 340.0f), 240.0f, std::max(240.0f, std::min(680.0f, r.width - 8)));
+    float x = area_.x - scroll_.x + visualCol(acStart_.line, acStart_.col) * charW_ - icon - 2;
+    x = std::clamp(x, r.x + 2, r.x + r.width - w - 2);
+
+    // The selected one's full signature and comment, under the list
+    const Completion& sel = acItems_[acSel_];
+    std::vector<std::string> docLines;
+    if (!sel.detail.empty()) docLines.push_back(fit(sel.detail, w - 16));
+    std::string line;
+    std::stringstream words(sel.doc);
+    for (std::string word; words >> word;) {
+        if (!line.empty() && width(line + " " + word) > w - 16) {
+            docLines.push_back(line);
+            line.clear();
+            if (docLines.size() >= 4) break;
+        }
+        line += (line.empty() ? "" : " ") + word;
+    }
+    if (!line.empty() && docLines.size() < 4) docLines.push_back(line);
+
+    float listH = visible * lineH_ + 4;
+    float docH = docLines.empty() ? 0 : docLines.size() * (lineH_ - 2) + 10;
+    float y = lineTop + lineH_;
+    if (y + listH + docH > r.y + r.height && lineTop - listH - docH > r.y) y = lineTop - listH - docH;
+    acRect_ = {x, y, w, listH};
+
+    Color bg = c.currentLine;
+    bg.a = 255;
+    Rectangle all{x, y, w, listH + docH};
+    DrawRectangleRec({all.x + 3, all.y + 3, all.width, all.height}, Fade(BLACK, 0.35f));
+    DrawRectangleRec(all, bg);
+    DrawRectangleLinesEx(all, 1, Fade(c.lineNumbers, 0.7f));
+    Vector2 m = GetMousePosition();
+    float textY = (lineH_ - size) / 2;
+    for (int i = 0; i < visible; ++i) {
+        const Completion& item = acItems_[acTop_ + i];
+        Rectangle row{x + 2, y + 2 + i * lineH_, w - 4, lineH_};
+        if (acTop_ + i == acSel_) DrawRectangleRec(row, c.selection);
+        else if (CheckCollisionPointRec(m, row)) DrawRectangleRec(row, Fade(c.selection, 0.4f));
+        const char* badge = "v";
+        Color badgeColor = c.text;
+        switch (item.kind) {
+            case Completion::Kind::Function: badge = "f"; badgeColor = c.function; break;
+            case Completion::Kind::Type: badge = "T"; badgeColor = c.type; break;
+            case Completion::Kind::Constant: badge = "c"; badgeColor = c.number; break;
+            case Completion::Kind::Keyword: badge = "k"; badgeColor = c.keyword; break;
+            case Completion::Kind::Namespace: badge = "n"; badgeColor = c.preprocessor; break;
+            default: break;
+        }
+        float bw = width(badge);
+        DrawTextEx(font, badge, {std::round(row.x + (icon - bw) / 2), std::round(row.y + textY)}, size, 1, badgeColor);
+        DrawTextEx(font, item.name.c_str(), {std::round(row.x + icon), std::round(row.y + textY)}, size, 1, c.text);
+        float room = row.width - icon - width(item.name) - 20;
+        if (room > 30) {
+            std::string h = fit(hint(item), room);
+            DrawTextEx(font, h.c_str(), {std::round(row.x + row.width - width(h) - 6), std::round(row.y + textY)}, size,
+                       1, c.lineNumbers);
+        }
+    }
+    if (n > visible) {  // a little scroll indicator
+        float th = listH * visible / n;
+        DrawRectangleRec({x + w - 4, y + listH * acTop_ / n, 3, th}, Fade(c.lineNumbers, 0.6f));
+    }
+    if (!docLines.empty()) {
+        float dy = y + listH;
+        DrawLineEx({x, dy}, {x + w, dy}, 1, Fade(c.lineNumbers, 0.4f));
+        for (size_t i = 0; i < docLines.size(); ++i)
+            DrawTextEx(font, docLines[i].c_str(), {std::round(x + 8), std::round(dy + 5 + i * (lineH_ - 2))}, size, 1,
+                       i == 0 ? c.text : c.comment);
     }
 }
 
