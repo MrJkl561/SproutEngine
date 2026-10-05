@@ -242,6 +242,9 @@ bool Exporter::exportOne(const ExportTarget& t, const std::string& program, cons
         fs::path app = dest / (program + ".app");
         copyTree(out / (program + ".app"), app);
         copyTree(paths_.projectDir, app / "Contents" / "Resources" / "project");
+        // Sign it again ("ad-hoc", no Apple account needed) now that the project is
+        // inside, or a downloaded copy is reported as damaged instead of opening.
+        if (!run("Signing " + t.label, "codesign --force --deep --sign - " + quote(app))) return false;
     } else {
         std::string exe = program + (t.id == "windows" ? ".exe" : "");
         fs::copy_file(out / exe, dest / exe);
