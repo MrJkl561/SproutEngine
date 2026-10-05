@@ -324,20 +324,40 @@ To add one: select a node, press **New** under *Script* in the inspector and
 type a class name. The editor writes `scripts/<name>.cpp` (in the project) from a
 template and attaches it. Then open the file in your code editor.
 
-### Opening scripts in your code editor
+### Editing scripts (the Script tab)
 
-Pick the program you write code in with the **gear button** on the toolbar ->
-**Code Editor...**. The list shows the editors found on your computer (VS Code,
-Visual Studio, CLion, Sublime Text, Zed, Notepad++, Xcode, Kate...), the
-system default, or a command of your own, where `{file}` is the file and
-`{project}` the project folder, e.g. `code {project} -g {file}`. The choice is
-saved for you, for every project.
+Sprout has its own script editor, like Godot's: the **2D | Script** switch above
+the viewport. Open a file with the **Edit** button next to a node's script in
+the Inspector, by right-clicking a script or scene in the FileSystem dock, or by
+making a **New** script (it opens straight away). Each open file gets a tab.
 
-Then:
-- the **Edit** button next to a node's script in the Inspector opens that script,
-- **right-click** a script or scene in the FileSystem dock to open it (scenes
-  open as their JSON), show it in its folder, or change the code editor,
-- **New** script opens the new file straight away (once you've picked an editor).
+- C++ and JSON syntax colors, line numbers, auto-indent, undo/redo
+- **Ctrl+S** saves (scripts then hot reload by themselves), **Ctrl+Shift+S**
+  saves every open file
+- **Ctrl+F** find, **Ctrl+H** replace, **F3** next match, **Ctrl+G** go to line,
+  **Ctrl+/** comment lines, **Ctrl+D** duplicate line, **Tab/Shift+Tab** indent
+- **Compile errors** are marked on their lines (with the message), and clicking
+  an error in the Output panel jumps to it
+- **Scene files** can be edited as JSON. A file that isn't valid JSON, or isn't
+  a scene the editor can load, is never saved: the error line is marked
+  instead. Saving a scene the 2D view shows (or uses) reloads it there.
+- Files changed by another program reload by themselves; if you have unsaved
+  changes too, the editor asks which version to keep. Closing a tab, switching
+  projects or closing the window asks about unsaved files first.
+
+The colors and font are in the theme file (`t.code...`, see
+[Customizing the editor](#customizing-the-editor)).
+
+### Using another code editor (VS Code, Visual Studio...)
+
+For heavier coding (autocomplete, debugging) you can open files in your own
+editor instead: **gear button** on the toolbar -> **Code Editor...** lists the
+editors found on your computer (VS Code, Visual Studio, CLion, Sublime Text, Zed,
+Notepad++, Xcode, Kate...), the system default, or a command of your own, where
+`{file}` is the file and `{project}` the project folder, e.g.
+`code {project} -g {file}`. The choice is saved for you, for every project. The
+Edit button and new scripts then open there, and the right-click menu offers
+both. Files you change outside Sprout show up in the Script tab by themselves.
 
 ### Script variables (shown in the inspector)
 
@@ -456,6 +476,7 @@ restart the editor. It sets:
 | Widget look (buttons, text boxes...) | `t.widgets` = one of raygui's 20 styles, plus `t.customizeWidgets` for any `GuiSetStyle()` tweak |
 | Font and text size | `t.font` (a .ttf/.otf in `theme/`), `t.fontSize` |
 | Panel colors | `t.colors.background`, `panel`, `header`, `border`, `text`, `accent`, `selection`... |
+| Script editor | `t.code.background`, `keyword`, `string`, `comment`..., `t.code.font`, `t.code.fontSize` |
 | Viewport colors | `t.viewport.background`, `grid`, axes, game frame, selection outline |
 | Gizmos | `t.gizmos.collisionShape`, `camera`... |
 | Each node type's color and icon | `t.nodes["Sprite2D"] = {color, ICON_..., "picture.png"}` (a picture replaces the icon) |
@@ -495,6 +516,7 @@ editor/
 │   ├── assets.*          <- texture cache
 │   ├── theme.*           <- what a theme can set (Theme)
 │   ├── code_editor.*     <- opening files in VS Code, Visual Studio...
+│   ├── text_editor.*     <- the Script tab's text editor
 │   └── raygui_*          <- raygui and its widget styles
 ├── theme/                <- theme files (default_theme.cpp, light_theme.cpp) and their pictures
 ├── player/               <- the game runtime that exports are built from

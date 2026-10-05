@@ -69,6 +69,28 @@ Theme makeTheme() {
     t.gizmos.camera = Color{190, 120, 255, 220};
     t.gizmos.missingTexture = Color{255, 0, 255, 255};
 
+    // --- Script editor (the Script tab) ---------------------------------------
+    t.code.font = "";       // e.g. "JetBrainsMono-Regular.ttf" in this folder; "" = the UI font
+    t.code.fontSize = 0;    // 0 = same as the UI
+    t.code.tabSize = 4;
+    t.code.background = Color{24, 26, 31, 255};
+    t.code.text = Color{215, 218, 224, 255};
+    t.code.lineNumbers = Color{90, 96, 110, 255};
+    t.code.currentLine = Color{34, 37, 45, 255};
+    t.code.selection = Color{55, 85, 140, 200};
+    t.code.cursor = Color{235, 235, 240, 255};
+    t.code.keyword = Color{255, 120, 140, 255};
+    t.code.type = Color{120, 210, 200, 255};
+    t.code.function = Color{110, 175, 255, 255};
+    t.code.string = Color{255, 225, 140, 255};
+    t.code.number = Color{170, 230, 140, 255};
+    t.code.comment = Color{110, 118, 135, 255};
+    t.code.preprocessor = Color{220, 150, 255, 255};
+    t.code.key = Color{150, 200, 255, 255};
+    t.code.error = Color{255, 90, 80, 255};
+    t.code.warning = Color{255, 180, 70, 255};
+    t.code.match = Color{90, 80, 30, 255};
+
     // --- Node types -------------------------------------------------------------
     // {color, raygui icon, picture}. To use your own 16x16 picture instead of
     // an icon:  t.nodes["Sprite2D"] = {Color{130, 165, 255, 255}, 0, "sprite_icon.png"};

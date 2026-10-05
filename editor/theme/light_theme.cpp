@@ -44,6 +44,24 @@ Theme makeTheme() {
     t.viewport.selection = Color{230, 120, 20, 255};
     t.viewport.playingBackground = Color{60, 64, 72, 255};
 
+    t.code.background = Color{255, 255, 255, 255};
+    t.code.text = Color{36, 40, 48, 255};
+    t.code.lineNumbers = Color{160, 166, 178, 255};
+    t.code.currentLine = Color{242, 245, 250, 255};
+    t.code.selection = Color{190, 212, 248, 255};
+    t.code.cursor = Color{20, 20, 30, 255};
+    t.code.keyword = Color{175, 30, 90, 255};
+    t.code.type = Color{20, 120, 120, 255};
+    t.code.function = Color{30, 90, 200, 255};
+    t.code.string = Color{160, 90, 0, 255};
+    t.code.number = Color{40, 130, 40, 255};
+    t.code.comment = Color{130, 138, 150, 255};
+    t.code.preprocessor = Color{130, 50, 180, 255};
+    t.code.key = Color{30, 90, 200, 255};
+    t.code.error = Color{210, 40, 30, 255};
+    t.code.warning = Color{200, 120, 0, 255};
+    t.code.match = Color{255, 236, 150, 255};
+
     const Color blue{40, 100, 200, 255}, physics{20, 130, 170, 255};
     t.nodes["Node"] = {Color{90, 96, 108, 255}, ICON_EMPTYBOX_SMALL, ""};
     t.nodes["Node2D"] = {blue, ICON_TARGET_SMALL, ""};

@@ -183,7 +183,8 @@ int main(int argc, char** argv) {
         {
             s2d::Editor editor(project);
             editor.setUiScale(scale);
-            while (!window.ShouldClose()) {
+            while (!editor.quitting()) {
+                if (window.ShouldClose()) editor.requestQuit();  // asks about unsaved changes first
                 ++frame;
                 if (screenshot && testFrames > 0 && frame == testFrames) editor.screenshotPath = screenshot;
                 editor.frame();

@@ -29,6 +29,7 @@
 #include "nodes.hpp"
 #include "project.hpp"
 #include "scene_tree.hpp"
+#include "text_editor.hpp"
 #include "theme.hpp"
 
 namespace s2d {
@@ -44,6 +45,10 @@ public:
     ~Editor();
 
     void frame();  // handle input and draw one frame
+    // The window's close button: asks about unsaved changes first; quitting()
+    // turns true once it's fine to close.
+    void requestQuit();
+    bool quitting() const { return quit_; }
     bool openScene(const std::string& relativePath);
     void log(const std::string& message) { log(message, theme().colors.text); }
     void log(const std::string& message, Color color);
@@ -141,7 +146,8 @@ private:
                         std::function<void(const std::string&)> onOk);
     bool isTyping() const {
         return !activeField_.empty() || dialog_.open || confirm_.open || export_.open || projects_.open ||
-               folderPick_.valid() || sheet_.open || codeEditorDialog_.open;
+               folderPick_.valid() || sheet_.open || codeEditorDialog_.open ||
+               (mainView_ == MainView::Script && (codeFocused_ || find_.findEdit || find_.withEdit));
     }
 
     // --- code editor (VS Code, Visual Studio...) -----------------------------
@@ -151,6 +157,24 @@ private:
     void fileMenu(size_t index, Vector2 at);  // right-click on a file in the FileSystem dock
     std::filesystem::path scriptFileOf(const std::string& className) const;  // "" if not found
     void resetLayout();
+
+    // --- the Script tab (built-in script editor) ------------------------------
+    TextDocument* openDocument(const std::filesystem::path& file, int line = 0, int column = 0);
+    void drawMainTabs(Rectangle r);  // 2D | Script
+    void drawScriptView(Rectangle r);
+    void drawFindBar(Rectangle r, TextDocument& doc);
+    bool saveDocument(TextDocument& doc);
+    void closeDocument(TextDocument* doc);  // asks first if it has unsaved changes
+    void checkDocumentsOnDisk();
+    void handleScriptShortcuts();
+    void setDiagnostics(TextDocument& doc) const;  // the last build's messages for its file
+    bool dialogOpen() const {
+        return dialog_.open || confirm_.open || export_.open || projects_.open || folderPick_.valid() || sheet_.open ||
+               codeEditorDialog_.open;
+    }
+    // Asks about the scene and any open files with unsaved changes, then goes on.
+    void confirmUnsavedAll(std::function<void()> then);
+    void confirmUnsavedDocuments(std::function<void()> then);
 
     // --- exporting -----------------------------------------------------------
     void drawProjectManager();
@@ -255,6 +279,8 @@ private:
     struct LogLine {
         std::string text;
         Color color;
+        std::string file;  // a compiler message's file and line: clicking it opens them
+        int line = 0, column = 0;
     };
     std::vector<LogLine> logLines_;
     bool scrollLogToBottom_ = false;
@@ -318,6 +344,27 @@ private:
     } sheet_;
 
     CodeEditor codeEditor_;
+
+    enum class MainView { View2D, Script } mainView_ = MainView::View2D;
+    std::vector<std::unique_ptr<TextDocument>> docs_;
+    TextDocument* currentDoc_ = nullptr;
+    bool codeFocused_ = false;  // keys go to the script editor
+    Rectangle codeRect_{};      // where it was drawn (clicking elsewhere takes the focus away)
+    Font codeFont_{};           // the theme's code font, if it has one
+    double lastDiskCheck_ = 0;
+    struct FindBar {
+        bool open = false, replace = false, matchCase = false;
+        char find[256] = {};
+        char with[256] = {};
+        bool findEdit = false, withEdit = false;
+    } find_;
+    // Compiler messages from the last scripts build, by file.
+    struct BuildMessage {
+        std::filesystem::path file;
+        Diagnostic diagnostic;
+    };
+    std::vector<BuildMessage> buildMessages_;
+    bool quit_ = false;
     struct CodeEditorDialog {
         bool open = false;
         int selected = 0;  // in installedCodeEditors(); its size = Custom
@@ -329,6 +376,7 @@ private:
         bool open = false;
         std::string message;
         std::function<void()> then;
+        std::function<bool()> save;  // what Save does ("" = save the scene); false = it failed
     } confirm_;
 };
 

@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <optional>
 #include <regex>
 #include <sstream>
 
@@ -101,6 +102,33 @@ void drawThemeImage(const std::string& file, Rectangle r, bool tile, Color tint)
             float w = std::min((float)tex->width, r.x + r.width - x), h = std::min((float)tex->height, r.y + r.height - y);
             DrawTexturePro(*tex, {0, 0, w, h}, {x, y, w, h}, {0, 0}, 0, tint);
         }
+}
+
+struct CompilerMessage {
+    std::string file;
+    int line = 0, column = 0;
+    bool error = true;
+    std::string message;
+};
+
+// "file.cpp:12:5: error: ..." (GCC, Clang) or "file.cpp(12,5): error C2065: ..." (MSVC)
+std::optional<CompilerMessage> parseCompilerLine(const std::string& text) {
+    if (text.find("error") == std::string::npos && text.find("warning") == std::string::npos) return std::nullopt;
+    static const std::regex gcc(R"(^\s*(.+?):(\d+):(?:(\d+):)?\s*(fatal error|error|warning):\s*(.*)$)");
+    static const std::regex msvc(R"(^\s*(.+?)\((\d+)(?:,(\d+))?\)\s*:\s*(fatal error|error|warning)\s*[A-Z]*\d*\s*:\s*(.*)$)");
+    std::smatch m;
+    if (!std::regex_match(text, m, msvc) && !std::regex_match(text, m, gcc)) return std::nullopt;
+    CompilerMessage out;
+    out.file = m[1].str();
+    out.line = std::stoi(m[2].str());
+    out.column = m[3].matched ? std::stoi(m[3].str()) : 0;
+    out.error = m[4].str() != "warning";
+    out.message = m[5].str();
+    for (const char* curly : {"\xE2\x80\x98", "\xE2\x80\x99"})
+        for (size_t p; (p = out.message.find(curly)) != std::string::npos;) out.message.replace(p, 3, "'");
+    if (size_t proj = out.message.rfind(" ["); proj != std::string::npos && out.message.back() == ']')
+        out.message.erase(proj);  // MSBuild adds " [something.vcxproj]"
+    return out;
 }
 
 float gUiScale = 1.0f;  // Editor::uiScale(), for the helpers below
@@ -317,6 +345,7 @@ Editor::~Editor() {
         setEditorFont(GetFontDefault());
         UnloadFont(uiFont_);
     }
+    if (codeFont_.texture.id != 0) UnloadFont(codeFont_);
     playTree_.reset();
     inspectorScript_.reset();
     scripts_.reset();  // after the game: scripts' code lives in the library
@@ -451,7 +480,9 @@ void Editor::frame() {
     Rectangle inspector{sw - kRightW, kToolbarH, kRightW, bodyH};
     Rectangle output{kLeftW, sh - kOutputH, sw - kLeftW - kRightW, kOutputH};
     Rectangle viewport{kLeftW, kToolbarH, sw - kLeftW - kRightW, bodyH - kOutputH};
-    viewportRect_ = viewport;
+    Rectangle mainTabs{viewport.x, viewport.y, viewport.width, 30};
+    Rectangle mainArea{viewport.x, viewport.y + 30, viewport.width, viewport.height - 30};
+    viewportRect_ = mainView_ == MainView::View2D ? mainArea : Rectangle{};
     inspectorRect_ = inspector;
     dropTarget_ = nullptr;
 
@@ -469,14 +500,17 @@ void Editor::frame() {
             std::string rel = "assets/" + src.filename().string();
             Assets::reload(rel);
             log("Imported " + rel, kGood);
-            if (!playTree_ && mouseIn(viewport)) createSpriteAt(rel, viewCam_.GetScreenToWorld(GetMousePosition()));
+            if (!playTree_ && mouseIn(viewportRect_)) createSpriteAt(rel, viewCam_.GetScreenToWorld(GetMousePosition()));
         }
         UnloadDroppedFiles(dropped);
         rescanFiles();
     }
 
+    // Clicking anywhere but the script editor takes the keyboard away from it.
+    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !mouseIn(codeRect_)) codeFocused_ = false;
     handleShortcuts();
     updateScripts();
+    checkDocumentsOnDisk();
 
     if (playTree_) {
         try {
@@ -507,7 +541,9 @@ void Editor::frame() {
         drawFileSystem(fileDock);
         if (playTree_ && !modal) GuiUnlock();
         drawOutput(output);
-        drawViewport(viewport);
+        drawMainTabs(mainTabs);
+        if (mainView_ == MainView::Script) drawScriptView(mainArea);
+        else drawViewport(mainArea);
         drawToolbar(toolbar);
     }
     if (modal) GuiUnlock();
@@ -561,6 +597,15 @@ void Editor::setUiScale(float scale) {
     }
     if (uiFont_.texture.id == 0 && old.texture.id != 0) setEditorFont(styleFont);
     if (old.texture.id != 0) UnloadFont(old);
+
+    // The script editor's own font, if the theme has one
+    if (codeFont_.texture.id != 0) UnloadFont(codeFont_);
+    codeFont_ = Font{};
+    if (std::string codeFile = themePath(theme().code.font); !codeFile.empty() && FileExists(codeFile.c_str())) {
+        int size = theme().code.fontSize > 0 ? theme().code.fontSize : theme().fontSize;
+        codeFont_ = LoadFontEx(codeFile.c_str(), static_cast<int>(std::lround(size * scale)), nullptr, 0);
+        if (codeFont_.texture.id != 0) SetTextureFilter(codeFont_.texture, TEXTURE_FILTER_BILINEAR);
+    }
 }
 
 void Editor::resetLayout() {
@@ -662,8 +707,15 @@ void Editor::updateSplitters(float sw, float sh, float leftW, float rightW, floa
 }
 
 void Editor::handleShortcuts() {
+    bool scriptView = mainView_ == MainView::Script;
     if (playTree_) {
-        if (IsKeyPressed(KEY_F8) || IsKeyPressed(KEY_ESCAPE)) stop();
+        bool typing = scriptView && (codeFocused_ || find_.findEdit || find_.withEdit);
+        if (IsKeyPressed(KEY_F8) || (IsKeyPressed(KEY_ESCAPE) && !typing && !find_.open)) stop();
+        if (scriptView && !popup_.open && !dialogOpen()) handleScriptShortcuts();  // edit scripts while it runs
+        return;
+    }
+    if (scriptView) {
+        if (!popup_.open && !dialogOpen()) handleScriptShortcuts();
         return;
     }
     if (isTyping() || popup_.open) return;
@@ -1929,7 +1981,26 @@ void Editor::drawInspector(Rectangle r) {
 void Editor::log(const std::string& message, Color color) {
     std::stringstream ss(message);
     std::string line;
-    while (std::getline(ss, line)) logLines_.push_back({line, color});
+    while (std::getline(ss, line)) {
+        // Compilers quote names with curly quotes, which the pixel font doesn't have.
+        for (const char* curly : {"\xE2\x80\x98", "\xE2\x80\x99"})
+            for (size_t p; (p = line.find(curly)) != std::string::npos;) line.replace(p, 3, "'");
+        for (const char* curly : {"\xE2\x80\x9C", "\xE2\x80\x9D"})
+            for (size_t p; (p = line.find(curly)) != std::string::npos;) line.replace(p, 3, "\"");
+        LogLine entry{line, color, {}, 0, 0};
+        if (auto m = parseCompilerLine(line)) {
+            // Compiler messages can be clicked to open the file at that line.
+            std::error_code ec;
+            fs::path file = m->file;
+            if (!fs::exists(file, ec)) file = scriptsDir_ / fs::path(m->file).filename();
+            if (fs::exists(file, ec)) {
+                entry.file = file.string();
+                entry.line = m->line;
+                entry.column = m->column;
+            }
+        }
+        logLines_.push_back(std::move(entry));
+    }
     if (logLines_.size() > 500) logLines_.erase(logLines_.begin(), logLines_.begin() + (logLines_.size() - 500));
     scrollLogToBottom_ = true;
     TraceLog(LOG_INFO, "EDITOR: %s", message.c_str());
@@ -1972,6 +2043,15 @@ void Editor::drawOutput(Rectangle r) {
         float y = view.y + outputScroll_.y + 4 + i * lineH;
         if (y + lineH < view.y || y > view.y + view.height) continue;
         drawText(logLines_[i].text, view.x + 8, y, logLines_[i].color);
+        const LogLine& l = logLines_[i];
+        if (!l.file.empty() && !GuiIsLocked() && mouseIn(view) && mouseIn({view.x, y, view.width, lineH})) {
+            DrawLineEx({view.x + 8, y + 17}, {view.x + 8 + textWidth(l.text), y + 17}, 1, l.color);
+            mouseCursor_ = MOUSE_CURSOR_POINTING_HAND;
+            if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                if (codeEditor_.builtin) openDocument(l.file, l.line, l.column);
+                else openInCodeEditor(l.file);
+            }
+        }
     }
     EndScissorMode();
 }
@@ -2342,6 +2422,10 @@ fs::path Editor::scriptFileOf(const std::string& className) const {
 
 void Editor::openInCodeEditor(const fs::path& file) {
     fs::path full = file.is_absolute() ? file : projectDir_ / file;
+    if (codeEditor_.builtin) {
+        openDocument(full);
+        return;
+    }
     std::string error;
     if (s2d::openInCodeEditor(codeEditor_, full, projectDir_, error)) {
         log("Opened " + full.filename().string() + " in " + codeEditor_.name, kDim);
@@ -2355,7 +2439,10 @@ void Editor::fileMenu(size_t index, Vector2 at) {
     if (index >= files_.size()) return;
     const FileEntry f = files_[index];
     fs::path full = f.kind == FileEntry::Script ? fs::path(f.path) : projectDir_ / f.path;
-    std::string openIn = codeEditor_.command.empty() ? "Open in Default App" : "Open in " + codeEditor_.name;
+    // The external editor, if one is picked (the built-in one is always offered)
+    std::string external = codeEditor_.builtin           ? ""
+                           : codeEditor_.command.empty() ? "Open in Default App"
+                                                         : "Open in " + codeEditor_.name;
     std::vector<std::string> items;
     std::vector<std::function<void()>> actions;
     auto add = [&](std::string label, std::function<void()> action) {
@@ -2364,14 +2451,15 @@ void Editor::fileMenu(size_t index, Vector2 at) {
     };
     switch (f.kind) {
         case FileEntry::Script:
-            add(openIn, [this, full] { openInCodeEditor(full); });
+            add("Edit in Script Tab", [this, full] { openDocument(full); });
+            if (!external.empty()) add(external, [this, full] { openInCodeEditor(full); });
             if (selected_ && !f.scriptClass.empty())
                 add("Attach to " + selected_->name, [this, index] { activateFile(index); });
             break;
         case FileEntry::Scene:
             add("Open Scene", [this, path = f.path] { requestOpenScene(path); });
-            add(codeEditor_.command.empty() ? "Open JSON in Default App" : "Open JSON in " + codeEditor_.name,
-                [this, full] { openInCodeEditor(full); });
+            add("Edit JSON in Script Tab", [this, full] { openDocument(full); });
+            if (!external.empty()) add(external + " (JSON)", [this, full] { openInCodeEditor(full); });
             break;
         case FileEntry::Texture:
             add("Open in Image Viewer", [this, full] {
@@ -2393,7 +2481,8 @@ void Editor::openCodeEditorDialog() {
     codeEditorDialog_.open = true;
     codeEditorDialog_.selected = static_cast<int>(editors.size());  // Custom, unless it's one of the list
     for (size_t i = 0; i < editors.size(); ++i)
-        if (editors[i].name == codeEditor_.name && editors[i].command == codeEditor_.command)
+        if (editors[i].name == codeEditor_.name && editors[i].command == codeEditor_.command &&
+            editors[i].builtin == codeEditor_.builtin)
             codeEditorDialog_.selected = static_cast<int>(i);
     std::snprintf(codeEditorDialog_.command, sizeof codeEditorDialog_.command, "%s", codeEditor_.command.c_str());
 }
@@ -2424,7 +2513,10 @@ void Editor::drawCodeEditorDialog() {
         GuiDrawIcon(chosen ? ICON_OK_TICK : ICON_NONE, static_cast<int>(row.x + 4), static_cast<int>(row.y + 4), 1, kAccent);
         std::string label = isCustom ? "Custom command" : editors[i].name;
         drawText(label, row.x + 28, row.y + 4, kText);
-        std::string hint = isCustom ? "" : editors[i].command.empty() ? "whatever the system opens the file with" : editors[i].command;
+        std::string hint = isCustom                    ? ""
+                           : editors[i].builtin         ? "the Script tab, inside Sprout"
+                           : editors[i].command.empty() ? "whatever the system opens the file with"
+                                                        : editors[i].command;
         if (!hint.empty()) drawText(hint, row.x + row.width - textWidth(hint) - 8, row.y + 4, kDim);
         if (mouseIn(row) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !GuiIsLocked()) {
             d.selected = static_cast<int>(i);
@@ -2442,7 +2534,7 @@ void Editor::drawCodeEditorDialog() {
     // Typing a command of your own makes it a custom one.
     if (before != d.command) d.selected = static_cast<int>(editors.size());
     y += 34;
-    drawText("{file} = the file, {project} = the project folder. Empty = system default.", x, y, kDim);
+    drawText("{file} = the file, {project} = the project folder.", x, y, kDim);
     y += 20;
     drawText("Saved for you on this computer (all projects).", x, y, kDim);
 
@@ -2462,6 +2554,7 @@ void Editor::drawCodeEditorDialog() {
         chosen = editors[d.selected];
     } else {
         chosen.name = "Custom";
+        chosen.builtin = false;
         chosen.command = d.command;
         while (!chosen.command.empty() && chosen.command.back() == ' ') chosen.command.pop_back();
         if (chosen.command.empty()) chosen.name = "System default";
@@ -2475,6 +2568,445 @@ void Editor::drawCodeEditorDialog() {
     saveCodeEditor(chosen);
     d.open = false;
     log("Code editor: " + chosen.name + (chosen.command.empty() ? "" : " (" + chosen.command + ")"), kGood);
+}
+
+
+// ===========================================================================
+// The Script tab: the built-in script editor
+// ===========================================================================
+
+TextDocument* Editor::openDocument(const fs::path& file, int line, int column) {
+    std::error_code ec;
+    fs::path full = fs::weakly_canonical(fs::absolute(file.is_absolute() ? file : projectDir_ / file, ec), ec);
+    TextDocument* doc = nullptr;
+    for (auto& d : docs_)
+        if (d->path == full) doc = d.get();
+    if (!doc) {
+        auto fresh = std::make_unique<TextDocument>();
+        std::string error;
+        if (!fresh->load(full, error)) {
+            log("Couldn't open " + full.string() + ": " + error, kBad);
+            return nullptr;
+        }
+        setDiagnostics(*fresh);
+        doc = fresh.get();
+        docs_.push_back(std::move(fresh));
+    }
+    currentDoc_ = doc;
+    mainView_ = MainView::Script;
+    codeFocused_ = true;
+    if (line > 0) doc->goToLine(line, column);
+    return doc;
+}
+
+void Editor::setDiagnostics(TextDocument& doc) const {
+    if (doc.language != Language::Cpp) return;  // JSON files get theirs when saving
+    doc.diagnostics.clear();
+    std::error_code ec;
+    for (const BuildMessage& m : buildMessages_)
+        if (fs::equivalent(m.file, doc.path, ec)) doc.diagnostics.push_back(m.diagnostic);
+}
+
+bool Editor::saveDocument(TextDocument& doc) {
+    std::string name = doc.path.filename().string();
+    bool isScene = name.size() > 11 && name.substr(name.size() - 11) == ".scene.json";
+    if (doc.language == Language::Json) {
+        // Never save a JSON file that can't be read back.
+        std::string text = doc.text();
+        nlohmann::json j;
+        try {
+            j = nlohmann::json::parse(text);
+        } catch (const nlohmann::json::parse_error& e) {
+            int line = 1, column = 1;
+            for (size_t i = 0; i + 1 < e.byte && i < text.size(); ++i) {
+                if (text[i] == '\n') {
+                    ++line;
+                    column = 1;
+                } else {
+                    ++column;
+                }
+            }
+            std::string why = e.what();
+            if (size_t colon = why.find("]: "); colon != std::string::npos) why = why.substr(colon + 3);
+            if (size_t colon = why.rfind(": "); colon != std::string::npos) why = why.substr(colon + 2);
+            doc.diagnostics = {{line, column, true, why}};
+            doc.goToLine(line, column);
+            log("Not saved: " + name + " isn't valid JSON (line " + std::to_string(line) + ": " + why + ")", kBad);
+            return false;
+        }
+        if (isScene) {
+            std::string why;
+            try {
+                if (!nodeFromJson(j)) why = "a node has an unknown type";
+            } catch (const std::exception& e) {
+                why = e.what();
+            }
+            if (!why.empty()) {
+                doc.diagnostics = {{1, 0, true, "not a scene the editor can load: " + why}};
+                log("Not saved: " + name + " isn't a scene the editor can load (" + why + ")", kBad);
+                return false;
+            }
+        }
+        doc.diagnostics.clear();
+    }
+    std::string error;
+    if (!doc.save(error)) {
+        log("Couldn't save: " + error, kBad);
+        return false;
+    }
+    doc.diskConflict = false;
+    std::error_code ec;
+    std::string rel = fs::relative(doc.path, projectDir_, ec).generic_string();
+    if (ec || rel.empty() || rel.rfind("..", 0) == 0) rel = doc.path.string();
+    log("Saved " + rel, kGood);
+    if (isScene) {
+        rescanFiles();
+        // Show the change in the 2D view if the open scene is (or uses) this file.
+        std::ifstream in(projectDir_ / scenePath_);
+        std::string current((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        bool affected = rel == scenePath_ || current.find("\"" + rel + "\"") != std::string::npos;
+        if (affected && editTree_.root() && !playTree_) {
+            if (!dirty_) openScene(scenePath_);
+            else log("The scene in the 2D view has unsaved changes; saving it there will replace these edits.", kOrange);
+        }
+    }
+    return true;
+}
+
+void Editor::closeDocument(TextDocument* doc) {
+    auto remove = [this, doc] {
+        auto it = std::find_if(docs_.begin(), docs_.end(), [doc](auto& d) { return d.get() == doc; });
+        if (it == docs_.end()) return;
+        size_t index = static_cast<size_t>(it - docs_.begin());
+        docs_.erase(it);
+        if (currentDoc_ == doc) currentDoc_ = docs_.empty() ? nullptr : docs_[std::min(index, docs_.size() - 1)].get();
+        if (!currentDoc_) codeFocused_ = false;
+    };
+    if (!doc->dirty()) {
+        remove();
+        return;
+    }
+    confirm_ = ConfirmDialog{true, "Save changes to " + doc->path.filename().string() + " first?", remove,
+                             [this, doc] { return saveDocument(*doc); }};
+}
+
+void Editor::confirmUnsavedDocuments(std::function<void()> then) {
+    std::vector<TextDocument*> dirty;
+    std::string names;
+    for (auto& d : docs_)
+        if (d->dirty()) {
+            dirty.push_back(d.get());
+            names += (names.empty() ? "" : ", ") + d->path.filename().string();
+        }
+    if (dirty.empty()) {
+        then();
+        return;
+    }
+    if (names.size() > 40) names = std::to_string(dirty.size()) + " files";
+    confirm_ = ConfirmDialog{true, "Save changes to " + names + " first?", std::move(then), [this] {
+                                 bool ok = true;
+                                 for (auto& d : docs_)
+                                     if (d->dirty()) ok = saveDocument(*d) && ok;
+                                 return ok;
+                             }};
+}
+
+void Editor::confirmUnsavedAll(std::function<void()> then) {
+    confirmUnsaved([this, then] { confirmUnsavedDocuments(then); });
+}
+
+void Editor::requestQuit() {
+    if (confirm_.open || quit_) return;
+    confirmUnsavedAll([this] { quit_ = true; });
+}
+
+void Editor::checkDocumentsOnDisk() {
+    if (GetTime() - lastDiskCheck_ < 0.5) return;
+    lastDiskCheck_ = GetTime();
+    for (auto& d : docs_) {
+        if (d->diskConflict || !d->changedOnDisk()) continue;
+        if (d->dirty()) d->diskConflict = true;  // ask (a banner over the editor)
+        else d->reloadFromDisk();                // nothing to lose: just show the new version
+    }
+}
+
+void Editor::handleScriptShortcuts() {
+    if (IsKeyPressed(KEY_F5)) play(true);
+    if (IsKeyPressed(KEY_F6)) play(false);
+    TextDocument* doc = currentDoc_;
+    auto openFind = [this, doc](bool replace) {
+        find_.open = true;
+        find_.replace = replace || (find_.replace && find_.open);
+        std::string sel = doc->selectedText();
+        if (!sel.empty() && sel.find('\n') == std::string::npos)
+            std::snprintf(find_.find, sizeof find_.find, "%s", sel.c_str());
+        find_.findEdit = true;
+        find_.withEdit = false;
+        codeFocused_ = false;
+        moveTextCursorToEnd();
+    };
+    if (ctrlDown()) {
+        if (IsKeyPressed(KEY_EQUAL) || IsKeyPressed(KEY_KP_ADD)) setUiScale(uiScale_ + 0.25f);
+        if (IsKeyPressed(KEY_MINUS) || IsKeyPressed(KEY_KP_SUBTRACT)) setUiScale(uiScale_ - 0.25f);
+        if (IsKeyPressed(KEY_ZERO) || IsKeyPressed(KEY_KP_0)) setUiScale(systemUiScale());
+    }
+    if (!doc) return;
+    if (ctrlDown()) {
+        if (IsKeyPressed(KEY_S)) {
+            if (shiftDown()) {
+                for (auto& d : docs_)
+                    if (d->dirty()) saveDocument(*d);
+            } else {
+                saveDocument(*doc);
+            }
+        }
+        if (IsKeyPressed(KEY_F)) openFind(false);
+        if (IsKeyPressed(KEY_H) || IsKeyPressed(KEY_R)) openFind(true);
+        if (IsKeyPressed(KEY_G)) {
+            openTextDialog("Go to Line", "Line number (1 - " + std::to_string(doc->lineCount()) + "):", "",
+                           [this, doc](const std::string& text) {
+                               for (auto& d : docs_)
+                                   if (d.get() == doc) {
+                                       doc->goToLine(std::atoi(text.c_str()));
+                                       codeFocused_ = true;
+                                   }
+                           });
+        }
+        if (IsKeyPressed(KEY_W)) {
+            closeDocument(doc);
+            return;
+        }
+    }
+    if (IsKeyPressed(KEY_F3)) doc->findNext(find_.find, shiftDown(), find_.matchCase);
+    if (IsKeyPressed(KEY_ESCAPE) && find_.open) {
+        find_.open = find_.findEdit = find_.withEdit = false;
+        codeFocused_ = true;
+    }
+}
+
+void Editor::drawMainTabs(Rectangle r) {
+    DrawRectangleRec(r, kHeader);
+    DrawLineEx({r.x, r.y + r.height - 0.5f}, {r.x + r.width, r.y + r.height - 0.5f}, 1, kBorder);
+    bool anyDirty = false;
+    for (auto& d : docs_) anyDirty = anyDirty || d->dirty();
+    struct Tab {
+        std::string label;
+        int icon;
+        MainView view;
+    };
+    Tab tabs[] = {{playTree_ ? "Game" : "2D", ICON_MODE_2D, MainView::View2D},
+                  {anyDirty ? "Script *" : "Script", ICON_FILETYPE_TEXT, MainView::Script}};
+    float x = r.x + 6;
+    for (const Tab& t : tabs) {
+        float w = textWidth(t.label) + 40;
+        Rectangle b{x, r.y + 3, w, r.height - 6};
+        bool active = mainView_ == t.view;
+        bool hover = mouseIn(b) && !GuiIsLocked();
+        if (active || hover) DrawRectangleRec(b, active ? kSelect : kHover);
+        float ty = std::floor(b.y + (b.height - 16) / 2);
+        GuiDrawIcon(t.icon, static_cast<int>(b.x + 8), static_cast<int>(ty), 1, active ? kText : kDim);
+        drawText(t.label, b.x + 30, ty, active ? kText : kDim);
+        if (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            mainView_ = t.view;
+            codeFocused_ = t.view == MainView::Script && currentDoc_;
+        }
+        x += w + 4;
+    }
+    if (mainView_ == MainView::Script)
+        drawText("Ctrl+S save   Ctrl+F find   Ctrl+H replace   Ctrl+G go to line   Ctrl+/ comment", x + 12,
+                 std::floor(r.y + (r.height - 16) / 2), kDim);
+}
+
+void Editor::drawFindBar(Rectangle r, TextDocument& doc) {
+    DrawRectangleRec(r, kHeader);
+    DrawLineEx({r.x, r.y + r.height - 0.5f}, {r.x + r.width, r.y + r.height - 0.5f}, 1, kBorder);
+    float labelW = std::max(textWidth("Find"), textWidth("Replace")) + 16;
+    float x = r.x + 8, y = r.y + 4;
+    float boxW = std::clamp(r.width - labelW - 330, 120.0f, 360.0f);
+    bool enter = IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER);
+
+    drawText("Find", x, y + 5, kDim);
+    std::string before = find_.find;
+    Rectangle box{x + labelW, y, boxW, 26};
+    if (GuiTextBox(box, find_.find, sizeof find_.find, find_.findEdit)) {
+        if (enter && find_.findEdit) {
+            doc.findNext(find_.find, shiftDown(), find_.matchCase);
+        } else {
+            find_.findEdit = !find_.findEdit;
+            if (find_.findEdit) find_.withEdit = codeFocused_ = false;
+        }
+    }
+    if (before != find_.find) doc.findNext(find_.find, false, find_.matchCase, true);  // as you type
+    float bx = box.x + box.width + 6;
+    if (GuiButton({bx, y, 30, 26}, GuiIconText(ICON_ARROW_LEFT, nullptr))) doc.findNext(find_.find, true, find_.matchCase);
+    if (GuiButton({bx + 34, y, 30, 26}, GuiIconText(ICON_ARROW_RIGHT, nullptr))) doc.findNext(find_.find, false, find_.matchCase);
+    Rectangle caseBox{bx + 68, y, 36, 26};
+    if (GuiButton(caseBox, "Aa")) find_.matchCase = !find_.matchCase;
+    if (find_.matchCase) DrawRectangleLinesEx(caseBox, 2, kAccent);
+    int count = find_.find[0] ? doc.countMatches(find_.find, find_.matchCase) : 0;
+    if (find_.find[0])
+        drawText(count == 0 ? "No matches" : std::to_string(count) + (count == 1 ? " match" : " matches"), bx + 112,
+                 y + 5, count ? kDim : kBad);
+    if (GuiButton({r.x + r.width - 34, y, 28, 26}, GuiIconText(ICON_CROSS_SMALL, nullptr))) {
+        find_.open = find_.findEdit = find_.withEdit = false;
+        codeFocused_ = true;
+    }
+    if (!find_.replace) {
+        if (GuiButton({r.x + r.width - 120, y, 82, 26}, "Replace...")) find_.replace = true;
+    } else {
+        y += 30;
+        drawText("Replace", x, y + 5, kDim);
+        Rectangle with{x + labelW, y, boxW, 26};
+        if (GuiTextBox(with, find_.with, sizeof find_.with, find_.withEdit)) {
+            if (enter && find_.withEdit) {
+                doc.replaceSelection(find_.find, find_.with, find_.matchCase);
+            } else {
+                find_.withEdit = !find_.withEdit;
+                if (find_.withEdit) find_.findEdit = codeFocused_ = false;
+            }
+        }
+        if (GuiButton({bx, y, 80, 26}, "Replace")) doc.replaceSelection(find_.find, find_.with, find_.matchCase);
+        if (GuiButton({bx + 84, y, 100, 26}, "Replace All")) {
+            int n = doc.replaceAll(find_.find, find_.with, find_.matchCase);
+            log("Replaced " + std::to_string(n) + " in " + doc.path.filename().string(), kDim);
+        }
+    }
+}
+
+void Editor::drawScriptView(Rectangle r) {
+    DrawRectangleRec(r, kPanel);
+    const float tabH = 30;
+    DrawRectangleRec({r.x, r.y, r.width, tabH}, kHeader);
+    TextDocument* doc = currentDoc_;
+    bool locked = GuiIsLocked();
+
+    // Buttons on the right of the tab row
+    float bx = r.x + r.width - 6;
+    auto button = [&](float w, int icon, const char* text) {
+        bx -= w;
+        bool hit = GuiButton({bx, r.y + 3, w, tabH - 6}, GuiIconText(icon, text));
+        bx -= 4;
+        return hit;
+    };
+    if (doc) {
+        if (button(30, ICON_LENS, nullptr)) {
+            find_.open = true;
+            find_.findEdit = true;
+            codeFocused_ = false;
+        }
+        if (button(74, ICON_FILE_SAVE_CLASSIC, "Save")) saveDocument(*doc);
+    }
+
+    // One tab per open file
+    TextDocument* toClose = nullptr;
+    beginClip({r.x, r.y, bx - r.x, tabH});
+    float x = r.x + 4;
+    for (auto& d : docs_) {
+        std::string label = d->path.filename().string() + (d->dirty() ? " *" : "");
+        float w = textWidth(label) + 52;
+        Rectangle t{x, r.y + 3, w, tabH - 3};
+        bool active = d.get() == doc;
+        bool hover = !locked && mouseIn(t) && mouseIn({r.x, r.y, bx - r.x, tabH});
+        DrawRectangleRec(t, active ? kPanel : hover ? kHover : kHeader);
+        if (active) DrawRectangleRec({t.x, t.y, t.width, 2}, kAccent);
+        float ty = std::floor(t.y + (t.height - 16) / 2);
+        GuiDrawIcon(d->language == Language::Json ? ICON_LAYERS : ICON_FILETYPE_TEXT, static_cast<int>(t.x + 6),
+                    static_cast<int>(ty), 1, d->language == Language::Json ? kAccent : kGood);
+        drawText(label, t.x + 26, ty, active ? kText : kDim);
+        Rectangle closeBox{t.x + t.width - 22, ty, 16, 16};
+        GuiDrawIcon(ICON_CROSS_SMALL, static_cast<int>(closeBox.x), static_cast<int>(closeBox.y), 1,
+                    hover && mouseIn(closeBox) ? kText : kDim);
+        if (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            if (mouseIn(closeBox)) {
+                toClose = d.get();
+            } else {
+                currentDoc_ = d.get();
+                codeFocused_ = true;
+            }
+        }
+        if (hover && IsMouseButtonPressed(MOUSE_BUTTON_MIDDLE)) toClose = d.get();
+        x += w + 2;
+    }
+    EndScissorMode();
+    doc = currentDoc_;
+    float y = r.y + tabH;
+
+    if (!doc) {
+        codeRect_ = {};
+        float cy = std::floor(r.y + r.height / 2 - 30);
+        const char* lines[] = {"No files open.",
+                               "Open a script with the Edit button in the Inspector, or right-click",
+                               "a script or scene in the FileSystem dock. New scripts open here too."};
+        for (const char* line : lines) {
+            drawText(line, std::floor(r.x + (r.width - textWidth(line)) / 2), cy, kDim);
+            cy += 22;
+        }
+        if (toClose) closeDocument(toClose);
+        return;
+    }
+
+    if (find_.open) {
+        float h = find_.replace ? 64 : 34;
+        drawFindBar({r.x, y, r.width, h}, *doc);
+        y += h;
+    }
+    doc->highlightNeedle = find_.open ? find_.find : "";
+    doc->highlightMatchCase = find_.matchCase;
+
+    if (doc->diskConflict) {
+        Rectangle banner{r.x, y, r.width, 34};
+        DrawRectangleRec(banner, Fade(kOrange, 0.22f));
+        drawText("This file was changed outside the editor, and it has unsaved changes here.", r.x + 10, y + 9, kText);
+        if (GuiButton({r.x + r.width - 220, y + 4, 100, 26}, "Reload")) {
+            doc->reloadFromDisk();
+            doc->diskConflict = false;
+        }
+        if (GuiButton({r.x + r.width - 114, y + 4, 106, 26}, "Keep Mine")) {
+            doc->acceptDiskVersion();
+            doc->diskConflict = false;
+        }
+        y += 34;
+    }
+
+    const float statusH = 24;
+    Rectangle area{r.x, y, r.width, r.y + r.height - statusH - y};
+    codeRect_ = area;
+    if (!locked && mouseIn(area) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+        codeFocused_ = true;
+        find_.findEdit = find_.withEdit = false;
+    }
+    TextStyle style;
+    style.font = codeFont_.texture.id != 0 ? codeFont_ : GuiGetFont();
+    style.fontSize = theme().code.fontSize > 0 ? static_cast<float>(theme().code.fontSize) : textSize();
+    style.uiScale = uiScale_;
+    doc->draw(area, codeFocused_ && !locked && !dialogOpen() && !popup_.open, !locked, style);
+    if (doc->hoverText && !locked) mouseCursor_ = MOUSE_CURSOR_IBEAM;
+
+    // Status bar
+    Rectangle status{r.x, r.y + r.height - statusH, r.width, statusH};
+    DrawRectangleRec(status, kHeader);
+    float sy = std::floor(status.y + (statusH - 16) / 2);
+    std::string where = "Ln " + std::to_string(doc->cursorLine()) + ", Col " + std::to_string(doc->cursorColumn());
+    drawText(where, status.x + 10, sy, kDim);
+    float sx = status.x + 10 + textWidth(where) + 24;
+    int errors = 0, warnings = 0;
+    for (const Diagnostic& d : doc->diagnostics) (d.error ? errors : warnings)++;
+    if (errors || warnings) {
+        std::string text = std::to_string(errors) + (errors == 1 ? " error" : " errors");
+        if (warnings) text += ", " + std::to_string(warnings) + (warnings == 1 ? " warning" : " warnings");
+        drawText(text, sx, sy, errors ? kBad : kOrange);
+        sx += textWidth(text) + 24;
+    }
+    if (doc->language == Language::Cpp && ScriptReloader::supported() && scripts_->isBuilding())
+        drawText("compiling...", sx, sy, kOrange);
+    std::error_code ec;
+    std::string rel = fs::relative(doc->path, projectDir_, ec).generic_string();
+    if (ec || rel.empty() || rel.rfind("..", 0) == 0) rel = doc->path.string();
+    std::string right = std::string(doc->language == Language::Cpp ? "C++" : doc->language == Language::Json ? "JSON" : "Text") +
+                        "   " + rel;
+    drawText(right, status.x + status.width - textWidth(right) - 10, sy, kDim);
+
+    if (toClose) closeDocument(toClose);
 }
 
 void Editor::openTextDialog(std::string title, std::string message, std::string initial,
@@ -2538,7 +3070,7 @@ void Editor::switchProject(const fs::path& project) {
         projects_.open = false;  // already open
         return;
     }
-    confirmUnsaved([this, target] {
+    confirmUnsavedAll([this, target] {
         projects_.open = false;
         switchTo_ = target;
     });
@@ -2848,7 +3380,7 @@ void Editor::confirmUnsaved(std::function<void()> then) {
         then();
         return;
     }
-    confirm_ = ConfirmDialog{true, "Save changes to " + scenePath_ + " first?", std::move(then)};
+    confirm_ = ConfirmDialog{true, "Save changes to " + scenePath_ + " first?", std::move(then), {}};
 }
 
 void Editor::requestOpenScene(const std::string& scenePath) {
@@ -2887,9 +3419,18 @@ void Editor::drawModal() {
             confirm_.open = false;
         } else if (choice >= 0) {
             auto then = confirm_.then;
+            auto save = confirm_.save;
             confirm_.open = false;
-            if (choice == 0) saveScene();
-            if (!dirty_ || choice == 1) then();  // don't go on if saving failed
+            bool saved = true;
+            if (choice == 0) {
+                if (save) {
+                    saved = save();
+                } else {
+                    saveScene();
+                    saved = !dirty_;
+                }
+            }
+            if (saved) then();  // don't go on if saving failed
         }
         return;
     }
@@ -3049,6 +3590,21 @@ void Editor::updateScripts() {
     bool ok = false;
     std::string output;
     if (!scripts_->pollBuild(ok, output)) return;
+    // Remember the compiler's messages, to mark the lines in the Script tab.
+    buildMessages_.clear();
+    {
+        std::stringstream all(output);
+        std::string line;
+        while (std::getline(all, line)) {
+            auto m = parseCompilerLine(line);
+            if (!m) continue;
+            std::error_code ec;
+            fs::path file = m->file;
+            if (!fs::exists(file, ec)) file = scriptsDir_ / fs::path(m->file).filename();
+            if (fs::exists(file, ec)) buildMessages_.push_back({file, Diagnostic{m->line, m->column, m->error, m->message}});
+        }
+        for (auto& d : docs_) setDiagnostics(*d);
+    }
     if (!ok) {
         log("Scripts didn't compile - still using the last working version:", kBad);
         // Show the compiler's error lines (with a little context), not the whole build log.
@@ -3291,7 +3847,7 @@ void Editor::createScript(const std::string& className) {
     }
     rescanFiles();
     log("Created " + file.string(), kGood);
-    if (codeEditorChosen()) openInCodeEditor(file);
+    openInCodeEditor(file);
     if (ScriptReloader::supported()) {
         log("It compiles and loads by itself; edit it and save to reload.", kGood);
     } else {

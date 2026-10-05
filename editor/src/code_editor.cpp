@@ -108,11 +108,11 @@ void replaceAll(std::string& text, const std::string& from, const std::string& t
 
 const std::vector<CodeEditor>& installedCodeEditors() {
     static const std::vector<CodeEditor> list = [] {
-        std::vector<CodeEditor> out{CodeEditor{}};
+        std::vector<CodeEditor> out{CodeEditor{}, CodeEditor{"System default", false, ""}};
         for (const Candidate& c : candidates()) {
             bool have = false;
             for (const CodeEditor& e : out) have = have || e.name == c.name;
-            if (!have && available(c.check)) out.push_back({c.name, c.command});
+            if (!have && available(c.check)) out.push_back({c.name, false, c.command});
         }
         return out;
     }();
@@ -132,6 +132,7 @@ CodeEditor loadCodeEditor() {
         nlohmann::json j = nlohmann::json::parse(in);
         e.name = j.value("name", e.name);
         e.command = j.value("command", e.command);
+        e.builtin = j.value("builtin", false);
     } catch (const nlohmann::json::exception&) {
     }
     return e;
@@ -140,7 +141,7 @@ CodeEditor loadCodeEditor() {
 void saveCodeEditor(const CodeEditor& editor) {
     std::error_code ec;
     fs::create_directories(projects::configDir(), ec);
-    std::ofstream(settingsFile()) << nlohmann::json{{"name", editor.name}, {"command", editor.command}}.dump(2) << '\n';
+    std::ofstream(settingsFile()) << nlohmann::json{{"name", editor.name}, {"builtin", editor.builtin}, {"command", editor.command}}.dump(2) << '\n';
 }
 
 bool openInCodeEditor(const CodeEditor& editor, const fs::path& file, const fs::path& project, std::string& error) {

@@ -84,6 +84,30 @@ struct Theme {
         Color missingTexture{255, 0, 255, 255};
     } gizmos;
 
+    // --- The script editor (the Script tab) -------------------------------------
+    struct Code {
+        std::string font;   // a .ttf/.otf in the theme folder; "" = the UI font, drawn evenly spaced
+        int fontSize = 0;   // 0 = the UI text size
+        int tabSize = 4;    // spaces per indent
+        Color background{24, 26, 31, 255};
+        Color text{215, 218, 224, 255};
+        Color lineNumbers{90, 96, 110, 255};
+        Color currentLine{34, 37, 45, 255};
+        Color selection{55, 85, 140, 200};
+        Color cursor{235, 235, 240, 255};
+        Color keyword{255, 120, 140, 255};     // if, return, class...
+        Color type{120, 210, 200, 255};        // int, float, and names that start with a capital (Node2D)
+        Color function{110, 175, 255, 255};    // name(...)
+        Color string{255, 225, 140, 255};
+        Color number{170, 230, 140, 255};
+        Color comment{110, 118, 135, 255};
+        Color preprocessor{220, 150, 255, 255};  // #include...
+        Color key{150, 200, 255, 255};         // JSON keys
+        Color error{255, 90, 80, 255};         // compile errors (line marks and messages)
+        Color warning{255, 180, 70, 255};
+        Color match{90, 80, 30, 255};          // Find results
+    } code;
+
     // --- Node types: color + icon (or image) -----------------------------------
     std::map<std::string, NodeStyle> nodes;  // by type name, e.g. "Sprite2D"
     NodeStyle otherNodes;                    // any type not in the map
