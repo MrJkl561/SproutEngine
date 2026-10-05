@@ -107,6 +107,11 @@ else()
     target_link_libraries(sprout_editor PRIVATE raylib)
 endif()
 
+# Windows: the native "Select Folder" window (COM).
+if(WIN32)
+    target_link_libraries(sprout_editor PRIVATE ole32 shell32 uuid)
+endif()
+
 if(MSVC)
     target_compile_options(sprout_editor PRIVATE /W4 /permissive- /utf-8)
 else()

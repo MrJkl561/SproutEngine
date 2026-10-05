@@ -18,6 +18,7 @@
 #include "assets.hpp"
 #include "raygui_include.hpp"
 #include "export.hpp"
+#include "platform.hpp"
 #include "projects.hpp"
 #include "scene_io.hpp"
 #include "script.hpp"
@@ -377,7 +378,9 @@ void Editor::frame() {
     applyUiScale();
 
     pumpExport();
-    bool modal = popup_.open || dialog_.open || confirm_.open || export_.open || projects_.open || swallowMouse_;
+    pumpFolderPicker();
+    bool modal = popup_.open || dialog_.open || confirm_.open || export_.open || projects_.open ||
+                 folderPick_.valid() || swallowMouse_;
     if (modal) GuiLock();
     {
         // While the game runs the scene can't be edited (it's a copy that's playing).
@@ -1684,6 +1687,24 @@ void Editor::openTextDialog(std::string title, std::string message, std::string 
 // ===========================================================================
 // Projects
 // ===========================================================================
+void Editor::pickFolder(const std::string& title, const fs::path& start, std::function<void(const fs::path&)> then) {
+    if (folderPick_.valid()) return;  // one at a time
+    activeField_.clear();
+    projects_.nameEdit = projects_.locationEdit = projects_.pathEdit = false;
+    export_.nameEdit = export_.dirEdit = false;
+    folderPicked_ = std::move(then);
+    void* owner = GetWindowHandle();
+    folderPick_ = std::async(std::launch::async, [title, start, owner] { return platform::pickFolder(title, start, owner); });
+}
+
+void Editor::pumpFolderPicker() {
+    if (!folderPick_.valid() || folderPick_.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return;
+    std::optional<fs::path> picked = folderPick_.get();  // (this also makes folderPick_ invalid again)
+    auto then = std::move(folderPicked_);
+    folderPicked_ = nullptr;
+    if (picked && then) then(*picked);
+}
+
 std::optional<fs::path> Editor::takeProjectSwitch() {
     auto next = switchTo_;
     switchTo_.reset();
@@ -1771,8 +1792,19 @@ void Editor::drawProjectManager() {
             std::snprintf(projects_.name, sizeof projects_.name, "My Game");
         }
         if (GuiButton({bx, y + 76, bw2, 30}, GuiIconText(ICON_FOLDER_OPEN, "Open Folder..."))) {
-            projects_.mode = 2;
             projects_.error.clear();
+            if (platform::canPickFolder()) {
+                pickFolder("Open a project folder", projects::defaultProjectsFolder(), [this](const fs::path& p) {
+                    if (projects::isProject(p)) {
+                        projects::remember(p);
+                        switchProject(p);
+                    } else {
+                        projects_.error = "That folder isn't a Sprout project (no project.json or scenes/ in it).";
+                    }
+                });
+            } else {
+                projects_.mode = 2;  // no folder window on this system: type the path
+            }
         }
         if (!hasSel) GuiDisable();
         if (GuiButton({bx, y + 130, bw2, 30}, GuiIconText(ICON_CROSS, "Remove from List"))) {
@@ -1791,9 +1823,15 @@ void Editor::drawProjectManager() {
             projects_.nameEdit = !projects_.nameEdit;
         y += 36;
         drawText("Location", x, y + 5, kDim);
-        if (GuiTextBox({x + labelW, y, w - labelW, 26}, projects_.location, sizeof projects_.location,
+        float browseW = platform::canPickFolder() ? 100 : 0;
+        if (GuiTextBox({x + labelW, y, w - labelW - browseW, 26}, projects_.location, sizeof projects_.location,
                        projects_.locationEdit))
             projects_.locationEdit = !projects_.locationEdit;
+        if (browseW > 0 && GuiButton({x + w - browseW + 4, y, browseW - 4, 26}, "Browse...")) {
+            pickFolder("Where to make the project", projects_.location, [this](const fs::path& p) {
+                std::snprintf(projects_.location, sizeof projects_.location, "%s", p.string().c_str());
+            });
+        }
         y += 40;
         std::string folder;
         for (char c : std::string(projects_.name)) folder += (c == '/' || c == '\\' || c == ':') ? '_' : c;
@@ -1815,8 +1853,14 @@ void Editor::drawProjectManager() {
         }
     } else {
         drawText("Folder", x, y + 5, kDim);
-        if (GuiTextBox({x + 110, y, w - 110, 26}, projects_.path, sizeof projects_.path, projects_.pathEdit))
+        float browseW = platform::canPickFolder() ? 100 : 0;
+        if (GuiTextBox({x + 110, y, w - 110 - browseW, 26}, projects_.path, sizeof projects_.path, projects_.pathEdit))
             projects_.pathEdit = !projects_.pathEdit;
+        if (browseW > 0 && GuiButton({x + w - browseW + 4, y, browseW - 4, 26}, "Browse...")) {
+            pickFolder("Open a project folder", projects::defaultProjectsFolder(), [this](const fs::path& p) {
+                std::snprintf(projects_.path, sizeof projects_.path, "%s", p.string().c_str());
+            });
+        }
         y += 40;
         drawText("Type or paste the path of a project folder (the one with project.json in it).", x, y, kDim);
         if (GuiButton({box.x + box.width - 210, by, 100, 30}, "Back")) projects_.mode = 0;
@@ -1919,8 +1963,16 @@ void Editor::drawExportDialog() {
     y += 8;
 
     label("Export to");
-    if (GuiTextBox({x + labelW, y, w - labelW, 26}, export_.dir, sizeof export_.dir, export_.dirEdit))
+    float browseW = platform::canPickFolder() ? 100 : 0;
+    if (GuiTextBox({x + labelW, y, w - labelW - browseW, 26}, export_.dir, sizeof export_.dir, export_.dirEdit))
         export_.dirEdit = !export_.dirEdit;
+    if (browseW > 0 && GuiButton({x + w - browseW + 4, y, browseW - 4, 26}, "Browse...")) {
+        std::error_code ec;
+        fs::path start = fs::is_directory(export_.dir, ec) ? fs::path(export_.dir) : projectDir_;
+        pickFolder("Export the game to", start, [this](const fs::path& p) {
+            std::snprintf(export_.dir, sizeof export_.dir, "%s", p.string().c_str());
+        });
+    }
     y += 34;
     drawText("Each platform goes in its own folder inside it (linux/, windows/, macos/, web/).", x, y, kDim);
 
@@ -2000,8 +2052,21 @@ void Editor::requestOpenScene(const std::string& scenePath) {
 }
 
 void Editor::drawModal() {
+    bool picking = folderPick_.valid();
+    if (picking) GuiLock();  // the folder window is open: everything here waits
     if (export_.open) drawExportDialog();
     if (projects_.open) drawProjectManager();
+    if (picking) {
+        GuiUnlock();
+        float sw = screenW(), sh = screenH();
+        DrawRectangle(0, 0, static_cast<int>(sw), static_cast<int>(sh), Fade(BLACK, 0.45f));
+        std::string text = "Choose a folder in the window that opened...";
+        Rectangle box{std::floor((sw - textWidth(text) - 40) / 2), std::floor(sh / 2 - 24), textWidth(text) + 40, 48};
+        DrawRectangleRec(box, kPanel);
+        DrawRectangleLinesEx(box, 1, kAccent);
+        drawText(text, box.x + 20, box.y + 15, kText);
+        return;
+    }
     if (confirm_.open) {
         float sw = screenW(), sh = screenH();
         DrawRectangle(0, 0, static_cast<int>(sw), static_cast<int>(sh), Fade(BLACK, 0.5f));

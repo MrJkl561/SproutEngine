@@ -6,6 +6,7 @@
 
 #include <filesystem>
 #include <functional>
+#include <optional>
 #include <string>
 
 namespace s2d::platform {
@@ -21,6 +22,13 @@ int processId();
 int runCommand(const std::string& command, std::string& output);
 // The same, but also hands each line to onLine as soon as it's printed.
 int runCommand(const std::string& command, std::string& output, const std::function<void(const std::string&)>& onLine);
+
+// The system's own "choose a folder" window (Explorer on Windows, Finder's on
+// macOS, zenity or kdialog on Linux). Waits until it's closed; nullopt if it
+// was cancelled. owner is the editor's window (Windows; may be null).
+bool canPickFolder();
+std::optional<std::filesystem::path> pickFolder(const std::string& title, const std::filesystem::path& start,
+                                                void* owner);
 
 // Finds a program on the PATH (adding .exe/.bat/.cmd on Windows); "" if it isn't there.
 std::filesystem::path findProgram(const std::string& name);

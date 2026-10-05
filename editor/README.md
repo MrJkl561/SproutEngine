@@ -58,9 +58,16 @@ Press **Projects** at the left of the toolbar to open the Project Manager:
 
 - **Recent projects:** click one, then **Open** (or click it a second time).
 - **New Project...** makes a new project (with a first scene and the folders
-  above) in `SproutProjects` in your home folder, or wherever you choose.
-- **Open Folder...** opens any project folder by its path.
+  above) in `SproutProjects` in your home folder, or wherever you choose with
+  **Browse...**.
+- **Open Folder...** opens any project folder, picked in your system's own
+  folder window.
 - **Remove from List** only forgets it in the list; the files stay.
+
+The folder windows are the system's own: Explorer's on Windows, Finder's on
+macOS, and zenity's or kdialog's on Linux (install one of them, e.g.
+`sudo apt install zenity`; without them you type the path instead). The Export
+window's **Export to** has a **Browse...** button too.
 
 The editor opens the project you had open last time. You can also name one when
 starting it: `sprout_editor "path/to/My Game"`. The demo project lives in

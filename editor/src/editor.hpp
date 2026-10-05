@@ -16,6 +16,7 @@
 #include <nlohmann/json.hpp>
 
 #include <filesystem>
+#include <future>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -127,11 +128,17 @@ private:
     void openTextDialog(std::string title, std::string message, std::string initial,
                         std::function<void(const std::string&)> onOk);
     bool isTyping() const {
-        return !activeField_.empty() || dialog_.open || confirm_.open || export_.open || projects_.open;
+        return !activeField_.empty() || dialog_.open || confirm_.open || export_.open || projects_.open ||
+               folderPick_.valid();
     }
 
     // --- exporting -----------------------------------------------------------
     void drawProjectManager();
+    // Opens the system's folder picker on a background thread (so the editor
+    // keeps drawing); then runs with the chosen folder, if one was chosen.
+    void pickFolder(const std::string& title, const std::filesystem::path& start,
+                    std::function<void(const std::filesystem::path&)> then);
+    void pumpFolderPicker();
     void switchProject(const std::filesystem::path& project);
     void openExportDialog();
     std::string defaultExportDir() const;  // editor/exports
@@ -255,6 +262,8 @@ private:
 
     std::filesystem::path workDir_;  // this project's builds (scripts, exports)
     std::optional<std::filesystem::path> switchTo_;
+    std::future<std::optional<std::filesystem::path>> folderPick_;
+    std::function<void(const std::filesystem::path&)> folderPicked_;
     struct ProjectManagerDialog {
         bool open = false;
         int mode = 0;  // 0 the list, 1 new project, 2 open a folder
