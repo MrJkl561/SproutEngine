@@ -99,6 +99,7 @@ int iconFor(const Node* n) {
     std::string t = n->typeName();
     if (t == "Node2D") return ICON_TARGET_SMALL;
     if (t == "Sprite2D") return ICON_FILETYPE_IMAGE;
+    if (t == "AnimatedSprite2D") return ICON_FILETYPE_VIDEO;
     if (t == "ColorRect") return ICON_BOX;
     if (t == "Label") return ICON_TEXT_A;
     if (t == "Camera2D") return ICON_EYE_ON;
@@ -309,6 +310,58 @@ void Editor::ensureDefaultAssets() {
         ImageDrawCircle(&img, 12, 12, 11, Color{200, 140, 20, 255});
         ImageDrawCircle(&img, 12, 12, 8, Color{255, 210, 60, 255});
         ImageDrawRectangle(&img, 11, 6, 3, 12, Color{255, 240, 160, 255});
+    });
+
+    // Sprite sheets for animations. The player: 8 frames of 32x48 in a row:
+    // 0-1 standing (eyes open, blink), 2-5 running, 6 jumping, 7 falling.
+    make("player_sheet.png", 32 * 8, 48, [](Image& img) {
+        const Color dark{60, 110, 220, 255}, body{90, 150, 255, 255}, leg{40, 80, 170, 255};
+        const Color eye = WHITE, pupil{20, 20, 40, 255};
+        for (int f = 0; f < 8; ++f) {
+            int x = f * 32;
+            int bob = (f == 3 || f == 5) ? 1 : 0;  // the body dips a little mid-stride
+            int top = 4 + bob;
+            ImageDrawRectangle(&img, x + 4, top, 24, 34, dark);
+            ImageDrawRectangle(&img, x + 6, top + 2, 20, 30, body);
+            // Eyes (closed on the blink frame, looking up when jumping, down when falling)
+            if (f == 1) {
+                ImageDrawRectangle(&img, x + 8, top + 12, 7, 2, pupil);
+                ImageDrawRectangle(&img, x + 18, top + 12, 7, 2, pupil);
+            } else {
+                int look = f == 6 ? -2 : f == 7 ? 2 : 0;
+                ImageDrawRectangle(&img, x + 9, top + 8, 6, 8, eye);
+                ImageDrawRectangle(&img, x + 19, top + 8, 6, 8, eye);
+                ImageDrawRectangle(&img, x + 11, top + 11 + look, 3, 4, pupil);
+                ImageDrawRectangle(&img, x + 21, top + 11 + look, 3, 4, pupil);
+            }
+            // Legs: apart and together while running, tucked when in the air
+            int legY = 38;
+            int l1 = 8, l2 = 18;  // standing
+            if (f >= 2 && f <= 5) {
+                const int strides[4][2] = {{4, 22}, {9, 17}, {12, 14}, {9, 17}};
+                l1 = strides[f - 2][0];
+                l2 = strides[f - 2][1];
+            }
+            int legH = (f >= 6) ? 6 : 10;
+            ImageDrawRectangle(&img, x + l1, legY, 6, legH, leg);
+            ImageDrawRectangle(&img, x + l2, legY, 6, legH, leg);
+        }
+    });
+    // A spinning coin: 6 frames of 24x24, getting narrower and wider again.
+    make("coin_sheet.png", 24 * 6, 24, [](Image& img) {
+        const int widths[6] = {11, 8, 4, 1, 4, 8};
+        for (int f = 0; f < 6; ++f) {
+            int cx = f * 24 + 12;
+            for (int dy = -11; dy <= 11; ++dy) {
+                float k = std::sqrt(std::max(0.0f, 1.0f - (dy * dy) / 121.0f));
+                int outer = static_cast<int>(std::round(widths[f] * k));
+                int inner = static_cast<int>(std::round(std::max(0, widths[f] - 3) * k));
+                ImageDrawRectangle(&img, cx - outer, 12 + dy, outer * 2 + 1, 1, Color{200, 140, 20, 255});
+                if (std::abs(dy) <= 8 && inner > 0)
+                    ImageDrawRectangle(&img, cx - inner, 12 + dy, inner * 2 + 1, 1, Color{255, 210, 60, 255});
+            }
+            if (widths[f] >= 8) ImageDrawRectangle(&img, cx - 1, 6, 3, 12, Color{255, 240, 160, 255});
+        }
     });
 }
 
@@ -1348,6 +1401,29 @@ void Editor::propertyRow(Property& p, float x, float& y, float width, const std:
             }
             break;
         }
+        case PropKind::AnimationName: {
+            auto* name = static_cast<std::string*>(p.ptr);
+            if (GuiButton({fx, y, fw, 24}, name->empty() ? "<none>" : name->c_str())) {
+                std::vector<std::string> items;
+                if (auto* sprite = selected_->as<AnimatedSprite2D>())
+                    for (auto& a : sprite->animations) items.push_back(a.name);
+                Node* target = selected_;
+                if (!items.empty())
+                    openPopup({fx, y + 26}, items, [this, items, target, name](int i) {
+                        if (selected_ != target) return;
+                        touch();
+                        *name = items[i];
+                        storeScriptVars();
+                    });
+            }
+            break;
+        }
+        case PropKind::Animations: {
+            auto* list = static_cast<std::vector<SpriteAnimation>*>(p.ptr);
+            y += 26;
+            animationsEditor(*list, id, x, y, width);
+            return;  // (it moved y itself)
+        }
         case PropKind::Scene: {
             auto* path = static_cast<std::string*>(p.ptr);
             if (GuiButton({fx, y, fw - 28, 24}, path->empty() ? "<none>" : path->c_str())) {
@@ -1390,6 +1466,72 @@ void Editor::propertyRow(Property& p, float x, float& y, float width, const std:
         }
     }
     y += 30;
+}
+
+void Editor::animationsEditor(std::vector<SpriteAnimation>& list, const std::string& id, float x, float& y,
+                              float width) {
+    // The sprite sheet, with each frame's number on it, so frames are easy to pick.
+    if (auto* sprite = selected_->as<Sprite2D>()) {
+        if (raylib::Texture* tex = Assets::texture(sprite->texture)) {
+            int cols = std::max(sprite->hframes, 1), rows = std::max(sprite->vframes, 1);
+            float s = std::min(width / tex->width, 140.0f / tex->height);
+            s = s >= 1 ? std::floor(s) : s;  // whole-pixel zoom when it fits
+            Rectangle dst{x, y, tex->width * s, tex->height * s};
+            DrawRectangleRec(dst, kFieldBg);
+            DrawTexturePro(*tex, {0, 0, (float)tex->width, (float)tex->height}, dst, {0, 0}, 0, WHITE);
+            float cw = dst.width / cols, ch = dst.height / rows;
+            for (int r = 0; r < rows; ++r) {
+                for (int c = 0; c < cols; ++c) {
+                    Rectangle cell{dst.x + c * cw, dst.y + r * ch, cw, ch};
+                    DrawRectangleLinesEx(cell, 1, Fade(kAccent, 0.6f));
+                    std::string n = std::to_string(r * cols + c);
+                    DrawRectangleRec({cell.x + 1, cell.y + 1, textWidth(n) + 4, 16}, Fade(BLACK, 0.6f));
+                    drawText(n, cell.x + 3, cell.y + 1, kText);
+                }
+            }
+            y += dst.height + 8;
+            if (cols * rows == 1) {
+                drawText("Set hframes / vframes to cut the picture into frames.", x, y, kOrange);
+                y += 22;
+            }
+        }
+    }
+
+    // One block per animation: name, speed, loop, delete; then its frames.
+    int remove = -1;
+    for (size_t i = 0; i < list.size(); ++i) {
+        SpriteAnimation& a = list[i];
+        std::string aid = id + "/" + std::to_string(i);
+        DrawRectangleRec({x - 4, y - 2, width + 8, 60}, Fade(kHeader, 0.6f));
+        float nameW = width - 182;
+        textField({x, y, nameW, 24}, aid + "/name", a.name);
+        drawText("fps", x + nameW + 6, y + 4, kDim);
+        floatField({x + nameW + 34, y, 52, 24}, aid + "/fps", a.fps, 0.1f);
+        bool loop = a.loop;
+        GuiCheckBox({x + nameW + 94, y + 3, 18, 18}, "loop", &loop);
+        if (loop != a.loop) {
+            touch();
+            a.loop = loop;
+        }
+        if (GuiButton({x + width - 24, y, 24, 24}, GuiIconText(ICON_BIN, nullptr))) remove = static_cast<int>(i);
+        y += 28;
+        drawText("frames", x, y + 4, kDim);
+        textField({x + 60, y, width - 60, 24}, aid + "/frames", a.frames);
+        y += 34;
+    }
+    if (remove >= 0) {
+        touch();
+        list.erase(list.begin() + remove);
+    }
+    if (GuiButton({x, y, width, 26}, GuiIconText(ICON_CIRCLE_ADD, "Add Animation"))) {
+        touch();
+        SpriteAnimation a;
+        a.name = "anim" + std::to_string(list.size() + 1);
+        list.push_back(a);
+    }
+    y += 32;
+    drawText("frames: 0-3 or 0, 2, 4 (sheet numbers)", x, y, kDim);
+    y += 26;
 }
 
 void Editor::scriptVariableRows(float x, float& y, float width) {

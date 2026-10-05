@@ -82,6 +82,7 @@ void SceneTree::process(float delta) {
     // Collect first, so nodes added during this frame start next frame.
     std::vector<Node*> nodes;
     forEachNode(root_.get(), [&](Node* n) { nodes.push_back(n); });
+    for (Node* n : nodes) n->update(delta);  // nodes that move by themselves (animations)
     for (Node* n : nodes)
         if (n->script && !n->isQueuedForDeletion()) n->script->process(delta);
 

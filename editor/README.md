@@ -229,13 +229,48 @@ The demo has two levels. `door.scene.json` uses the `LevelExit` script; each
 door's **next scene** is set in the inspector (under Script Variables). Coins
 carry over, and falling off the world restarts the level.
 
+## Animation
+
+`AnimatedSprite2D` plays animations from a sprite sheet: one picture with all
+the frames in a grid.
+
+1. Add an AnimatedSprite2D (**Add** in the Scene dock) and pick the sheet as
+   its **texture**.
+2. Set **hframes** and **vframes** to the number of columns and rows. The
+   inspector shows the sheet with each frame's number on it.
+3. Under **animations**, give each animation a name, its **frames** (`0-3`,
+   `4, 5, 4, 6`...), a speed in **fps**, and whether it **loop**s. **Add
+   Animation** adds another.
+4. **animation** is the one shown; with **autoplay** it starts when the game
+   does (and plays in the editor's viewport as a preview).
+
+From a script:
+
+```cpp
+auto* sprite = getNode("Sprite")->as<AnimatedSprite2D>();
+sprite->play("run");          // keeps going if "run" is already playing
+sprite->stop();
+sprite->isPlaying();
+sprite->isFinished();         // a non-looping animation reached its last frame
+sprite->flipH = true;         // face left
+sprite->speedScale = 2;       // twice as fast
+```
+
+In the demo the coins spin (`coin_sheet.png`). The player stands, blinks,
+runs, jumps and falls (`player_sheet.png`), with `player_controller.cpp`
+choosing the animation.
+
+A plain Sprite2D can show one frame of a sheet too (`hframes`, `vframes`,
+`frame`), e.g. to pick a tile or change `frame` from a script.
+
 ## Nodes
 
 | Node | What it's for |
 |---|---|
 | `Node` | A plain node for grouping or for scripts that don't need a position |
 | `Node2D` | Position, rotation (degrees) and scale. Children move with their parent |
-| `Sprite2D` | Draws a texture (centered, offset, flip, modulate colour) |
+| `Sprite2D` | Draws a texture (centered, offset, flip, modulate colour), or one frame of a sprite sheet (`hframes`, `vframes`, `frame`) |
+| `AnimatedSprite2D` | A Sprite2D that plays named animations from its sprite sheet |
 | `ColorRect` | A solid rectangle; good for blocking out levels |
 | `Label` | Text |
 | `Camera2D` | What part of the world the game shows (zoom, current) |
@@ -401,5 +436,6 @@ Scenes are plain JSON (`{"type": "Sprite2D", "name": ..., "properties": {...},
 
 ## Not there yet
 
-This is the bare minimum. Not included: animation, sound nodes, UI (Control) nodes,
+This is the bare minimum. Not included: animating other properties (like
+Godot's AnimationPlayer), sound nodes, UI (Control) nodes,
 tilemaps, and Android/iOS exports.

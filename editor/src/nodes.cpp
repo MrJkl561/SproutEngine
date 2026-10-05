@@ -185,6 +185,9 @@ void Sprite2D::getProperties(std::vector<Property>& out) {
     Node2D::getProperties(out);
     out.push_back({"Sprite2D", PropKind::Section});
     out.push_back({"texture", PropKind::Texture, &texture});
+    out.push_back({"hframes", PropKind::Int, &hframes, 0.05f});
+    out.push_back({"vframes", PropKind::Int, &vframes, 0.05f});
+    out.push_back({"frame", PropKind::Int, &frame, 0.1f});
     out.push_back({"centered", PropKind::Bool, &centered});
     out.push_back({"offset", PropKind::Vec2, &offset, 1.0f});
     out.push_back({"flip_h", PropKind::Bool, &flipH});
@@ -192,10 +195,18 @@ void Sprite2D::getProperties(std::vector<Property>& out) {
     out.push_back({"modulate", PropKind::Color, &modulate});
 }
 
-Rectangle Sprite2D::localRect() const {
+Rectangle Sprite2D::frameRect(int index) const {
     raylib::Texture* tex = Assets::texture(texture);
-    float w = tex ? static_cast<float>(tex->width) : 0.0f;
-    float h = tex ? static_cast<float>(tex->height) : 0.0f;
+    if (!tex) return {0, 0, 0, 0};
+    int cols = std::max(hframes, 1), rows = std::max(vframes, 1);
+    float w = static_cast<float>(tex->width) / cols, h = static_cast<float>(tex->height) / rows;
+    index = std::clamp(index, 0, cols * rows - 1);
+    return {(index % cols) * w, (index / cols) * h, w, h};
+}
+
+Rectangle Sprite2D::localRect() const {
+    Rectangle cell = frameRect(0);
+    float w = cell.width, h = cell.height;
     return {offset.x - (centered ? w / 2 : 0), offset.y - (centered ? h / 2 : 0), w, h};
 }
 
@@ -215,9 +226,114 @@ void Sprite2D::draw(const DrawOptions& options) {
     // texture instead of using a negative size (raylib can't draw those).
     bool mirrorX = g.scale.x < 0, mirrorY = g.scale.y < 0;
     raylib::Vector2 topLeft = toGlobal({mirrorX ? r.x + w : r.x, mirrorY ? r.y + h : r.y});
-    Rectangle src{0, 0, (flipH != mirrorX) ? -w : w, (flipV != mirrorY) ? -h : h};
+    Rectangle cell = frameRect(shownFrame(options));
+    Rectangle src{cell.x, cell.y, (flipH != mirrorX) ? -w : w, (flipV != mirrorY) ? -h : h};
     Rectangle dst{topLeft.x, topLeft.y, w * std::fabs(g.scale.x), h * std::fabs(g.scale.y)};
     DrawTexturePro(*tex, src, dst, {0, 0}, g.rotation, modulate);
+}
+
+// ---------------------------------------------------------------------------
+// AnimatedSprite2D
+// ---------------------------------------------------------------------------
+std::vector<int> SpriteAnimation::frameList() const {
+    std::vector<int> out;
+    std::string part;
+    auto flush = [&] {
+        size_t dash = part.find('-', 1);
+        try {
+            if (dash != std::string::npos) {
+                int a = std::stoi(part.substr(0, dash)), b = std::stoi(part.substr(dash + 1));
+                for (int i = a; a <= b ? i <= b : i >= b; i += a <= b ? 1 : -1) out.push_back(i);
+            } else if (!part.empty()) {
+                out.push_back(std::stoi(part));
+            }
+        } catch (const std::exception&) {
+            // not a number: skipped
+        }
+        part.clear();
+    };
+    for (char c : frames) {
+        if (c == ',' || c == ' ') flush();
+        else part += c;
+    }
+    flush();
+    if (out.size() > 4096) out.resize(4096);  // "0-99999" by mistake
+    return out;
+}
+
+void AnimatedSprite2D::getProperties(std::vector<Property>& out) {
+    Sprite2D::getProperties(out);
+    out.push_back({"AnimatedSprite2D", PropKind::Section});
+    out.push_back({"animation", PropKind::AnimationName, &animation});
+    out.push_back({"autoplay", PropKind::Bool, &autoplay});
+    out.push_back({"speed_scale", PropKind::Float, &speedScale, 0.01f});
+    out.push_back({"animations", PropKind::Animations, &animations});
+}
+
+const SpriteAnimation* AnimatedSprite2D::findAnimation(const std::string& name) const {
+    for (auto& a : animations)
+        if (a.name == name) return &a;
+    return nullptr;
+}
+
+void AnimatedSprite2D::play(const std::string& name) {
+    started_ = true;
+    std::string next = name.empty() ? animation : name;
+    if (playing_ && next == animation) return;  // already playing it: carry on
+    animation = next;
+    playing_ = true;
+    finished_ = false;
+    time_ = 0;
+    index_ = 0;
+    if (const SpriteAnimation* a = findAnimation(animation)) {
+        auto list = a->frameList();
+        if (!list.empty()) frame = list.front();
+    }
+}
+
+void AnimatedSprite2D::stop() {
+    started_ = true;
+    playing_ = false;
+}
+
+void AnimatedSprite2D::update(float delta) {
+    if (!started_) {
+        started_ = true;
+        if (autoplay) play();
+    }
+    const SpriteAnimation* a = findAnimation(animation);
+    if (!playing_ || !a || a->fps <= 0) return;
+    auto list = a->frameList();
+    if (list.empty()) return;
+    time_ += delta * speedScale;
+    float perFrame = 1.0f / a->fps;
+    while (time_ >= perFrame) {
+        time_ -= perFrame;
+        if (index_ + 1 < list.size()) {
+            ++index_;
+        } else if (a->loop) {
+            index_ = 0;
+        } else {
+            playing_ = false;
+            finished_ = true;
+            break;
+        }
+    }
+    frame = list[std::min(index_, list.size() - 1)];
+}
+
+int AnimatedSprite2D::shownFrame(const DrawOptions& options) const {
+    // In the editor, preview the animation (when it would autoplay) by the clock.
+    if (options.editor && autoplay) {
+        if (const SpriteAnimation* a = findAnimation(animation); a && a->fps > 0) {
+            auto list = a->frameList();
+            if (!list.empty()) {
+                size_t i = static_cast<size_t>(GetTime() * a->fps * speedScale) % list.size();
+                return list[i];
+            }
+        }
+    }
+    return frame;
 }
 
 // ---------------------------------------------------------------------------
@@ -400,6 +516,7 @@ const std::vector<std::pair<std::string, std::function<std::unique_ptr<Node>()>>
         {"Node", [] { return std::make_unique<Node>(); }},
         {"Node2D", [] { return std::make_unique<Node2D>(); }},
         {"Sprite2D", [] { return std::make_unique<Sprite2D>(); }},
+        {"AnimatedSprite2D", [] { return std::make_unique<AnimatedSprite2D>(); }},
         {"ColorRect", [] { return std::make_unique<ColorRect>(); }},
         {"Label", [] { return std::make_unique<Label>(); }},
         {"Camera2D", [] { return std::make_unique<Camera2D>(); }},

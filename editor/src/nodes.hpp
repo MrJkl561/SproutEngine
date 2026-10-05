@@ -3,7 +3,8 @@
 //
 //   Node              - the base of everything; has a name, children and a script
 //   Node2D            - a node with a position, rotation and scale
-//   Sprite2D          - draws a texture
+//   Sprite2D          - draws a texture (or one frame of a sprite sheet)
+//   AnimatedSprite2D  - plays named animations from a sprite sheet
 //   ColorRect         - draws a solid rectangle (handy for blocking out levels)
 //   Label             - draws text
 //   Camera2D          - decides what part of the world the game shows
@@ -29,7 +30,7 @@ class Script;
 // Properties: each node lists its editable fields, which is all the inspector
 // and the scene files need to know about it.
 // ---------------------------------------------------------------------------
-enum class PropKind { Section, Bool, Int, Float, Vec2, Color, String, Texture, Scene };
+enum class PropKind { Section, Bool, Int, Float, Vec2, Color, String, Texture, Scene, Animations, AnimationName };
 
 struct Property {
     std::string name;
@@ -43,6 +44,17 @@ struct Xform {
     raylib::Vector2 position{0, 0};
     float rotation = 0;  // degrees
     raylib::Vector2 scale{1, 1};
+};
+
+// One animation of an AnimatedSprite2D: frames of its sprite sheet, counted
+// left to right and top to bottom from 0, written like "0-3" or "4, 5, 7".
+struct SpriteAnimation {
+    std::string name = "default";
+    std::string frames = "0";
+    float fps = 8;
+    bool loop = true;
+
+    std::vector<int> frameList() const;  // "0-3, 6" -> {0, 1, 2, 3, 6}
 };
 
 struct DrawOptions {
@@ -76,6 +88,9 @@ public:
     virtual const char* typeName() const { return "Node"; }
     virtual void getProperties(std::vector<Property>& out);
     virtual void draw(const DrawOptions&) {}
+    // Called every frame while the game runs (before scripts), for nodes that
+    // do things by themselves, like AnimatedSprite2D.
+    virtual void update(float /*delta*/) {}
 
     // Tree
     Node* parent() const { return parent_; }
@@ -142,11 +157,51 @@ public:
     bool flipH = false;
     bool flipV = false;
     raylib::Color modulate = WHITE;
+    // A sprite sheet: the texture is a grid of hframes x vframes pictures, and
+    // only `frame` is shown (0 = top left, counting along each row).
+    int hframes = 1;
+    int vframes = 1;
+    int frame = 0;
 
     const char* typeName() const override { return "Sprite2D"; }
     void getProperties(std::vector<Property>& out) override;
     void draw(const DrawOptions&) override;
     Rectangle localRect() const override;
+
+protected:
+    Rectangle frameRect(int index) const;  // that frame's part of the texture
+    virtual int shownFrame(const DrawOptions&) const { return frame; }
+};
+
+// Plays animations from a sprite sheet (set hframes/vframes for its grid).
+//   auto* sprite = getNode("Sprite")->as<AnimatedSprite2D>();
+//   sprite->play("run");
+class AnimatedSprite2D : public Sprite2D {
+public:
+    std::vector<SpriteAnimation> animations{SpriteAnimation{}};
+    std::string animation = "default";  // the one playing (or shown)
+    bool autoplay = true;                // start playing it when the game starts
+    float speedScale = 1.0f;
+
+    const char* typeName() const override { return "AnimatedSprite2D"; }
+    void getProperties(std::vector<Property>& out) override;
+    void update(float delta) override;
+
+    // Plays an animation from its first frame (or keeps playing it, if it's the
+    // one already playing). "" = the current animation.
+    void play(const std::string& name = "");
+    void stop();
+    bool isPlaying() const { return playing_; }
+    bool isFinished() const { return finished_; }  // a non-looping animation reached its end
+    const SpriteAnimation* findAnimation(const std::string& name) const;
+
+protected:
+    int shownFrame(const DrawOptions& options) const override;
+
+private:
+    bool started_ = false, playing_ = false, finished_ = false;
+    float time_ = 0;  // seconds into the animation
+    size_t index_ = 0;  // which entry of the frame list is showing
 };
 
 class ColorRect : public Node2D {

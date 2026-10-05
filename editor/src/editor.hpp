@@ -78,7 +78,8 @@ private:
     bool textField(Rectangle r, const std::string& id, std::string& value);
     void propertyRow(Property& p, float x, float& y, float width, const std::string& idPrefix = "");
     void scriptVariableRows(float x, float& y, float width);  // the selected node's script variables
-    void storeScriptVars();  // the inspector's script copy -> the node's saved values
+    void storeScriptVars();
+    void animationsEditor(std::vector<SpriteAnimation>& list, const std::string& id, float x, float& y, float width);  // the inspector's script copy -> the node's saved values
 
     // --- actions ----------------------------------------------------------
     void newScene();

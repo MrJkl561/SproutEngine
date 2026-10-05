@@ -1,6 +1,8 @@
 // Moves a CharacterBody2D like a platformer hero: arrow keys / A D to run,
 // Space / Up / W to jump. Attach it to a CharacterBody2D that has a
-// CollisionShape2D child, and give the level some StaticBody2D floors.
+// CollisionShape2D child, and give the level some StaticBody2D floors. If it
+// has an AnimatedSprite2D child with "idle", "run", "jump" and "fall"
+// animations, it plays the right one.
 #include "script.hpp"
 
 using namespace s2d;
@@ -36,6 +38,14 @@ public:
         if (jump && body->isOnFloor()) body->velocity.y = -jumpSpeed;
 
         body->moveAndSlide();
+
+        // Pick the animation that fits what the body is doing, and face the way it moves.
+        if (auto* sprite = body->getChild<AnimatedSprite2D>()) {
+            if (!body->isOnFloor()) sprite->play(body->velocity.y < 0 ? "jump" : "fall");
+            else if (direction != 0) sprite->play("run");
+            else sprite->play("idle");
+            if (direction != 0) sprite->flipH = direction < 0;
+        }
 
         // Fell off the world? Start the level again.
         if (body->globalPosition().y > 1000) reloadScene();

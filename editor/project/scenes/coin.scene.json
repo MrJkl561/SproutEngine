@@ -13,10 +13,21 @@
     },
     "children": [
       {
-        "type": "Sprite2D",
-        "name": "Sprite2D",
+        "type": "AnimatedSprite2D",
+        "name": "Sprite",
         "properties": {
-          "texture": "assets/coin.png"
+          "texture": "assets/coin_sheet.png",
+          "hframes": 6,
+          "animation": "spin",
+          "autoplay": true,
+          "animations": [
+            {
+              "name": "spin",
+              "frames": "0-5",
+              "fps": 10,
+              "loop": true
+            }
+          ]
         },
         "children": []
       },

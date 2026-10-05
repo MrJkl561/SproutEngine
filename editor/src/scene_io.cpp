@@ -41,7 +41,15 @@ json propertyListToJson(const std::vector<Property>& props) {
             }
             case PropKind::String:
             case PropKind::Texture:
-            case PropKind::Scene: out[p.name] = *static_cast<std::string*>(p.ptr); break;
+            case PropKind::Scene:
+            case PropKind::AnimationName: out[p.name] = *static_cast<std::string*>(p.ptr); break;
+            case PropKind::Animations: {
+                json list = json::array();
+                for (auto& a : *static_cast<std::vector<SpriteAnimation>*>(p.ptr))
+                    list.push_back({{"name", a.name}, {"frames", a.frames}, {"fps", a.fps}, {"loop", a.loop}});
+                out[p.name] = list;
+                break;
+            }
         }
     }
     return out;
@@ -98,7 +106,21 @@ void applyPropertyList(const std::vector<Property>& props, const json& in) {
                     break;
                 case PropKind::String:
                 case PropKind::Texture:
-                case PropKind::Scene: *static_cast<std::string*>(p.ptr) = v.get<std::string>(); break;
+                case PropKind::Scene:
+                case PropKind::AnimationName: *static_cast<std::string*>(p.ptr) = v.get<std::string>(); break;
+                case PropKind::Animations: {
+                    std::vector<SpriteAnimation> list;
+                    for (const json& a : v) {
+                        SpriteAnimation anim;
+                        anim.name = a.value("name", anim.name);
+                        anim.frames = a.value("frames", anim.frames);
+                        anim.fps = a.value("fps", anim.fps);
+                        anim.loop = a.value("loop", anim.loop);
+                        list.push_back(anim);
+                    }
+                    *static_cast<std::vector<SpriteAnimation>*>(p.ptr) = list;
+                    break;
+                }
             }
         } catch (const json::exception&) {
             // A badly written value keeps its default.
