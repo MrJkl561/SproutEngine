@@ -69,6 +69,7 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           app=editor/exports/macos/Sprout_Game.app
+          find "$app" -maxdepth 3
           test -f "$app/Contents/Info.plist"
           test -f "$app/Contents/Resources/project/project.json"
           ditto "$app" "$RUNNER_TEMP/Sprout_Game.app"

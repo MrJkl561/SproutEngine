@@ -211,9 +211,11 @@ bool Exporter::exportOne(const ExportTarget& t, const std::string& program, cons
     if (!run("Configuring " + t.label, configure)) return false;
 
     // 2. Build (the old output is removed first, so the game is always re-linked
-    // with the current project files)
+    // with the current project files). On macOS only the program inside the .app
+    // goes: CMake writes the app's Info.plist when configuring, not when building.
     std::error_code ec;
-    fs::remove_all(build / "out", ec);
+    if (t.id == "macos") fs::remove(build / "out" / (program + ".app") / "Contents" / "MacOS" / program, ec);
+    else fs::remove_all(build / "out", ec);
     if (!run("Building " + t.label, cmake + " --build " + quote(build) + " --config Release --parallel")) return false;
 
     // 3. Package: the program and the project folder, side by side
