@@ -11,6 +11,13 @@ public:
     float jumpSpeed = 520;
     float gravity = 1400;
 
+    // Shown in the inspector, so each level (or player copy) can tune them.
+    void exports(Exports& e) override {
+        e.add("speed", speed);
+        e.add("jump_speed", jumpSpeed);
+        e.add("gravity", gravity, 5);
+    }
+
     void ready() override {
         if (!self<CharacterBody2D>()) print("PlayerController needs to be on a CharacterBody2D!");
     }

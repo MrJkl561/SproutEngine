@@ -25,6 +25,15 @@ std::unique_ptr<Node> cloneNode(Node& node);
 // A node's properties as JSON ({"position": [x, y], ...}), and back.
 nlohmann::json propertiesToJson(Node& node);
 void applyProperties(Node& node, const nlohmann::json& properties);
+// The same for any list of properties (e.g. a script's Exports).
+nlohmann::json propertyListToJson(const std::vector<Property>& props);
+void applyPropertyList(const std::vector<Property>& props, const nlohmann::json& values);
+
+// A node's script variables (Node::scriptVars) as one JSON object, and back.
+nlohmann::json scriptVarsToJson(const Node& node);
+void setScriptVars(Node& node, const nlohmann::json& values);
+// Puts the node's saved script variables into its script (before ready()).
+void applyScriptVars(Node& node);
 
 // The scene file as it is, with no overrides: what an instance would look like
 // if nothing in it had been changed. nullptr if it can't be loaded.

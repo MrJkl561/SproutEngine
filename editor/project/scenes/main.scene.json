@@ -221,6 +221,9 @@
             765,
             380
           ]
+        },
+        "script_vars": {
+          "next_scene": "scenes/level2.scene.json"
         }
       },
       {

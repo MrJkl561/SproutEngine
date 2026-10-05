@@ -38,6 +38,7 @@ void SceneTree::attachScripts(Node* node) {
         n->script = ScriptRegistry::create(n->scriptName);
         if (n->script) {
             n->script->node_ = n;
+            applyScriptVars(*n);  // the inspector's values, before ready()
         } else {
             print("Script '" + n->scriptName + "' on node '" + n->name +
                   "' isn't loaded. Check the Output panel for compile errors.");

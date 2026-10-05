@@ -28,12 +28,45 @@
 
 namespace s2d {
 
+// The variables a script shows in the inspector (like Godot's @export).
+// List them in your script's exports():
+//
+//     float speed = 250;
+//     std::string nextLevel;
+//     void exports(Exports& e) override {
+//         e.add("speed", speed);
+//         e.scene("next_level", nextLevel);
+//     }
+//
+// The values set in the inspector are put into the variables before ready().
+class Exports {
+public:
+    void add(const std::string& name, float& value, float dragStep = 1.0f) {
+        list.push_back({name, PropKind::Float, &value, dragStep});
+    }
+    void add(const std::string& name, int& value) { list.push_back({name, PropKind::Int, &value, 0.2f}); }
+    void add(const std::string& name, bool& value) { list.push_back({name, PropKind::Bool, &value}); }
+    void add(const std::string& name, std::string& value) { list.push_back({name, PropKind::String, &value}); }
+    void add(const std::string& name, Vector2& value, float dragStep = 1.0f) {
+        list.push_back({name, PropKind::Vec2, &value, dragStep});
+    }
+    void add(const std::string& name, Color& value) { list.push_back({name, PropKind::Color, &value}); }
+    // A scene file, picked from a list ("scenes/level2.scene.json").
+    void scene(const std::string& name, std::string& path) { list.push_back({name, PropKind::Scene, &path}); }
+    // A picture, picked from a list ("assets/coin.png").
+    void texture(const std::string& name, std::string& path) { list.push_back({name, PropKind::Texture, &path}); }
+
+    std::vector<Property> list;
+};
+
 class Script {
 public:
     virtual ~Script() = default;
 
     virtual void ready() {}
     virtual void process(float /*delta*/) {}
+    // The variables to show in the inspector; see Exports above.
+    virtual void exports(Exports& /*e*/) {}
 
     // The node this script is attached to.
     Node* node() const { return node_; }

@@ -69,7 +69,9 @@ private:
     // --- inspector widgets ------------------------------------------------
     bool floatField(Rectangle r, const std::string& id, float& value, float step);
     bool textField(Rectangle r, const std::string& id, std::string& value);
-    void propertyRow(Property& p, float x, float& y, float width);
+    void propertyRow(Property& p, float x, float& y, float width, const std::string& idPrefix = "");
+    void scriptVariableRows(float x, float& y, float width);  // the selected node's script variables
+    void storeScriptVars();  // the inspector's script copy -> the node's saved values
 
     // --- actions ----------------------------------------------------------
     void newScene();
@@ -171,6 +173,12 @@ private:
     nlohmann::json inspectorOriginal_;
     nlohmann::json inspectorCurrent_;
     std::unique_ptr<Node> originalTree_;
+    // A copy of the selected node's script, made only to list its variables and
+    // their defaults (never run). Must go before the scripts library is unloaded.
+    std::unique_ptr<Script> inspectorScript_;
+    Node* inspectorScriptNode_ = nullptr;
+    std::string inspectorScriptName_;
+    nlohmann::json inspectorScriptDefaults_;
     std::string originalKey_;
     double originalTime_ = -100;
 

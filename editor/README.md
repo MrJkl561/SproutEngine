@@ -189,9 +189,9 @@ lives), put it in `tree()->values`, which lasts until the game stops:
 tree()->values["coins"] += 1;
 ```
 
-The demo has two levels. `door.scene.json` uses the `LevelExit` script (edit
-its list of levels in `scripts/level_exit.cpp`), coins carry over, and falling off
-the world restarts the level.
+The demo has two levels. `door.scene.json` uses the `LevelExit` script; each
+door's **next scene** is set in the inspector (under Script Variables). Coins
+carry over, and falling off the world restarts the level.
 
 ## Nodes
 
@@ -236,6 +236,34 @@ REGISTER_SCRIPT(Spinner)
 To add one: select a node, press **New** under *Script* in the inspector and
 type a class name. The editor writes `editor/scripts/<name>.cpp` from a
 template and attaches it. Then open the file in your code editor.
+
+### Script variables (shown in the inspector)
+
+Like Godot's `@export`, a script can show some of its variables in the
+inspector, so each node using it can have its own values. List them in
+`exports()`:
+
+```cpp
+class PlayerController : public Script {
+public:
+    float speed = 260;
+    std::string nextLevel;
+
+    void exports(Exports& e) override {
+        e.add("speed", speed);              // float, int, bool, std::string, Vector2, Color
+        e.scene("next_level", nextLevel);   // pick a scene from a list
+        // e.texture("icon", iconPath);     // pick a picture from a list
+    }
+};
+```
+
+They appear under **Script Variables** in the inspector. A value you change is
+orange, with a button to put the script's default back. Values are saved with the
+node in the scene file and put into the variables before `ready()`, also in
+exported games and after a hot reload. Instanced scenes can change them per copy,
+like any other property. In the demo, each door's `next_scene` picks where it
+leads, and the player's `speed`, `jump_speed` and `gravity` can be tuned per
+level.
 
 What a script can use:
 
@@ -332,5 +360,5 @@ Scenes are plain JSON (`{"type": "Sprite2D", "name": ..., "properties": {...},
 
 ## Not there yet
 
-This is the bare minimum. Not included: script variables in the inspector, animation, sound nodes, UI (Control) nodes,
+This is the bare minimum. Not included: animation, sound nodes, UI (Control) nodes,
 tilemaps, and Android/iOS exports.

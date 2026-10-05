@@ -259,6 +259,7 @@ Editor::~Editor() {
         UnloadFont(uiFont_);
     }
     playTree_.reset();
+    inspectorScript_.reset();
     scripts_.reset();  // after the game: scripts' code lives in the library
     gameTexture_.reset();
     Assets::clear();
@@ -1256,7 +1257,7 @@ bool Editor::textField(Rectangle r, const std::string& id, std::string& value) {
     return false;
 }
 
-void Editor::propertyRow(Property& p, float x, float& y, float width) {
+void Editor::propertyRow(Property& p, float x, float& y, float width, const std::string& idPrefix) {
     if (p.kind == PropKind::Section) {
         y += 4;
         DrawRectangleRec({x - 4, y, width + 8, 24}, kHeader);
@@ -1267,7 +1268,7 @@ void Editor::propertyRow(Property& p, float x, float& y, float width) {
 
     const float labelW = 112;
     float fx = x + labelW, fw = width - labelW;
-    std::string id = std::to_string(reinterpret_cast<uintptr_t>(selected_)) + "/" + p.name;
+    std::string id = std::to_string(reinterpret_cast<uintptr_t>(selected_)) + "/" + idPrefix + p.name;
     std::string label = p.name;
     std::replace(label.begin(), label.end(), '_', ' ');
 
@@ -1280,7 +1281,7 @@ void Editor::propertyRow(Property& p, float x, float& y, float width) {
             touch();
             nlohmann::json one;
             one[p.name] = inspectorOriginal_[p.name];
-            applyProperties(*selected_, one);
+            applyPropertyList({p}, one);
         }
     } else {
         drawText(label, x, y + 4, kDim);
@@ -1337,6 +1338,26 @@ void Editor::propertyRow(Property& p, float x, float& y, float width) {
             }
             break;
         }
+        case PropKind::Scene: {
+            auto* path = static_cast<std::string*>(p.ptr);
+            if (GuiButton({fx, y, fw - 28, 24}, path->empty() ? "<none>" : path->c_str())) {
+                std::vector<std::string> items{"<none>"};
+                for (auto& f : files_)
+                    if (f.kind == FileEntry::Scene) items.push_back(f.path);
+                Node* target = selected_;
+                openPopup({fx, y + 26}, items, [this, items, target, path](int i) {
+                    if (selected_ != target) return;
+                    touch();
+                    *path = i == 0 ? "" : items[i];
+                    storeScriptVars();  // (if this is a script variable, keep it before the next frame)
+                });
+            }
+            if (GuiButton({fx + fw - 24, y, 24, 24}, GuiIconText(ICON_CROSS_SMALL, nullptr)) && !path->empty()) {
+                touch();
+                path->clear();
+            }
+            break;
+        }
         case PropKind::Texture: {
             auto* path = static_cast<std::string*>(p.ptr);
             if (GuiButton({fx, y, fw - 28, 24}, path->empty() ? "<empty>" : path->c_str())) {
@@ -1348,6 +1369,7 @@ void Editor::propertyRow(Property& p, float x, float& y, float width) {
                     if (selected_ != target) return;
                     touch();
                     *path = i == 0 ? "" : items[i];
+                    storeScriptVars();  // (if this is a script variable, keep it before the next frame)
                 });
             }
             if (GuiButton({fx + fw - 24, y, 24, 24}, GuiIconText(ICON_CROSS_SMALL, nullptr)) && !path->empty()) {
@@ -1358,6 +1380,54 @@ void Editor::propertyRow(Property& p, float x, float& y, float width) {
         }
     }
     y += 30;
+}
+
+void Editor::scriptVariableRows(float x, float& y, float width) {
+    if (!selected_ || !ScriptRegistry::has(selected_->scriptName)) {
+        inspectorScript_.reset();
+        return;
+    }
+    if (!inspectorScript_ || inspectorScriptNode_ != selected_ || inspectorScriptName_ != selected_->scriptName) {
+        inspectorScript_ = ScriptRegistry::create(selected_->scriptName);
+        inspectorScriptNode_ = selected_;
+        inspectorScriptName_ = selected_->scriptName;
+        Exports defaults;
+        inspectorScript_->exports(defaults);
+        inspectorScriptDefaults_ = propertyListToJson(defaults.list);
+        applyPropertyList(defaults.list, scriptVarsToJson(*selected_));
+    }
+    Exports e;
+    inspectorScript_->exports(e);
+    if (e.list.empty()) return;
+
+    // The node's saved values go into the copy, the rows edit the copy...
+    applyPropertyList(e.list, scriptVarsToJson(*selected_));
+    nlohmann::json before = propertyListToJson(e.list);
+    Property section{"Script Variables", PropKind::Section};
+    propertyRow(section, x, y, width);
+    // (orange + revert = different from the script's default)
+    nlohmann::json savedOriginal = inspectorOriginal_, savedCurrent = inspectorCurrent_;
+    inspectorOriginal_ = inspectorScriptDefaults_;
+    inspectorCurrent_ = before;
+    for (Property& p : e.list) propertyRow(p, x, y, width, "script:");
+    inspectorOriginal_ = savedOriginal;
+    inspectorCurrent_ = savedCurrent;
+    storeScriptVars();  // ...and whatever changed goes back to the node
+}
+
+void Editor::storeScriptVars() {
+    if (!selected_ || !inspectorScript_ || inspectorScriptNode_ != selected_) return;
+    Exports e;
+    inspectorScript_->exports(e);
+    // Only values that differ from the script's defaults are kept.
+    nlohmann::json now = propertyListToJson(e.list);
+    std::map<std::string, std::string> vars;
+    for (auto& [name, value] : now.items())
+        if (!inspectorScriptDefaults_.contains(name) || inspectorScriptDefaults_[name] != value) vars[name] = value.dump();
+    // Keep values for variables the script doesn't have (any more), so nothing is lost.
+    for (auto& [name, text] : selected_->scriptVars)
+        if (!now.contains(name)) vars[name] = text;
+    if (vars != selected_->scriptVars) selected_->scriptVars = vars;
 }
 
 void Editor::drawInspector(Rectangle r) {
@@ -1463,6 +1533,7 @@ void Editor::drawInspector(Rectangle r) {
         selected_->scriptName.clear();
     }
     y += 34;
+    scriptVariableRows(x, y, w);
 
     // Scene: instancing (like Godot's "instance" and "Save Branch as Scene")
     if (selected_->parent()) {
@@ -1818,6 +1889,7 @@ void Editor::setRoot(std::unique_ptr<Node> root) {
 void Editor::select(Node* node) {
     if (node == selected_) return;
     selected_ = node;
+    inspectorScript_.reset();
     activeField_.clear();
     scrubField_.clear();
     openColorPicker_.clear();
@@ -1954,6 +2026,7 @@ void Editor::updateScripts() {
 
 void Editor::reloadScripts() {
     // Scripts made from the old library must go before the library does.
+    inspectorScript_.reset();
     if (playTree_) playTree_->dropScripts();
     std::string error;
     bool firstLoad = !scripts_->isLoaded();

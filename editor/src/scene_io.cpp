@@ -18,6 +18,10 @@ using nlohmann::json;
 json propertiesToJson(Node& node) {
     std::vector<Property> props;
     node.getProperties(props);
+    return propertyListToJson(props);
+}
+
+json propertyListToJson(const std::vector<Property>& props) {
     json out = json::object();
     for (const Property& p : props) {
         switch (p.kind) {
@@ -36,16 +40,45 @@ json propertiesToJson(Node& node) {
                 break;
             }
             case PropKind::String:
-            case PropKind::Texture: out[p.name] = *static_cast<std::string*>(p.ptr); break;
+            case PropKind::Texture:
+            case PropKind::Scene: out[p.name] = *static_cast<std::string*>(p.ptr); break;
         }
     }
     return out;
 }
 
 void applyProperties(Node& node, const json& in) {
-    if (!in.is_object()) return;
     std::vector<Property> props;
     node.getProperties(props);
+    applyPropertyList(props, in);
+}
+
+json scriptVarsToJson(const Node& node) {
+    json out = json::object();
+    for (auto& [name, text] : node.scriptVars) {
+        try {
+            out[name] = json::parse(text);
+        } catch (const json::exception&) {
+        }
+    }
+    return out;
+}
+
+void setScriptVars(Node& node, const json& values) {
+    node.scriptVars.clear();
+    if (!values.is_object()) return;
+    for (auto& [name, value] : values.items()) node.scriptVars[name] = value.dump();
+}
+
+void applyScriptVars(Node& node) {
+    if (!node.script || node.scriptVars.empty()) return;
+    Exports e;
+    node.script->exports(e);
+    applyPropertyList(e.list, scriptVarsToJson(node));
+}
+
+void applyPropertyList(const std::vector<Property>& props, const json& in) {
+    if (!in.is_object()) return;
     for (const Property& p : props) {
         if (p.kind == PropKind::Section || !in.contains(p.name)) continue;
         const json& v = in[p.name];
@@ -64,7 +97,8 @@ void applyProperties(Node& node, const json& in) {
                               v.at(2).get<unsigned char>(), v.at(3).get<unsigned char>()};
                     break;
                 case PropKind::String:
-                case PropKind::Texture: *static_cast<std::string*>(p.ptr) = v.get<std::string>(); break;
+                case PropKind::Texture:
+                case PropKind::Scene: *static_cast<std::string*>(p.ptr) = v.get<std::string>(); break;
             }
         } catch (const json::exception&) {
             // A badly written value keeps its default.
@@ -145,6 +179,7 @@ std::unique_ptr<Node> instanceFromJson(const json& j) {
     node->name = j.value("name", node->name);
     if (j.contains("script")) node->scriptName = j.value("script", std::string());
     if (j.contains("properties")) applyProperties(*node, j["properties"]);
+    if (j.contains("script_vars")) setScriptVars(*node, j["script_vars"]);
 
     // Changes made to nodes inside this copy (they don't touch the original).
     if (j.contains("overrides") && j["overrides"].is_object() && !node->instanceMissing) {
@@ -157,6 +192,7 @@ std::unique_ptr<Node> instanceFromJson(const json& j) {
             }
             if (entry.contains("properties")) applyProperties(*target, entry["properties"]);
             if (entry.contains("script")) target->scriptName = entry.value("script", std::string());
+            if (entry.contains("script_vars")) setScriptVars(*target, entry["script_vars"]);
         }
     }
     return node;
@@ -193,6 +229,7 @@ json nodeToJson(Node& node) {
             json changed = diff(node, *source);
             if (!changed.empty()) j["properties"] = changed;
             if (node.scriptName != source->scriptName) j["script"] = node.scriptName;
+            if (node.scriptVars != source->scriptVars) j["script_vars"] = scriptVarsToJson(node);
 
             // Nodes inside the instance: save only what this copy changed.
             json overrides = json::object();
@@ -204,6 +241,7 @@ json nodeToJson(Node& node) {
                         json props = diff(*c, *original);
                         if (!props.empty()) entry["properties"] = props;
                         if (c->scriptName != original->scriptName) entry["script"] = c->scriptName;
+                        if (c->scriptVars != original->scriptVars) entry["script_vars"] = scriptVarsToJson(*c);
                         if (!entry.empty()) overrides[childPath] = entry;
                     }
                     walk(*c);
@@ -214,11 +252,13 @@ json nodeToJson(Node& node) {
         } else {
             j["properties"] = mine;
             if (!node.scriptName.empty()) j["script"] = node.scriptName;
+            if (!node.scriptVars.empty()) j["script_vars"] = scriptVarsToJson(node);
         }
         return j;
     }
 
     if (!node.scriptName.empty()) j["script"] = node.scriptName;
+    if (!node.scriptVars.empty()) j["script_vars"] = scriptVarsToJson(node);
     j["properties"] = propertiesToJson(node);
     json& kids = j["children"] = json::array();
     for (auto& c : node.children()) kids.push_back(nodeToJson(*c));
@@ -233,6 +273,7 @@ std::unique_ptr<Node> nodeFromJson(const json& j) {
     node->name = j.value("name", std::string(node->typeName()));
     node->scriptName = j.value("script", std::string());
     if (j.contains("properties")) applyProperties(*node, j["properties"]);
+    if (j.contains("script_vars")) setScriptVars(*node, j["script_vars"]);
 
     if (j.contains("children")) {
         for (const json& c : j["children"])

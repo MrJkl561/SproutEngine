@@ -15,6 +15,7 @@
 
 #include <raylib-cpp.hpp>
 
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -28,7 +29,7 @@ class Script;
 // Properties: each node lists its editable fields, which is all the inspector
 // and the scene files need to know about it.
 // ---------------------------------------------------------------------------
-enum class PropKind { Section, Bool, Int, Float, Vec2, Color, String, Texture };
+enum class PropKind { Section, Bool, Int, Float, Vec2, Color, String, Texture, Scene };
 
 struct Property {
     std::string name;
@@ -55,6 +56,9 @@ public:
     std::string name;
     std::string scriptName;          // the registered script class, "" for none
     std::unique_ptr<Script> script;  // only exists while the game is playing
+    // The script's variables as set in the inspector: name -> value as JSON text
+    // (e.g. "speed" -> "250"). Only values changed from the script's defaults.
+    std::map<std::string, std::string> scriptVars;
     bool collapsed = false;          // editor only: children hidden in the scene dock
 
     // Instanced scenes (like Godot's): a node whose sceneFile is set is the root
