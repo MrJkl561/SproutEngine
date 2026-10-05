@@ -11,6 +11,7 @@
 
 #include <atomic>
 #include <filesystem>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -57,22 +58,24 @@ public:
     // Starts exporting in the background; false if one is already running.
     bool start(const std::vector<std::string>& targetIds, const std::string& gameName,
                const std::filesystem::path& outDir);
-    bool busy() const { return busy_; }
+    bool busy() const;
     std::string currentLabel() const;
     std::vector<Line> takeLines();  // progress since the last call
     void wait();                    // until the export finishes
 
-private:
-    bool exportOne(const ExportTarget& target, const std::string& program, const std::string& gameName,
-                   const std::filesystem::path& outDir);
-    void say(const std::string& text, int kind = 0);
+    // What a running export shares with its thread. When the project is closed
+    // mid-export, the thread is let go and keeps working; the next Exporter (the
+    // next project's) passes its progress on to the Output panel.
+    struct State;
 
-    Paths paths_;
+private:
+    static bool exportOne(State& s, const ExportTarget& target, const std::string& program,
+                          const std::string& gameName, const std::filesystem::path& outDir);
+    static void say(State& s, const std::string& text, int kind = 0);
+    void say(const std::string& text, int kind = 0) { say(*s_, text, kind); }
+
+    std::shared_ptr<State> s_;
     std::thread thread_;
-    std::atomic<bool> busy_{false};
-    mutable std::mutex mutex_;
-    std::vector<Line> lines_;
-    std::string current_;
 };
 
 // Emscripten's SDK (emsdk), for web exports: the folder picked in the Export

@@ -257,17 +257,38 @@ fs::path findEmsdk() {
     return {};
 }
 
+struct Exporter::State {
+    Paths paths;
+    std::atomic<bool> busy{false};
+    std::mutex mutex;
+    std::vector<Line> lines;
+    std::string current;
+};
+
+namespace {
+// Exports (and Emscripten setups) still running for a project that was closed.
+// Never destroyed: those threads may still be running when the editor quits.
+struct Background {
+    std::mutex mutex;
+    std::vector<std::shared_ptr<Exporter::State>> states;
+};
+Background& background() {
+    static auto* b = new Background;
+    return *b;
+}
+}  // namespace
+
 bool Exporter::setUpEmsdk(const fs::path& emsdk) {
-    if (busy_ || !isEmsdkFolder(emsdk)) return false;
+    if (busy() || !isEmsdkFolder(emsdk)) return false;
     wait();
-    busy_ = true;
+    s_->busy = true;
     {
-        std::lock_guard<std::mutex> lock(mutex_);
-        current_ = "Emscripten setup";
+        std::lock_guard<std::mutex> lock(s_->mutex);
+        s_->current = "Emscripten setup";
     }
-    thread_ = std::thread([this, emsdk] {
-        say("== Setting up Emscripten in " + emsdk.string() + " ==", 3);
-        say("This downloads about 1 GB the first time, so it can take a while.");
+    thread_ = std::thread([s = s_, emsdk] {
+        say(*s, "== Setting up Emscripten in " + emsdk.string() + " ==", 3);
+        say(*s, "This downloads about 1 GB the first time, so it can take a while.");
 #if defined(_WIN32)
         // emsdk's own Python (once a first install has fetched it) runs emsdk.py
         // directly: no emsdk.bat, no nested cmd.exe.
@@ -291,16 +312,16 @@ bool Exporter::setUpEmsdk(const fs::path& emsdk) {
         // nothing is missing (activate fails if, say, node wasn't downloaded)
         std::vector<std::string> steps{"install latest", "activate latest"};
         for (const std::string& step : steps) {
-            say("emsdk " + step + "...");
+            say(*s, "emsdk " + step + "...");
             std::string output;
             int code = platform::runCommand(cd + tool + " " + step + noInput, output, [&](const std::string& line) {
                 bool bad = line.find("error") != std::string::npos || line.find("Error") != std::string::npos;
-                say("  " + line, bad ? 2 : 0);
+                say(*s, "  " + line, bad ? 2 : 0);
             });
             if (code != 0) {
-                say("emsdk " + step + " failed (exit code " + std::to_string(code) + ").", 2);
+                say(*s, "emsdk " + step + " failed (exit code " + std::to_string(code) + ").", 2);
 #if defined(_WIN32)
-                say("If it says Python wasn't found: install Python from python.org (tick \"Add python.exe to "
+                say(*s, "If it says Python wasn't found: install Python from python.org (tick \"Add python.exe to "
                     "PATH\"), restart the editor and press Set Up again.", 2);
 #endif
                 ok = false;
@@ -309,13 +330,13 @@ bool Exporter::setUpEmsdk(const fs::path& emsdk) {
         }
         if (ok) {
             setEmsdkFolder(emsdk);
-            say("Emscripten is ready: tick Web in the Export window.", 1);
+            say(*s, "Emscripten is ready: tick Web in the Export window.", 1);
         }
         {
-            std::lock_guard<std::mutex> lock(mutex_);
-            current_.clear();
+            std::lock_guard<std::mutex> lock(s->mutex);
+            s->current.clear();
         }
-        busy_ = false;
+        s->busy = false;
     });
     return true;
 }
@@ -330,9 +351,32 @@ std::string programName(const std::string& gameName) {
     return out.empty() ? "game" : out;
 }
 
-Exporter::Exporter(Paths paths) : paths_(std::move(paths)) {}
+Exporter::Exporter(Paths paths) : s_(std::make_shared<State>()) { s_->paths = std::move(paths); }
 
-Exporter::~Exporter() { wait(); }
+Exporter::~Exporter() {
+    if (!thread_.joinable()) return;
+    if (!s_->busy) {
+        thread_.join();
+        return;
+    }
+    // Still exporting: don't make the next project wait. The thread keeps going and
+    // its progress is shown by whichever Exporter comes next.
+    thread_.detach();
+    say("(Closed the project while exporting: the export carries on in the background.)");
+    Background& b = background();
+    std::lock_guard<std::mutex> lock(b.mutex);
+    b.states.push_back(s_);
+}
+
+bool Exporter::busy() const {
+    if (s_->busy) return true;
+    // An export of this same project from before is still running in the background
+    Background& b = background();
+    std::lock_guard<std::mutex> lock(b.mutex);
+    for (auto& st : b.states)
+        if (st->busy && st->paths.workDir == s_->paths.workDir) return true;
+    return false;
+}
 
 void Exporter::wait() {
     if (thread_.joinable()) thread_.join();
@@ -401,25 +445,55 @@ std::vector<ExportTarget> Exporter::detectTargets() const {
     return list;
 }
 
-void Exporter::say(const std::string& text, int kind) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    lines_.push_back({text, kind});
+void Exporter::say(State& st, const std::string& text, int kind) {
+    std::lock_guard<std::mutex> lock(st.mutex);
+    st.lines.push_back({text, kind});
 }
 
 std::vector<Exporter::Line> Exporter::takeLines() {
-    std::lock_guard<std::mutex> lock(mutex_);
     std::vector<Line> out;
-    out.swap(lines_);
+    // First anything from exports left running by projects closed before
+    {
+        Background& b = background();
+        std::lock_guard<std::mutex> lock(b.mutex);
+        for (auto it = b.states.begin(); it != b.states.end();) {
+            auto& st = **it;
+            std::string tag = "[" + st.paths.projectDir.filename().string() + "] ";
+            {
+                std::lock_guard<std::mutex> lock2(st.mutex);
+                for (auto& line : st.lines) out.push_back({tag + line.text, line.kind});
+                st.lines.clear();
+            }
+            it = st.busy ? std::next(it) : b.states.erase(it);
+        }
+    }
+    std::lock_guard<std::mutex> lock(s_->mutex);
+    for (auto& line : s_->lines) out.push_back(std::move(line));
+    s_->lines.clear();
     return out;
 }
 
 std::string Exporter::currentLabel() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return current_;
+    {
+        std::lock_guard<std::mutex> lock(s_->mutex);
+        if (!s_->current.empty()) return s_->current;
+    }
+    Background& b = background();
+    std::lock_guard<std::mutex> lock(b.mutex);
+    for (auto& st : b.states)
+        if (st->busy && st->paths.workDir == s_->paths.workDir) {
+            std::lock_guard<std::mutex> lock2(st->mutex);
+            return st->current + " (earlier)";
+        }
+    return "";
 }
 
 bool Exporter::start(const std::vector<std::string>& targetIds, const std::string& gameName, const fs::path& outDir) {
-    if (busy_) return false;
+    if (s_->busy) return false;
+    if (busy()) {
+        say("An export of this project is still running in the background; wait for it to finish (see Output).", 2);
+        return false;
+    }
     wait();
     std::vector<ExportTarget> chosen;
     for (const ExportTarget& t : detectTargets()) {
@@ -433,48 +507,48 @@ bool Exporter::start(const std::vector<std::string>& targetIds, const std::strin
         say("Nothing to export: pick at least one platform that's ready.", 2);
         return false;
     }
-    busy_ = true;
+    s_->busy = true;
     std::string program = programName(gameName);
-    thread_ = std::thread([this, chosen, program, gameName, outDir] {
+    thread_ = std::thread([s = s_, chosen, program, gameName, outDir] {
         int ok = 0;
         std::vector<std::string> failed;
         for (const ExportTarget& t : chosen) {
             {
-                std::lock_guard<std::mutex> lock(mutex_);
-                current_ = t.label;
+                std::lock_guard<std::mutex> lock(s->mutex);
+                s->current = t.label;
             }
             bool good = false;
             try {
-                good = exportOne(t, program, gameName, outDir);
+                good = exportOne(*s, t, program, gameName, outDir);
             } catch (const std::exception& e) {
-                say(std::string("Export failed: ") + e.what(), 2);
+                say(*s, std::string("Export failed: ") + e.what(), 2);
             }
             if (good) ++ok;
             else failed.push_back(t.label);
         }
         if (failed.empty()) {
-            say("Export finished: " + std::to_string(ok) + " platform(s) in " + outDir.string(), 1);
+            say(*s, "Export finished: " + std::to_string(ok) + " platform(s) in " + outDir.string(), 1);
         } else {
             std::string names;
             for (auto& f : failed) names += (names.empty() ? "" : ", ") + f;
-            say("Export finished with problems. Failed: " + names + " (see the messages above).", 2);
+            say(*s, "Export finished with problems. Failed: " + names + " (see the messages above).", 2);
         }
         {
-            std::lock_guard<std::mutex> lock(mutex_);
-            current_.clear();
+            std::lock_guard<std::mutex> lock(s->mutex);
+            s->current.clear();
         }
-        busy_ = false;
+        s->busy = false;
     });
     return true;
 }
 
-bool Exporter::exportOne(const ExportTarget& t, const std::string& program, const std::string& gameName,
+bool Exporter::exportOne(State& s, const ExportTarget& t, const std::string& program, const std::string& gameName,
                          const fs::path& outDir) {
-    say("== Exporting " + t.label + " ==", 3);
-    fs::path build = paths_.workDir / t.id;
+    say(s, "== Exporting " + t.label + " ==", 3);
+    fs::path build = s.paths.workDir / t.id;
     fs::path stage = build / "stage" / "project";
-    fs::path deps = paths_.depsDir;
-    std::string cmake = quote(paths_.cmake);
+    fs::path deps = s.paths.depsDir;
+    std::string cmake = quote(s.paths.cmake);
     std::string host = kHost;
     fs::path ninjaPath = findNinja();
     bool ninja = !ninjaPath.empty();
@@ -483,17 +557,17 @@ bool Exporter::exportOne(const ExportTarget& t, const std::string& program, cons
     // 1. Configure (only slow the first time: it builds raylib for that platform)
     std::string configure;
     if (t.id == "web") configure = web.env + quote(web.emcmake) + " ";
-    configure += cmake + " -S " + quote(paths_.editorDir / "player") + " -B " + quote(build);
+    configure += cmake + " -S " + quote(s.paths.editorDir / "player") + " -B " + quote(build);
     bool native = t.id == host || (host == "windows" && isWindowsTarget(t.id));
     bool visualStudio = native && host == "windows" && usesVisualStudio();
     if (visualStudio) {
         // Visual Studio would build for this PC's own CPU: say which one is wanted.
         resetIfOtherPlatform(build, vsPlatform(t.id),
-                             paths_.generator.find("Visual Studio") != std::string::npos ? paths_.generator : "");
-        if (paths_.generator.find("Visual Studio") != std::string::npos) {
-            configure += " -G \"" + paths_.generator + "\"";
-            if (!paths_.generatorInstance.empty())
-                configure += " \"-DCMAKE_GENERATOR_INSTANCE=" + paths_.generatorInstance + "\"";
+                             s.paths.generator.find("Visual Studio") != std::string::npos ? s.paths.generator : "");
+        if (s.paths.generator.find("Visual Studio") != std::string::npos) {
+            configure += " -G \"" + s.paths.generator + "\"";
+            if (!s.paths.generatorInstance.empty())
+                configure += " \"-DCMAKE_GENERATOR_INSTANCE=" + s.paths.generatorInstance + "\"";
         }
         configure += std::string(" -A ") + vsPlatform(t.id);
     } else if (ninja && !(native && host == "windows")) {
@@ -503,28 +577,28 @@ bool Exporter::exportOne(const ExportTarget& t, const std::string& program, cons
     configure += " -DCMAKE_BUILD_TYPE=Release";
     configure += " -DSPROUT_GAME_NAME=" + program;
     configure += " -DSPROUT_GAME_PROJECT_DIR=" + quote(stage);
-    configure += " -DSPROUT_GAME_SCRIPTS_DIR=" + quote(paths_.scriptsDir);
+    configure += " -DSPROUT_GAME_SCRIPTS_DIR=" + quote(s.paths.scriptsDir);
     configure += " -DFETCHCONTENT_SOURCE_DIR_RAYLIB=" + quote(deps / "raylib-src");
     configure += " -DFETCHCONTENT_SOURCE_DIR_RAYLIB_CPP=" + quote(deps / "raylib_cpp-src");
     configure += " -DFETCHCONTENT_SOURCE_DIR_RAYGUI=" + quote(deps / "raygui-src");
     configure += " -DFETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON=" + quote(deps / "nlohmann_json-src");
     if (t.id == "windows" && host != "windows")
-        configure += " -DCMAKE_TOOLCHAIN_FILE=" + quote(paths_.editorDir / "player" / "mingw-w64.cmake");
+        configure += " -DCMAKE_TOOLCHAIN_FILE=" + quote(s.paths.editorDir / "player" / "mingw-w64.cmake");
     if (t.id == "web") configure += " -DPLATFORM=Web";
     // One app for both kinds of Mac
     if (t.id == "macos") configure += " \"-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64\"";
 
     auto run = [&](const std::string& what, const std::string& cmd) {
-        say(what + "...");
+        say(s, what + "...");
         std::string output;
         int code = platform::runCommand(cmd, output, [&](const std::string& line) {
             bool bad = line.find("error") != std::string::npos || line.find("Error") != std::string::npos;
-            say("  " + line, bad ? 2 : 0);
+            say(s, "  " + line, bad ? 2 : 0);
         });
-        if (code != 0) say(what + " failed (exit code " + std::to_string(code) + ").", 2);
+        if (code != 0) say(s, what + " failed (exit code " + std::to_string(code) + ").", 2);
         return code == 0;
     };
-    stageProject(paths_.projectDir, stage, outDir);  // (after a reset above)
+    stageProject(s.paths.projectDir, stage, outDir);  // (after a reset above)
     if (!run("Configuring " + t.label, configure)) return false;
 
     // 2. Build (the old output is removed first, so the game is always re-linked
@@ -559,7 +633,7 @@ bool Exporter::exportOne(const ExportTarget& t, const std::string& program, cons
     } else if (t.id == "macos") {
         fs::path app = dest / (program + ".app");
         copyTree(out / (program + ".app"), app);
-        copyTree(paths_.projectDir, app / "Contents" / "Resources" / "project");
+        copyTree(s.paths.projectDir, app / "Contents" / "Resources" / "project");
         // Sign it again ("ad-hoc", no Apple account needed) now that the project is
         // inside, or a downloaded copy is reported as damaged instead of opening.
         if (!run("Signing " + t.label, "codesign --force --deep --sign - " + quote(app))) return false;
@@ -568,7 +642,7 @@ bool Exporter::exportOne(const ExportTarget& t, const std::string& program, cons
         fs::copy_file(out / exe, dest / exe);
         copyTree(stage, dest / "project");
     }
-    say("Exported " + t.label + " to " + dest.string(), 1);
+    say(s, "Exported " + t.label + " to " + dest.string(), 1);
     return true;
 }
 

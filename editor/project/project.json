@@ -1,8 +1,7 @@
 {
   "export_targets": [
     "linux",
-    "windows",
-    "macos"
+    "windows"
   ],
   "height": 450,
   "main_scene": "scenes/main.scene.json",
