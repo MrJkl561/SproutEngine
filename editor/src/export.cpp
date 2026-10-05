@@ -25,6 +25,12 @@ const char* kHost = "linux";
 
 std::string quote(const fs::path& p) { return "\"" + p.generic_string() + "\""; }
 
+#if defined(_WIN32)
+// Emscripten has no Windows ARM64 build, so emsdk is always asked for the x64 one
+// (Windows on ARM runs it through its x64 emulation; on x64 PCs it changes nothing).
+const char* kEmsdkArch = "set \"EMSDK_ARCH=x86_64\" && ";
+#endif
+
 // A path for the command line: native slashes on Windows (cmd.exe's `call` needs them).
 std::string quoteNative(fs::path p) { return "\"" + p.make_preferred().string() + "\""; }
 
@@ -58,7 +64,7 @@ WebTools findWebTools() {
     if (emsdk.empty() || !emsdkInstalled(emsdk)) return t;
     t.emcmake = emcmakeIn(emsdk);
 #if defined(_WIN32)
-    t.env = "call " + quoteNative(emsdk / "emsdk_env.bat") + " >nul 2>&1 && ";
+    t.env = std::string(kEmsdkArch) + "call " + quoteNative(emsdk / "emsdk_env.bat") + " >nul 2>&1 && ";
 #endif
     return t;
 }
@@ -196,7 +202,7 @@ bool Exporter::setUpEmsdk(const fs::path& emsdk) {
         say("This downloads about 1 GB the first time, so it can take a while.");
 #if defined(_WIN32)
         std::string tool = quoteNative(emsdk / "emsdk.bat");
-        std::string cd = "cd /d " + quoteNative(emsdk) + " && ";
+        std::string cd = std::string(kEmsdkArch) + "cd /d " + quoteNative(emsdk) + " && ";
 #else
         std::string tool = "./emsdk";
         std::string cd = "cd " + quote(emsdk) + " && ";

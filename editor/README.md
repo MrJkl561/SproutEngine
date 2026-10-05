@@ -206,6 +206,8 @@ Nothing is downloaded: it reuses the libraries the editor was built with.
   use **Choose...** next to "Emscripten"). If it's freshly cloned, press
   **Set Up**: that runs `emsdk install latest` and `emsdk activate latest` for
   you (about 1 GB to download). You don't need to run `emsdk_env` yourself.
+  Emscripten has no Windows ARM64 build, so on Windows the editor always uses
+  the x64 one (ARM64 PCs run it through Windows' x64 emulation).
   On Windows, Set Up needs [Python](https://www.python.org/downloads/) for its
   first run, and web builds need Ninja: the one that comes with Visual Studio's
   "C++ CMake tools" is found automatically, or `winget install Ninja-build.Ninja`.
