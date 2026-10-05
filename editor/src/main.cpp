@@ -3,19 +3,26 @@
 //   sprout_editor [project folder]
 //   sprout_editor --check-scripts    load every C++ script without opening a
 //                                    window, then exit (used by CI)
+//   sprout_editor --export linux,web [output folder]
+//                                    export the game without opening a window
 //
 // With no folder it opens editor/project/ from the source tree, and new C++
 // scripts are written to editor/scripts/ so the next build compiles them in.
 #include <raylib-cpp.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <string>
+#include <thread>
+#include <vector>
 
 #include "editor.hpp"
+#include "export.hpp"
 #include "hot_reload.hpp"
+#include "project.hpp"
 #include "raygui_include.hpp"
 #include "script.hpp"
 #include "ui_scale.hpp"
@@ -55,10 +62,45 @@ int checkScripts() {
     return 0;
 }
 
+// Exports the game from the command line, printing progress. Exit code 0 if
+// every platform worked.
+int exportGame(const std::string& targets, const std::string& outDir) {
+    std::filesystem::path project = SPROUT_EDITOR_PROJECT_DIR;
+    s2d::ProjectSettings settings = s2d::ProjectSettings::load(project);
+    s2d::Exporter exporter({SPROUT_EDITOR_DIR, project, SPROUT_EDITOR_SCRIPTS_DIR,
+                            std::filesystem::path(SPROUT_EDITOR_BUILD_DIR) / "exports", SPROUT_EDITOR_DEPS_DIR,
+                            SPROUT_EDITOR_CMAKE});
+    std::vector<std::string> ids;
+    for (size_t start = 0; start <= targets.size();) {
+        size_t comma = targets.find(',', start);
+        ids.push_back(targets.substr(start, comma == std::string::npos ? std::string::npos : comma - start));
+        if (comma == std::string::npos) break;
+        start = comma + 1;
+    }
+    std::filesystem::path out = outDir.empty() ? std::filesystem::path(SPROUT_EDITOR_DIR) / "exports" : std::filesystem::path(outDir);
+    bool started = exporter.start(ids, settings.name, out);
+    bool failed = !started;
+    auto print = [&] {
+        for (auto& line : exporter.takeLines()) {
+            std::printf("%s\n", line.text.c_str());
+            if (line.kind == 2 && line.text.rfind("Export finished", 0) == 0) failed = true;
+        }
+        std::fflush(stdout);
+    };
+    while (exporter.busy()) {
+        print();
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    exporter.wait();
+    print();
+    return failed ? 1 : 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
     if (argc > 1 && std::string(argv[1]) == "--check-scripts") return checkScripts();
+    if (argc > 2 && std::string(argv[1]) == "--export") return exportGame(argv[2], argc > 3 ? argv[3] : "");
     std::filesystem::path project = argc > 1 ? argv[1] : SPROUT_EDITOR_PROJECT_DIR;
     std::filesystem::path scripts = SPROUT_EDITOR_SCRIPTS_DIR;
 

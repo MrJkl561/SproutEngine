@@ -126,6 +126,46 @@ If a scene file is moved or deleted, the levels using it show "(missing
 scene)" in red and keep the link, so putting the file back fixes them. A scene
 can't be placed inside itself.
 
+## Exporting your game
+
+Press **Export** in the toolbar to turn the project into a game other people can
+play, without the editor:
+
+| Platform | What you get | What this computer needs |
+|---|---|---|
+| Linux | `linux/<Game>` + `project/` | Linux |
+| Windows | `windows/<Game>.exe` + `project/` | Windows, or [MinGW-w64](https://www.mingw-w64.org/) on Linux/macOS (`sudo apt install mingw-w64`, `brew install mingw-w64`) |
+| macOS | `macos/<Game>.app` | a Mac (Apple's compiler and SDK only run on macOS) |
+| Web | `web/index.html` + `.js`, `.wasm`, `.data` | [Emscripten](https://emscripten.org/docs/getting_started/downloads.html) (emsdk) |
+
+The Export window shows which platforms are ready on this computer, and what to
+install for the others (then press **Recheck**). It also sets:
+
+- **Game name:** the window title and the program's file name.
+- **Main scene:** the scene the game starts with.
+- **Window size:** the size of the game's screen (the purple frame in the viewport).
+- **Export to:** the folder to export to (default `editor/exports/`). Each platform
+  gets its own folder in it.
+
+These are saved in `project/project.json`. Exporting saves the open scene first.
+
+How it works: the game runtime in `editor/player/` (nodes, scenes and your
+scripts, without the editor) is built with CMake for each platform, then
+copied next to your `project/` folder (scenes and assets). The first export for a
+platform builds raylib for it and takes a minute or two; later exports are quick.
+Nothing is downloaded: it reuses the libraries the editor was built with.
+
+- **Windows:** the `.exe` needs nothing installed. Zip the `windows/` folder to
+  share it.
+- **Web:** browsers won't open the game straight from the disk. Serve the folder
+  (`python -m http.server` in it, then open http://localhost:8000) or upload
+  it to a site like itch.io as an HTML game.
+- **Emscripten** has to be on the PATH, or `EMSDK` set, when the editor starts.
+  Start the editor from a terminal where you ran `emsdk_env` (on Windows, web
+  exports also need [Ninja](https://ninja-build.org/)).
+- Exporting from the command line works too, e.g.
+  `sprout_editor --export linux,windows,web [folder]`.
+
 ## Nodes
 
 | Node | What it's for |
@@ -222,11 +262,15 @@ editor/
 │   ├── scene_tree.*      <- runs a scene: scripts, process, queueFree, drawing
 │   ├── script.hpp        <- the Script base class and REGISTER_SCRIPT
 │   ├── hot_reload.*      <- watches, rebuilds and reloads the scripts library
+│   ├── export.*          <- the Export window's work: build + package per platform
+│   ├── project.*         <- project.json (game name, main scene, window size)
 │   ├── scene_io.*        <- scenes as JSON files
 │   ├── assets.*          <- texture cache
 │   └── raygui_*          <- raygui and its dark theme
+├── player/               <- the game runtime that exports are built from
 ├── scripts/              <- your C++ scripts (built into sprout_scripts)
 └── project/
+    ├── project.json      <- game name, main scene, window size, export settings
     ├── assets/           <- pictures
     └── scenes/           <- *.scene.json files (main, player, coin, box)
 ```
@@ -236,6 +280,6 @@ Scenes are plain JSON (`{"type": "Sprite2D", "name": ..., "properties": {...},
 
 ## Not there yet
 
-This is the bare minimum. Not included: changing scenes while the game runs, script variables in the inspector, instancing scenes inside scenes,
-animation, sound nodes, UI (Control) nodes, tilemaps, and exporting a game
-without the editor.
+This is the bare minimum. Not included: changing scenes while the game runs,
+script variables in the inspector, animation, sound nodes, UI (Control) nodes,
+tilemaps, and Android/iOS exports.

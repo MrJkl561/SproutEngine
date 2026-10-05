@@ -17,6 +17,7 @@
 
 #include "assets.hpp"
 #include "raygui_include.hpp"
+#include "export.hpp"
 #include "scene_io.hpp"
 #include "script.hpp"
 #include "ui_scale.hpp"
@@ -240,6 +241,12 @@ Editor::Editor(fs::path projectDir, fs::path scriptsDir)
     } else {
         log(std::to_string(ScriptRegistry::names().size()) + " C++ scripts compiled in, from " + scriptsDir_.string());
     }
+    settings_ = ProjectSettings::load(projectDir_);
+    editTree_.gameSize = raylib::Vector2{static_cast<float>(settings_.width), static_cast<float>(settings_.height)};
+    exporter_ = std::make_unique<Exporter>(Exporter::Paths{
+        SPROUT_EDITOR_DIR, projectDir_, scriptsDir_, fs::path(SPROUT_EDITOR_BUILD_DIR) / "exports",
+        SPROUT_EDITOR_DEPS_DIR, SPROUT_EDITOR_CMAKE});
+    scenePath_ = settings_.mainScene;
     if (!openScene(scenePath_)) newScene();
     undoStack_.clear();
     dirty_ = false;
@@ -363,7 +370,8 @@ void Editor::frame() {
     ClearBackground(kBg);
     applyUiScale();
 
-    bool modal = popup_.open || dialog_.open || confirm_.open || swallowMouse_;
+    pumpExport();
+    bool modal = popup_.open || dialog_.open || confirm_.open || export_.open || swallowMouse_;
     if (modal) GuiLock();
     {
         // While the game runs the scene can't be edited (it's a copy that's playing).
@@ -378,8 +386,11 @@ void Editor::frame() {
     }
     if (modal) GuiUnlock();
     finishDrag();
-    drawPopup();
+    // Dialogs, then popups on top (a dialog can open a popup, e.g. to pick a scene).
+    if (popup_.open) GuiLock();
     drawModal();
+    if (popup_.open) GuiUnlock();
+    drawPopup();
 
     if (!screenshotPath.empty()) {
         rlDrawRenderBatchActive();  // flush pending drawing so it's in the picture
@@ -479,6 +490,8 @@ void Editor::drawToolbar(Rectangle r) {
         });
     }
     x += 96;
+    if (GuiButton({x, y, 84, h}, GuiIconText(ICON_FILE_EXPORT, "Export"))) openExportDialog();
+    x += 88;
     if (GuiButton({x, y, 34, h}, GuiIconText(ICON_UNDO, nullptr))) undo();
     x += 36;
     if (GuiButton({x, y, 34, h}, GuiIconText(ICON_REDO, nullptr))) redo();
@@ -505,6 +518,11 @@ void Editor::drawToolbar(Rectangle r) {
         Color c = scripts_->isBuilding() ? kOrange : scripts_->lastBuildFailed() ? kBad : kDim;
         drawText(status, x + 42, y + 6, c);
         x += 42 + textWidth(status) + 16;
+    }
+    if (exporter_ && exporter_->busy()) {
+        std::string status = "Exporting " + exporter_->currentLabel() + "...";
+        drawText(status, x, y + 6, kOrange);
+        x += textWidth(status) + 16;
     }
 
     // Interface size, on the right (Ctrl + / Ctrl - / Ctrl 0 do the same)
@@ -1582,6 +1600,155 @@ void Editor::openTextDialog(std::string title, std::string message, std::string 
     moveTextCursorToEnd();
 }
 
+// ===========================================================================
+// Export
+// ===========================================================================
+std::string Editor::defaultExportDir() const { return (fs::path(SPROUT_EDITOR_DIR) / "exports").string(); }
+
+void Editor::openExportDialog() {
+    if (playTree_) return;
+    activeField_.clear();
+    export_ = ExportDialog{};
+    export_.open = true;
+    export_.targets = exporter_->detectTargets();
+    for (auto& t : export_.targets) {
+        bool wanted = settings_.exportTargets.empty()
+                          ? t.available && (t.id == "linux" || t.id == "windows" || t.id == "macos")
+                          : std::find(settings_.exportTargets.begin(), settings_.exportTargets.end(), t.id) !=
+                                settings_.exportTargets.end();
+        export_.chosen.push_back(wanted && t.available);
+    }
+    std::snprintf(export_.name, sizeof export_.name, "%s", settings_.name.c_str());
+    std::string dir = settings_.exportDir.empty() ? defaultExportDir() : settings_.exportDir;
+    std::snprintf(export_.dir, sizeof export_.dir, "%s", dir.c_str());
+    export_.width = settings_.width;
+    export_.height = settings_.height;
+}
+
+void Editor::drawExportDialog() {
+    float sw = screenW(), sh = screenH();
+    DrawRectangle(0, 0, static_cast<int>(sw), static_cast<int>(sh), Fade(BLACK, 0.5f));
+    float bw = std::min(640.0f, sw - 40), bh = std::min(520.0f, sh - 40);
+    Rectangle box{std::floor((sw - bw) / 2), std::floor((sh - bh) / 2), bw, bh};
+    bool close = GuiWindowBox(box, "Export Game") != 0;
+    bool editing = export_.nameEdit || export_.dirEdit || export_.widthEdit || export_.heightEdit;
+
+    float x = box.x + 16, w = box.width - 32, y = box.y + 40;
+    const float labelW = 130;
+    auto label = [&](const char* text) { drawText(text, x, y + 5, kDim); };
+
+    label("Game name");
+    if (GuiTextBox({x + labelW, y, w - labelW, 26}, export_.name, sizeof export_.name, export_.nameEdit))
+        export_.nameEdit = !export_.nameEdit;
+    y += 34;
+
+    label("Main scene");
+    if (GuiButton({x + labelW, y, w - labelW, 26}, settings_.mainScene.c_str())) {
+        std::vector<std::string> scenes;
+        for (auto& f : files_)
+            if (f.kind == FileEntry::Scene) scenes.push_back(f.path);
+        if (!scenes.empty())
+            openPopup({x + labelW, y + 28}, scenes, [this, scenes](int i) { settings_.mainScene = scenes[i]; });
+    }
+    y += 34;
+
+    label("Window size");
+    if (GuiValueBox({x + labelW, y, 90, 26}, nullptr, &export_.width, 64, 4096, export_.widthEdit))
+        export_.widthEdit = !export_.widthEdit;
+    drawText("x", x + labelW + 98, y + 5, kDim);
+    if (GuiValueBox({x + labelW + 114, y, 90, 26}, nullptr, &export_.height, 64, 4096, export_.heightEdit))
+        export_.heightEdit = !export_.heightEdit;
+    y += 42;
+
+    drawText("Platforms", x, y, kAccent);
+    y += 26;
+    for (size_t i = 0; i < export_.targets.size(); ++i) {
+        const ExportTarget& t = export_.targets[i];
+        bool on = export_.chosen[i];
+        if (!t.available) GuiDisable();
+        GuiCheckBox({x + 4, y + 4, 18, 18}, nullptr, &on);
+        if (!t.available) GuiEnable();
+        export_.chosen[i] = on && t.available;
+        drawText(t.label, x + 32, y + 4, t.available ? kText : kDim);
+        drawText(t.available ? "ready" : "not available", x + 120, y + 4, t.available ? kGood : kOrange);
+        // The note, shortened to fit
+        std::string note = t.note;
+        float room = w - 250;
+        while (note.size() > 4 && textWidth(note) > room) note = note.substr(0, note.size() - 4) + "...";
+        drawText(note, x + 240, y + 4, kDim);
+        y += 30;
+    }
+    y += 8;
+
+    label("Export to");
+    if (GuiTextBox({x + labelW, y, w - labelW, 26}, export_.dir, sizeof export_.dir, export_.dirEdit))
+        export_.dirEdit = !export_.dirEdit;
+    y += 34;
+    drawText("Each platform goes in its own folder inside it (linux/, windows/, macos/, web/).", x, y, kDim);
+
+    // Bottom row
+    float by = box.y + box.height - 44;
+    bool busy = exporter_->busy();
+    if (busy) {
+        drawText("Exporting " + exporter_->currentLabel() + "... (see Output)", x, by + 6, kOrange);
+    } else if (std::none_of(export_.chosen.begin(), export_.chosen.end(), [](bool b) { return b; })) {
+        drawText("Tick a platform to export.", x, by + 6, kDim);
+    }
+    float bx = box.x + box.width - 16;
+    bx -= 90;
+    if (GuiButton({bx, by, 90, 30}, "Close")) close = true;
+    bx -= 100;
+    if (busy) GuiDisable();
+    if (GuiButton({bx, by, 96, 30}, GuiIconText(ICON_FILE_EXPORT, "Export"))) startExport();
+    if (busy) GuiEnable();
+    bx -= 100;
+    if (GuiButton({bx, by, 96, 30}, GuiIconText(ICON_ROTATE_FILL, "Recheck"))) {
+        auto chosen = export_.chosen;
+        export_.targets = exporter_->detectTargets();
+        for (size_t i = 0; i < export_.targets.size(); ++i) export_.chosen[i] = chosen[i] && export_.targets[i].available;
+    }
+
+    if (close || (IsKeyPressed(KEY_ESCAPE) && !editing)) {
+        // Keep what was typed for next time.
+        settings_.name = export_.name;
+        settings_.width = export_.width;
+        settings_.height = export_.height;
+        settings_.exportDir = export_.dir == defaultExportDir() ? "" : export_.dir;
+        export_.open = false;
+    }
+}
+
+void Editor::startExport() {
+    if (!fs::exists(projectDir_ / settings_.mainScene)) {
+        log("The main scene " + settings_.mainScene + " doesn't exist. Pick another one.", kBad);
+        return;
+    }
+    if (dirty_) {
+        saveScene();  // the export uses the files on disk
+        if (dirty_) return;
+    }
+    settings_.name = export_.name;
+    settings_.width = export_.width;
+    settings_.height = export_.height;
+    settings_.exportDir = export_.dir == defaultExportDir() ? "" : export_.dir;  // keep project.json portable
+    settings_.exportTargets.clear();
+    for (size_t i = 0; i < export_.targets.size(); ++i)
+        if (export_.chosen[i]) settings_.exportTargets.push_back(export_.targets[i].id);
+    if (!settings_.save(projectDir_)) log("Couldn't save project.json.", kBad);
+    editTree_.gameSize = raylib::Vector2{static_cast<float>(settings_.width), static_cast<float>(settings_.height)};
+    if (settings_.exportTargets.empty()) return;
+    log("Exporting '" + settings_.name + "' (the first export for a platform takes a few minutes)...", kAccent);
+    exporter_->start(settings_.exportTargets, settings_.name, export_.dir);
+}
+
+void Editor::pumpExport() {
+    if (!exporter_) return;
+    for (auto& line : exporter_->takeLines()) {
+        Color c = line.kind == 1 ? kGood : line.kind == 2 ? kBad : line.kind == 3 ? kAccent : Color{120, 125, 135, 255};
+        log(line.text, c);
+    }
+}
+
 void Editor::confirmUnsaved(std::function<void()> then) {
     if (!dirty_ || !editTree_.root() || playTree_) {
         then();
@@ -1595,6 +1762,7 @@ void Editor::requestOpenScene(const std::string& scenePath) {
 }
 
 void Editor::drawModal() {
+    if (export_.open) drawExportDialog();
     if (confirm_.open) {
         float sw = screenW(), sh = screenH();
         DrawRectangle(0, 0, static_cast<int>(sw), static_cast<int>(sh), Fade(BLACK, 0.5f));

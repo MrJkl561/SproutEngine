@@ -13,3 +13,6 @@ cmake-build-*/
 # Files games write while running
 save.json
 screenshot*.png
+
+# Games exported from the editor
+editor/exports/

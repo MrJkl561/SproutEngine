@@ -90,14 +90,16 @@ const json* sceneRootJson(const std::string& scenePath) {
     static std::map<std::string, Entry> cache;
     std::error_code ec;
     fs::path file = Assets::projectDir() / scenePath;
+    // (Some file systems, like the one in web builds, may not know the time;
+    // then the file is just read again each time.)
     auto time = fs::last_write_time(file, ec);
-    if (ec) {
+    auto it = cache.find(scenePath);
+    if (!ec && it != cache.end() && it->second.time == time) return &it->second.root;
+    std::ifstream in(file);
+    if (!in) {
         cache.erase(scenePath);
         return nullptr;
     }
-    auto it = cache.find(scenePath);
-    if (it != cache.end() && it->second.time == time) return &it->second.root;
-    std::ifstream in(file);
     try {
         json j = json::parse(in);
         Entry& e = cache[scenePath];

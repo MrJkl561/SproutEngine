@@ -61,7 +61,13 @@ target_compile_definitions(sprout_editor PRIVATE
     SPROUT_EDITOR_PROJECT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/project"
     SPROUT_EDITOR_SCRIPTS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/scripts"
     # The dark theme's font (CC0), loaded at the right size for the UI scale.
-    SPROUT_EDITOR_FONT="${raygui_SOURCE_DIR}/styles/dark/PixelOperator.ttf")
+    SPROUT_EDITOR_FONT="${raygui_SOURCE_DIR}/styles/dark/PixelOperator.ttf"
+    # For rebuilding scripts and exporting games: CMake, the build folder, and the
+    # libraries' sources (exports reuse them instead of downloading again).
+    SPROUT_EDITOR_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+    SPROUT_EDITOR_CMAKE="${CMAKE_COMMAND}"
+    SPROUT_EDITOR_BUILD_DIR="${CMAKE_BINARY_DIR}"
+    SPROUT_EDITOR_DEPS_DIR="${FETCHCONTENT_BASE_DIR}")
 
 set(_editor_out "${SPROUT_OUTPUT_DIR}/sprout_editor")
 
@@ -119,8 +125,6 @@ if(SPROUT_EDITOR_HOT_RELOAD)
     target_compile_definitions(sprout_editor PRIVATE
         SPROUT_EDITOR_HOT_RELOAD=1
         SPROUT_EDITOR_SCRIPTS_MODULE="$<TARGET_FILE:sprout_scripts>"
-        SPROUT_EDITOR_CMAKE="${CMAKE_COMMAND}"
-        SPROUT_EDITOR_BUILD_DIR="${CMAKE_BINARY_DIR}"
         SPROUT_EDITOR_BUILD_CONFIG="$<CONFIG>")
 else()
     target_link_libraries(sprout_editor PRIVATE raylib)

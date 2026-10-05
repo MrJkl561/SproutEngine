@@ -21,8 +21,10 @@
 #include <string>
 #include <vector>
 
+#include "export.hpp"
 #include "hot_reload.hpp"
 #include "nodes.hpp"
+#include "project.hpp"
 #include "scene_tree.hpp"
 
 namespace s2d {
@@ -116,7 +118,14 @@ private:
     void openPopup(Vector2 at, std::vector<std::string> items, std::function<void(int)> onPick);
     void openTextDialog(std::string title, std::string message, std::string initial,
                         std::function<void(const std::string&)> onOk);
-    bool isTyping() const { return !activeField_.empty() || dialog_.open || confirm_.open; }
+    bool isTyping() const { return !activeField_.empty() || dialog_.open || confirm_.open || export_.open; }
+
+    // --- exporting -----------------------------------------------------------
+    void openExportDialog();
+    std::string defaultExportDir() const;  // editor/exports
+    void drawExportDialog();
+    void startExport();
+    void pumpExport();  // moves the exporter's progress lines into the Output panel
 
     // --- state ------------------------------------------------------------
     std::filesystem::path projectDir_;
@@ -213,6 +222,18 @@ private:
         char text[128] = {};
         std::function<void(const std::string&)> onOk;
     } dialog_;
+
+    ProjectSettings settings_;
+    std::unique_ptr<Exporter> exporter_;
+    struct ExportDialog {
+        bool open = false;
+        std::vector<ExportTarget> targets;
+        std::vector<bool> chosen;
+        char name[64] = {};
+        char dir[512] = {};
+        int width = 800, height = 450;
+        bool nameEdit = false, dirEdit = false, widthEdit = false, heightEdit = false;
+    } export_;
 
     struct ConfirmDialog {
         bool open = false;

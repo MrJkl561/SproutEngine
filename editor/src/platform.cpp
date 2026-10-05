@@ -1,6 +1,7 @@
 #include "platform.hpp"
 
 #include <cstdio>
+#include <cstdlib>
 
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
@@ -12,6 +13,7 @@
 #include <windows.h>
 #else
 #include <dlfcn.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #endif
 
@@ -39,19 +41,14 @@ void freeLibrary(void* library) {
 
 int processId() { return static_cast<int>(GetCurrentProcessId()); }
 
-int runCommand(const std::string& command, std::string& output) {
-    // cmd.exe drops the first and last quote of a command line that starts
-    // with one, so wrap the whole thing in an extra pair.
-    std::string line = "\"" + command + " 2>&1\"";
-    FILE* pipe = _popen(line.c_str(), "r");
-    if (!pipe) {
-        output = "couldn't run: " + command;
-        return -1;
-    }
-    char buf[512];
-    while (fgets(buf, sizeof buf, pipe)) output += buf;
-    return _pclose(pipe);
-}
+namespace {
+// cmd.exe drops the first and last quote of a command line that starts
+// with one, so wrap the whole thing in an extra pair.
+FILE* openPipe(const std::string& command) { return _popen(("\"" + command + " 2>&1\"").c_str(), "r"); }
+int closePipe(FILE* pipe) { return _pclose(pipe); }
+const char* kPathSeparator = ";";
+const char* kExtensions[] = {".exe", ".bat", ".cmd", ""};
+}  // namespace
 
 #else
 
@@ -70,17 +67,60 @@ void freeLibrary(void* library) {
 
 int processId() { return static_cast<int>(getpid()); }
 
-int runCommand(const std::string& command, std::string& output) {
-    FILE* pipe = popen((command + " 2>&1").c_str(), "r");
+namespace {
+FILE* openPipe(const std::string& command) { return popen((command + " 2>&1").c_str(), "r"); }
+int closePipe(FILE* pipe) {
+    int status = pclose(pipe);
+    return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+}
+const char* kPathSeparator = ":";
+const char* kExtensions[] = {""};
+}  // namespace
+
+#endif
+
+int runCommand(const std::string& command, std::string& output) { return runCommand(command, output, {}); }
+
+int runCommand(const std::string& command, std::string& output, const std::function<void(const std::string&)>& onLine) {
+    FILE* pipe = openPipe(command);
     if (!pipe) {
         output = "couldn't run: " + command;
         return -1;
     }
-    char buf[512];
-    while (fgets(buf, sizeof buf, pipe)) output += buf;
-    return pclose(pipe);
+    char buf[1024];
+    std::string line;
+    while (fgets(buf, sizeof buf, pipe)) {
+        output += buf;
+        line += buf;
+        if (!line.empty() && line.back() == '\n') {
+            while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) line.pop_back();
+            if (onLine) onLine(line);
+            line.clear();
+        }
+    }
+    if (!line.empty() && onLine) onLine(line);
+    return closePipe(pipe);
 }
 
-#endif
+std::filesystem::path findProgram(const std::string& name) {
+    const char* path = std::getenv("PATH");
+    if (!path) return {};
+    std::string all = path;
+    size_t start = 0;
+    while (start <= all.size()) {
+        size_t end = all.find(kPathSeparator, start);
+        std::string dir = all.substr(start, end == std::string::npos ? std::string::npos : end - start);
+        if (!dir.empty()) {
+            for (const char* ext : kExtensions) {
+                std::filesystem::path candidate = std::filesystem::path(dir) / (name + ext);
+                std::error_code ec;
+                if (std::filesystem::is_regular_file(candidate, ec)) return candidate;
+            }
+        }
+        if (end == std::string::npos) break;
+        start = end + 1;
+    }
+    return {};
+}
 
 }  // namespace s2d::platform

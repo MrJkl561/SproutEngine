@@ -44,6 +44,24 @@ jobs:
           if [ -f "$exe.exe" ]; then exe="$exe.exe"; fi
           "$exe" --check-scripts
 
+      # Exports the editor's demo game for this runner's own platform, the way
+      # the editor's Export window does, and plays the Linux one for 2 seconds.
+      - name: Export the editor's demo game
+        shell: bash
+        run: |
+          exe=build/bin/sprout_editor/sprout_editor
+          if [ -f "$exe.exe" ]; then exe="$exe.exe"; fi
+          case "$RUNNER_OS" in
+            Linux) target=linux ;;
+            Windows) target=windows ;;
+            macOS) target=macos ;;
+          esac
+          "$exe" --export "$target"
+
+      - name: Run the exported game
+        if: runner.os == 'Linux'
+        run: SPROUT_TEST_FRAMES=120 timeout 60 xvfb-run -a editor/exports/linux/Sprout_Game
+
       - name: Run every game and example for 2 seconds
         if: runner.os == 'Linux'
         run: |
