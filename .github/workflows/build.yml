@@ -1,5 +1,6 @@
 # Builds Sprout, its examples and tests on Windows, macOS and Linux for every push,
-# runs the unit tests everywhere, and runs every game for 2 seconds on Linux.
+# runs the unit tests everywhere, runs every game for 2 seconds on Linux and plays
+# the exported demo game on Linux and macOS.
 name: Build
 
 on:
@@ -61,6 +62,26 @@ jobs:
       - name: Run the exported game
         if: runner.os == 'Linux'
         run: SPROUT_TEST_FRAMES=120 timeout 60 xvfb-run -a editor/exports/linux/Sprout_Game
+
+      # Plays the macOS app for 2 seconds from a copy outside the repository, so
+      # it has to find its project inside the bundle (Contents/Resources/project).
+      - name: Run the exported macOS app
+        if: runner.os == 'macOS'
+        run: |
+          app=editor/exports/macos/Sprout_Game.app
+          test -f "$app/Contents/Info.plist"
+          test -f "$app/Contents/Resources/project/project.json"
+          ditto "$app" "$RUNNER_TEMP/Sprout_Game.app"
+          cd "$RUNNER_TEMP"
+          SPROUT_TEST_FRAMES=120 perl -e 'alarm 60; exec @ARGV' ./Sprout_Game.app/Contents/MacOS/Sprout_Game
+          ditto -c -k --keepParent Sprout_Game.app Sprout_Game-macOS.zip
+
+      - name: Upload the exported macOS app
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sprout_Game-macOS
+          path: ${{ runner.temp }}/Sprout_Game-macOS.zip
 
       - name: Run every game and example for 2 seconds
         if: runner.os == 'Linux'
