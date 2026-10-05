@@ -4,6 +4,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <set>
+#include <chrono>
+#include <mutex>
 #include <system_error>
 
 #include "platform.hpp"
@@ -16,6 +18,31 @@ namespace s2d {
 #if defined(SPROUT_EDITOR_HOT_RELOAD)
 
 bool ScriptReloader::supported() { return true; }
+
+namespace {
+// Builds still running, by build folder, including ones whose project was closed
+// (two builds must never run in the same folder at once). Never destroyed, so
+// a build that's still running when the editor quits can't touch a dead map.
+struct RunningBuilds {
+    std::mutex mutex;
+    std::map<std::string, std::weak_ptr<void>> byFolder;
+};
+RunningBuilds& runningBuilds() {
+    static auto* builds = new RunningBuilds;
+    return *builds;
+}
+bool folderBusy(const fs::path& workDir) {
+    RunningBuilds& b = runningBuilds();
+    std::lock_guard<std::mutex> lock(b.mutex);
+    auto it = b.byFolder.find(workDir.string());
+    if (it == b.byFolder.end()) return false;
+    if (it->second.expired()) {
+        b.byFolder.erase(it);
+        return false;
+    }
+    return true;
+}
+}  // namespace
 
 ScriptReloader::ScriptReloader(fs::path scriptsDir, fs::path workDir)
     : scriptsDir_(std::move(scriptsDir)), workDir_(std::move(workDir)) {
@@ -30,14 +57,14 @@ fs::path ScriptReloader::libraryPath() const {
 #endif
 }
 
-bool ScriptReloader::runBuild(std::string& output) const {
+bool ScriptReloader::runBuild(const fs::path& scriptsDir, const fs::path& workDir, std::string& output) {
     auto q = [](const fs::path& p) { return "\"" + p.generic_string() + "\""; };
     std::string cmake = q(SPROUT_EDITOR_CMAKE);
     std::error_code ec;
-    if (!fs::exists(workDir_ / "CMakeCache.txt", ec)) {
+    if (!fs::exists(workDir / "CMakeCache.txt", ec)) {
         std::string cmd;
         // First time for this project: set up its build folder.
-        cmd = cmake + " -S " + q(fs::path(SPROUT_EDITOR_DIR) / "scripts_module") + " -B " + q(workDir_);
+        cmd = cmake + " -S " + q(fs::path(SPROUT_EDITOR_DIR) / "scripts_module") + " -B " + q(workDir);
 #if !defined(_WIN32)
         if (!platform::findProgram("ninja").empty()) cmd += " -G Ninja";
 #elif defined(_MSC_VER)
@@ -62,29 +89,31 @@ bool ScriptReloader::runBuild(std::string& output) const {
         }
 #endif
         cmd += std::string(" -DCMAKE_BUILD_TYPE=") + SPROUT_EDITOR_BUILD_CONFIG;
-        cmd += " -DSPROUT_SCRIPTS_DIR=" + q(scriptsDir_);
+        cmd += " -DSPROUT_SCRIPTS_DIR=" + q(scriptsDir);
         cmd += " -DSPROUT_EDITOR_SRC=" + q(fs::path(SPROUT_EDITOR_DIR) / "src");
         cmd += " -DSPROUT_DEPS_DIR=" + q(SPROUT_EDITOR_DEPS_DIR);
 #if defined(SPROUT_EDITOR_IMPLIB)
         cmd += " -DSPROUT_EDITOR_IMPLIB=" + q(SPROUT_EDITOR_IMPLIB);
 #endif
         if (platform::runCommand(cmd, output) != 0) {
-            fs::remove(workDir_ / "CMakeCache.txt", ec);  // try setting it up again next time
+            fs::remove(workDir / "CMakeCache.txt", ec);  // try setting it up again next time
             return false;
         }
     }
     // The same build type as the editor (on Windows the two must match).
-    std::string build = cmake + " --build " + q(workDir_) + " --config " + SPROUT_EDITOR_BUILD_CONFIG;
+    std::string build = cmake + " --build " + q(workDir) + " --config " + SPROUT_EDITOR_BUILD_CONFIG;
     return platform::runCommand(build, output) == 0;
 }
 
 bool ScriptReloader::buildNow(std::string& output) {
     if (thread_.joinable()) thread_.join();
-    return runBuild(output);
+    while (folderBusy(workDir_)) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    return runBuild(scriptsDir_, workDir_, output);
 }
 
 ScriptReloader::~ScriptReloader() {
-    if (thread_.joinable()) thread_.join();
+    // Don't wait for a compile that's still going: let it finish by itself.
+    if (thread_.joinable()) thread_.detach();
     unload();
 }
 
@@ -110,7 +139,8 @@ void ScriptReloader::update(double now) {
         }
     }
     // Wait a moment after the last change: editors often save in several steps.
-    if (pending_ && !building_ && now - changedAt_ > 0.3) startBuild();
+    // (and not while a build from before is still running in the same folder)
+    if (pending_ && !building_ && now - changedAt_ > 0.3 && !folderBusy(workDir_)) startBuild();
 }
 
 void ScriptReloader::requestBuild() {
@@ -121,24 +151,31 @@ void ScriptReloader::requestBuild() {
 void ScriptReloader::startBuild() {
     pending_ = false;
     building_ = true;
-    buildDone_ = false;
     if (thread_.joinable()) thread_.join();
-    thread_ = std::thread([this] {
+    auto job = std::make_shared<BuildJob>();
+    job_ = job;
+    {
+        RunningBuilds& b = runningBuilds();
+        std::lock_guard<std::mutex> lock(b.mutex);
+        b.byFolder[workDir_.string()] = job;
+    }
+    // The thread only uses its own copies, never `this` (which may be gone by the end).
+    thread_ = std::thread([job, scriptsDir = scriptsDir_, workDir = workDir_] {
         std::string output;
-        bool ok = runBuild(output);
-        buildOk_ = ok;
-        buildOutput_ = std::move(output);
-        buildDone_ = true;  // published last; read by pollBuild() on the main thread
+        job->ok = runBuild(scriptsDir, workDir, output);
+        job->output = std::move(output);
+        job->done = true;  // published last; read by pollBuild() on the main thread
     });
 }
 
 bool ScriptReloader::pollBuild(bool& ok, std::string& output) {
-    if (!building_ || !buildDone_) return false;
+    if (!building_ || !job_ || !job_->done) return false;
     thread_.join();
     building_ = false;
-    ok = buildOk_;
+    ok = job_->ok;
     lastBuildFailed_ = !ok;
-    output = std::move(buildOutput_);
+    output = std::move(job_->output);
+    job_.reset();
     return true;
 }
 
@@ -204,7 +241,7 @@ bool ScriptReloader::supported() { return false; }
 ScriptReloader::ScriptReloader(fs::path scriptsDir, fs::path workDir)
     : scriptsDir_(std::move(scriptsDir)), workDir_(std::move(workDir)) {}
 fs::path ScriptReloader::libraryPath() const { return {}; }
-bool ScriptReloader::runBuild(std::string&) const { return true; }
+bool ScriptReloader::runBuild(const fs::path&, const fs::path&, std::string&) { return true; }
 bool ScriptReloader::buildNow(std::string&) { return true; }
 ScriptReloader::~ScriptReloader() = default;
 std::map<std::string, fs::file_time_type> ScriptReloader::scanScripts() const { return {}; }

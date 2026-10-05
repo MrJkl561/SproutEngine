@@ -13,6 +13,7 @@
 #include <atomic>
 #include <filesystem>
 #include <map>
+#include <memory>
 #include <string>
 #include <thread>
 #include <vector>
@@ -53,7 +54,9 @@ private:
     void startBuild();
 
     std::filesystem::path libraryPath() const;
-    bool runBuild(std::string& output) const;  // configure (the first time) + build
+    // Configure (the first time) + build. Static: a build can outlive its reloader.
+    static bool runBuild(const std::filesystem::path& scriptsDir, const std::filesystem::path& workDir,
+                         std::string& output);
 
     std::filesystem::path scriptsDir_;
     std::filesystem::path workDir_;
@@ -62,12 +65,18 @@ private:
     [[maybe_unused]] bool pending_ = false;
     [[maybe_unused]] double changedAt_ = 0;
 
+    // A build in the background. It's shared with its thread, so closing the
+    // project (or the editor) doesn't wait for a compile: the thread is let go and
+    // finishes on its own.
+    struct BuildJob {
+        std::atomic<bool> done{false};
+        bool ok = false;
+        std::string output;
+    };
+    std::shared_ptr<BuildJob> job_;
     std::thread thread_;
     bool building_ = false;
     bool lastBuildFailed_ = false;
-    std::atomic<bool> buildDone_{false};
-    [[maybe_unused]] bool buildOk_ = false;
-    std::string buildOutput_;
 
     void* handle_ = nullptr;
     std::filesystem::path loadedCopy_;
