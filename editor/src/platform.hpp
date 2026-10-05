@@ -30,6 +30,16 @@ bool canPickFolder();
 std::optional<std::filesystem::path> pickFolder(const std::string& title, const std::filesystem::path& start,
                                                 void* owner);
 
+// Starts a command line (run by cmd.exe on Windows, sh elsewhere) and returns
+// at once, leaving it running after the editor closes. False if it couldn't start.
+bool launch(const std::string& command);
+// A file or folder name quoted for that command line.
+std::string quoteArg(const std::filesystem::path& path);
+// Opens a file with the program the system uses for it (like double-clicking it).
+bool openWithSystem(const std::filesystem::path& file);
+// Shows the file selected in Explorer / Finder (Linux: opens its folder).
+bool showInFileManager(const std::filesystem::path& file);
+
 // Finds a program on the PATH (adding .exe/.bat/.cmd on Windows); "" if it isn't there.
 std::filesystem::path findProgram(const std::string& name);
 

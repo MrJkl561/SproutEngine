@@ -11,6 +11,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <shellapi.h>
 #include <shobjidl.h>
 #else
 #include <dlfcn.h>
@@ -82,6 +83,43 @@ std::optional<std::filesystem::path> pickFolder(const std::string& title, const 
     }
     if (SUCCEEDED(init)) CoUninitialize();
     return result;
+}
+
+std::wstring widen(const std::string& text) {
+    int n = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, nullptr, 0);
+    std::wstring out(n > 0 ? n - 1 : 0, L'\0');
+    if (n > 1) MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, out.data(), n);
+    return out;
+}
+
+bool launch(const std::string& command) {
+    // cmd.exe /s /c "..." runs the line as typed (and finds .cmd/.bat programs like code.cmd).
+    std::wstring line = L"cmd.exe /d /s /c \"" + widen(command) + L"\"";
+    STARTUPINFOW si{};
+    si.cb = sizeof si;
+    PROCESS_INFORMATION pi{};
+    if (!CreateProcessW(nullptr, line.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW | DETACHED_PROCESS, nullptr,
+                        nullptr, &si, &pi))
+        return false;
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    return true;
+}
+
+std::string quoteArg(const std::filesystem::path& path) { return "\"" + path.string() + "\""; }
+
+bool openWithSystem(const std::filesystem::path& file) {
+    auto result = reinterpret_cast<INT_PTR>(
+        ShellExecuteW(nullptr, L"open", file.wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL));
+    if (result > 32) return true;
+    // No program is set for this kind of file: let Windows ask which one to use.
+    result = reinterpret_cast<INT_PTR>(
+        ShellExecuteW(nullptr, L"openas", file.wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL));
+    return result > 32;
+}
+
+bool showInFileManager(const std::filesystem::path& file) {
+    return launch("explorer /select," + quoteArg(file.lexically_normal().make_preferred()));
 }
 
 namespace {
@@ -172,6 +210,47 @@ std::optional<std::filesystem::path> pickFolder(const std::string& title, const 
 #endif
     if (!picked) return std::nullopt;
     return std::filesystem::path(*picked);
+}
+
+bool launch(const std::string& command) {
+    // Fork twice so the program isn't the editor's child (no zombie, and it
+    // keeps running when the editor quits).
+    pid_t child = fork();
+    if (child < 0) return false;
+    if (child == 0) {
+        setsid();
+        if (fork() == 0) {
+            if (FILE* null = std::fopen("/dev/null", "r+")) {
+                dup2(fileno(null), 0);
+                dup2(fileno(null), 1);
+                dup2(fileno(null), 2);
+            }
+            execl("/bin/sh", "sh", "-c", command.c_str(), static_cast<char*>(nullptr));
+            _exit(127);
+        }
+        _exit(0);
+    }
+    int status = 0;
+    waitpid(child, &status, 0);
+    return true;
+}
+
+std::string quoteArg(const std::filesystem::path& path) { return shellQuote(path.string()); }
+
+bool openWithSystem(const std::filesystem::path& file) {
+#if defined(__APPLE__)
+    return launch("open " + quoteArg(file));
+#else
+    return launch("xdg-open " + quoteArg(file));
+#endif
+}
+
+bool showInFileManager(const std::filesystem::path& file) {
+#if defined(__APPLE__)
+    return launch("open -R " + quoteArg(file));
+#else
+    return launch("xdg-open " + quoteArg(file.parent_path()));
+#endif
 }
 
 namespace {

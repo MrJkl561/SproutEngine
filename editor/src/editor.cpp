@@ -278,6 +278,7 @@ Editor::Editor(fs::path projectDir)
     loadTheme();
     loadEditorStyle();
     loadLayout();
+    codeEditor_ = loadCodeEditor();
     setUiScale(systemUiScale());
     setPrintHandler([this](const std::string& msg) { log(msg, theme().colors.scriptPrint); });
 
@@ -495,7 +496,8 @@ void Editor::frame() {
     pumpFolderPicker();
     updateSplitters(sw, sh, kLeftW, kRightW, kOutputH, sceneH);
     bool modal = popup_.open || dialog_.open || confirm_.open || export_.open || projects_.open ||
-                 folderPick_.valid() || sheet_.open || swallowMouse_ || splitter_ != Splitter::None;
+                 folderPick_.valid() || sheet_.open || codeEditorDialog_.open || swallowMouse_ ||
+                 splitter_ != Splitter::None;
     if (modal) GuiLock();
     {
         // While the game runs the scene can't be edited (it's a copy that's playing).
@@ -561,9 +563,13 @@ void Editor::setUiScale(float scale) {
     if (old.texture.id != 0) UnloadFont(old);
 }
 
-void Editor::loadLayout() {
+void Editor::resetLayout() {
     const Theme::Layout& d = theme().layout;
     layout_ = PanelSizes{d.leftWidth, d.rightWidth, d.bottomHeight, d.animationHeight, d.sceneDockShare};
+}
+
+void Editor::loadLayout() {
+    resetLayout();
     std::ifstream in(projects::configDir() / "layout.json");
     if (!in) return;
     try {
@@ -603,10 +609,13 @@ void Editor::updateSplitters(float sw, float sh, float leftW, float rightW, floa
 
     if (splitter_ == Splitter::None) {
         bool busy = popup_.open || dialog_.open || confirm_.open || export_.open || projects_.open || sheet_.open ||
+                    codeEditorDialog_.open ||
                     folderPick_.valid() || swallowMouse_ || drag_.kind != DragKind::None ||
                     viewDrag_ != ViewDrag::None || panning_ || !scrubField_.empty() || IsMouseButtonDown(MOUSE_BUTTON_LEFT);
         if (busy && !IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) return;
-        if (popup_.open || dialog_.open || confirm_.open || export_.open || projects_.open || sheet_.open) return;
+        if (popup_.open || dialog_.open || confirm_.open || export_.open || projects_.open || sheet_.open ||
+            codeEditorDialog_.open)
+            return;
         for (int i = 1; i <= 4; ++i) {
             if (!CheckCollisionPointRec(m, zones[i])) continue;
             Splitter s = static_cast<Splitter>(i);
@@ -758,6 +767,16 @@ void Editor::drawToolbar(Rectangle r) {
     if (GuiButton({ux, y, 30, h}, "-")) setUiScale(uiScale_ - 0.25f);
     ux -= textWidth("UI size") + 8;
     drawText("UI size", ux, y + 6, kDim);
+    ux -= 42;
+    if (GuiButton({ux, y, 34, h}, GuiIconText(ICON_GEAR, nullptr))) {
+        openPopup({ux, y + h + 2}, {"Code Editor...", "Reset Panel Layout"}, [this](int i) {
+            if (i == 0) openCodeEditorDialog();
+            if (i == 1) {
+                resetLayout();
+                saveLayout();
+            }
+        });
+    }
 
     // The scene's file name fills whatever room is left (shortened from the left)
     std::string path = scenePath_ + (dirty_ ? " (unsaved)" : "");
@@ -1011,6 +1030,7 @@ void Editor::drawFileSystem(Rectangle r) {
 
         if (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
             drag_ = DragState{DragKind::File, nullptr, rows[i].file, mouse, false};
+        if (hover && IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)) fileMenu(rows[i].file, mouse);
     }
     EndScissorMode();
 }
@@ -1037,7 +1057,8 @@ void Editor::activateFile(size_t index) {
                 selected_->scriptName = f.scriptClass;
                 log("Attached " + f.scriptClass + " to " + selected_->name);
             } else {
-                log("Select a node first, then click a script to attach it.", kDim);
+                log("Select a node first, then click a script to attach it. Right-click it to open it in your code editor.",
+                    kDim);
             }
             break;
     }
@@ -1814,6 +1835,9 @@ void Editor::drawInspector(Rectangle r) {
                         : ScriptRegistry::has(selected_->scriptName) ? kGood
                                                                      : kOrange;
     drawText(status, x, y + 4, statusColor);
+    if (fs::path file = scriptFileOf(selected_->scriptName); !file.empty()) {
+        if (GuiButton({x + w - 76, y, 76, 24}, GuiIconText(ICON_PENCIL, "Edit"))) openInCodeEditor(file);
+    }
     if (!selected_->scriptName.empty() && !ScriptRegistry::has(selected_->scriptName)) {
         y += 22;
         drawText(ScriptReloader::supported() ? "not loaded - check the Output panel" : "not compiled yet - rebuild the editor",
@@ -2306,6 +2330,153 @@ void Editor::drawPopup() {
     popup_.justOpened = false;
 }
 
+// ===========================================================================
+// Code editor (opening scripts and scene files in VS Code, Visual Studio...)
+// ===========================================================================
+fs::path Editor::scriptFileOf(const std::string& className) const {
+    if (className.empty()) return {};
+    for (const FileEntry& f : files_)
+        if (f.kind == FileEntry::Script && f.scriptClass == className) return f.path;
+    return {};
+}
+
+void Editor::openInCodeEditor(const fs::path& file) {
+    fs::path full = file.is_absolute() ? file : projectDir_ / file;
+    std::string error;
+    if (s2d::openInCodeEditor(codeEditor_, full, projectDir_, error)) {
+        log("Opened " + full.filename().string() + " in " + codeEditor_.name, kDim);
+    } else {
+        log("Couldn't open " + full.filename().string() + ": " + error, kBad);
+        log("Pick another code editor with the gear button on the toolbar.", kDim);
+    }
+}
+
+void Editor::fileMenu(size_t index, Vector2 at) {
+    if (index >= files_.size()) return;
+    const FileEntry f = files_[index];
+    fs::path full = f.kind == FileEntry::Script ? fs::path(f.path) : projectDir_ / f.path;
+    std::string openIn = codeEditor_.command.empty() ? "Open in Default App" : "Open in " + codeEditor_.name;
+    std::vector<std::string> items;
+    std::vector<std::function<void()>> actions;
+    auto add = [&](std::string label, std::function<void()> action) {
+        items.push_back(std::move(label));
+        actions.push_back(std::move(action));
+    };
+    switch (f.kind) {
+        case FileEntry::Script:
+            add(openIn, [this, full] { openInCodeEditor(full); });
+            if (selected_ && !f.scriptClass.empty())
+                add("Attach to " + selected_->name, [this, index] { activateFile(index); });
+            break;
+        case FileEntry::Scene:
+            add("Open Scene", [this, path = f.path] { requestOpenScene(path); });
+            add(codeEditor_.command.empty() ? "Open JSON in Default App" : "Open JSON in " + codeEditor_.name,
+                [this, full] { openInCodeEditor(full); });
+            break;
+        case FileEntry::Texture:
+            add("Open in Image Viewer", [this, full] {
+                if (!platform::openWithSystem(full)) log("Couldn't open " + full.string(), kBad);
+            });
+            break;
+    }
+    add("Show in Folder", [this, full] {
+        if (!platform::showInFileManager(full)) log("Couldn't open the folder of " + full.string(), kBad);
+    });
+    if (f.kind != FileEntry::Texture) add("Choose Code Editor...", [this] { openCodeEditorDialog(); });
+    openPopup(at, items, [actions](int i) { actions[i](); });
+}
+
+void Editor::openCodeEditorDialog() {
+    activeField_.clear();
+    const auto& editors = installedCodeEditors();
+    codeEditorDialog_ = CodeEditorDialog{};
+    codeEditorDialog_.open = true;
+    codeEditorDialog_.selected = static_cast<int>(editors.size());  // Custom, unless it's one of the list
+    for (size_t i = 0; i < editors.size(); ++i)
+        if (editors[i].name == codeEditor_.name && editors[i].command == codeEditor_.command)
+            codeEditorDialog_.selected = static_cast<int>(i);
+    std::snprintf(codeEditorDialog_.command, sizeof codeEditorDialog_.command, "%s", codeEditor_.command.c_str());
+}
+
+void Editor::drawCodeEditorDialog() {
+    CodeEditorDialog& d = codeEditorDialog_;
+    const auto& editors = installedCodeEditors();
+    float sw = screenW(), sh = screenH();
+    DrawRectangle(0, 0, static_cast<int>(sw), static_cast<int>(sh), Fade(BLACK, 0.5f));
+    float listH = (editors.size() + 1) * kRowH + 8;
+    float w = 560, h = 96 + listH + 96;
+    Rectangle box{std::floor(sw / 2 - w / 2), std::floor(std::max(8.0f, sh / 2 - h / 2)), w, h};
+    bool cancel = GuiWindowBox(box, "Code Editor") != 0;
+    float x = box.x + 14, y = box.y + 36, iw = box.width - 28;
+    drawText("Open scripts and scene files in:", x, y, kText);
+    y += 24;
+
+    // The editors found on this computer, then Custom
+    Rectangle list{x, y, iw, listH};
+    DrawRectangleRec(list, kFieldBg);
+    DrawRectangleLinesEx(list, 1, kBorder);
+    for (size_t i = 0; i <= editors.size(); ++i) {
+        Rectangle row{x + 4, y + 4 + i * kRowH, iw - 8, kRowH};
+        bool isCustom = i == editors.size();
+        bool chosen = d.selected == static_cast<int>(i);
+        if (chosen) DrawRectangleRec(row, kSelect);
+        else if (mouseIn(row) && !GuiIsLocked()) DrawRectangleRec(row, kHover);
+        GuiDrawIcon(chosen ? ICON_OK_TICK : ICON_NONE, static_cast<int>(row.x + 4), static_cast<int>(row.y + 4), 1, kAccent);
+        std::string label = isCustom ? "Custom command" : editors[i].name;
+        drawText(label, row.x + 28, row.y + 4, kText);
+        std::string hint = isCustom ? "" : editors[i].command.empty() ? "whatever the system opens the file with" : editors[i].command;
+        if (!hint.empty()) drawText(hint, row.x + row.width - textWidth(hint) - 8, row.y + 4, kDim);
+        if (mouseIn(row) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !GuiIsLocked()) {
+            d.selected = static_cast<int>(i);
+            if (!isCustom) std::snprintf(d.command, sizeof d.command, "%s", editors[i].command.c_str());
+            d.commandEdit = isCustom;
+            if (isCustom) moveTextCursorToEnd();
+        }
+    }
+    y += listH + 12;
+
+    drawText("Command:", x, y + 6, kDim);
+    float cx = x + textWidth("Command:") + 10;
+    std::string before = d.command;
+    if (GuiTextBox({cx, y, x + iw - cx, 28}, d.command, sizeof d.command, d.commandEdit)) d.commandEdit = !d.commandEdit;
+    // Typing a command of your own makes it a custom one.
+    if (before != d.command) d.selected = static_cast<int>(editors.size());
+    y += 34;
+    drawText("{file} = the file, {project} = the project folder. Empty = system default.", x, y, kDim);
+    y += 20;
+    drawText("Saved for you on this computer (all projects).", x, y, kDim);
+
+    bool ok = (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER));
+    if (GuiButton({box.x + box.width - 200, box.y + box.height - 42, 90, 30}, "OK")) ok = true;
+    if (GuiButton({box.x + box.width - 104, box.y + box.height - 42, 90, 30}, "Cancel") ||
+        (IsKeyPressed(KEY_ESCAPE)))
+        cancel = true;
+    if (cancel) {
+        d.open = false;
+        return;
+    }
+    if (!ok) return;
+
+    CodeEditor chosen;
+    if (d.selected < static_cast<int>(editors.size())) {
+        chosen = editors[d.selected];
+    } else {
+        chosen.name = "Custom";
+        chosen.command = d.command;
+        while (!chosen.command.empty() && chosen.command.back() == ' ') chosen.command.pop_back();
+        if (chosen.command.empty()) chosen.name = "System default";
+        // Warn (but keep it) if the program isn't on the PATH.
+        std::string program = chosen.command.substr(0, chosen.command.find(' '));
+        if (!program.empty() && program[0] != '"' && program[0] != '\'' && !fs::path(program).is_absolute() &&
+            platform::findProgram(program).empty())
+            log("'" + program + "' isn't on the PATH; opening files may not work.", kOrange);
+    }
+    codeEditor_ = chosen;
+    saveCodeEditor(chosen);
+    d.open = false;
+    log("Code editor: " + chosen.name + (chosen.command.empty() ? "" : " (" + chosen.command + ")"), kGood);
+}
+
 void Editor::openTextDialog(std::string title, std::string message, std::string initial,
                             std::function<void(const std::string&)> onOk) {
     activeField_.clear();
@@ -2686,6 +2857,7 @@ void Editor::requestOpenScene(const std::string& scenePath) {
 
 void Editor::drawModal() {
     if (sheet_.open) drawSheetDialog();
+    if (codeEditorDialog_.open) drawCodeEditorDialog();
     bool picking = folderPick_.valid();
     if (picking) GuiLock();  // the folder window is open: everything here waits
     if (export_.open) drawExportDialog();
@@ -3119,6 +3291,7 @@ void Editor::createScript(const std::string& className) {
     }
     rescanFiles();
     log("Created " + file.string(), kGood);
+    if (codeEditorChosen()) openInCodeEditor(file);
     if (ScriptReloader::supported()) {
         log("It compiles and loads by itself; edit it and save to reload.", kGood);
     } else {

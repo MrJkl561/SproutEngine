@@ -23,6 +23,7 @@
 #include <string>
 #include <vector>
 
+#include "code_editor.hpp"
 #include "export.hpp"
 #include "hot_reload.hpp"
 #include "nodes.hpp"
@@ -140,8 +141,16 @@ private:
                         std::function<void(const std::string&)> onOk);
     bool isTyping() const {
         return !activeField_.empty() || dialog_.open || confirm_.open || export_.open || projects_.open ||
-               folderPick_.valid() || sheet_.open;
+               folderPick_.valid() || sheet_.open || codeEditorDialog_.open;
     }
+
+    // --- code editor (VS Code, Visual Studio...) -----------------------------
+    void openInCodeEditor(const std::filesystem::path& file);  // a file in the project
+    void openCodeEditorDialog();
+    void drawCodeEditorDialog();
+    void fileMenu(size_t index, Vector2 at);  // right-click on a file in the FileSystem dock
+    std::filesystem::path scriptFileOf(const std::string& className) const;  // "" if not found
+    void resetLayout();
 
     // --- exporting -----------------------------------------------------------
     void drawProjectManager();
@@ -307,6 +316,14 @@ private:
         bool hEdit = false, vEdit = false;
         std::vector<int> picked;  // in the order they were clicked
     } sheet_;
+
+    CodeEditor codeEditor_;
+    struct CodeEditorDialog {
+        bool open = false;
+        int selected = 0;  // in installedCodeEditors(); its size = Custom
+        char command[512] = {};
+        bool commandEdit = false;
+    } codeEditorDialog_;
 
     struct ConfirmDialog {
         bool open = false;

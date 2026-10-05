@@ -324,6 +324,21 @@ To add one: select a node, press **New** under *Script* in the inspector and
 type a class name. The editor writes `scripts/<name>.cpp` (in the project) from a
 template and attaches it. Then open the file in your code editor.
 
+### Opening scripts in your code editor
+
+Pick the program you write code in with the **gear button** on the toolbar ->
+**Code Editor...**. The list shows the editors found on your computer (VS Code,
+Visual Studio, CLion, Sublime Text, Zed, Notepad++, Xcode, Kate...), the
+system default, or a command of your own, where `{file}` is the file and
+`{project}` the project folder, e.g. `code {project} -g {file}`. The choice is
+saved for you, for every project.
+
+Then:
+- the **Edit** button next to a node's script in the Inspector opens that script,
+- **right-click** a script or scene in the FileSystem dock to open it (scenes
+  open as their JSON), show it in its folder, or change the code editor,
+- **New** script opens the new file straight away (once you've picked an editor).
+
 ### Script variables (shown in the inspector)
 
 Like Godot's `@export`, a script can show some of its variables in the
@@ -479,6 +494,7 @@ editor/
 │   ├── scene_io.*        <- scenes as JSON files
 │   ├── assets.*          <- texture cache
 │   ├── theme.*           <- what a theme can set (Theme)
+│   ├── code_editor.*     <- opening files in VS Code, Visual Studio...
 │   └── raygui_*          <- raygui and its widget styles
 ├── theme/                <- theme files (default_theme.cpp, light_theme.cpp) and their pictures
 ├── player/               <- the game runtime that exports are built from
