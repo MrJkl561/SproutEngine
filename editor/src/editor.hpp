@@ -28,6 +28,7 @@
 #include "nodes.hpp"
 #include "project.hpp"
 #include "scene_tree.hpp"
+#include "theme.hpp"
 
 namespace s2d {
 
@@ -43,7 +44,8 @@ public:
 
     void frame();  // handle input and draw one frame
     bool openScene(const std::string& relativePath);
-    void log(const std::string& message, Color color = Color{200, 200, 200, 255});
+    void log(const std::string& message) { log(message, theme().colors.text); }
+    void log(const std::string& message, Color color);
 
     std::string screenshotPath;
 
@@ -68,6 +70,10 @@ private:
     void drawPopup();
     void drawModal();
     void handleShortcuts();
+    // Dragging the borders between panels (the sizes are kept per user).
+    void updateSplitters(float sw, float sh, float leftW, float rightW, float bottomH, float sceneH);
+    void loadLayout();
+    void saveLayout() const;
     void finishDrag();
 
     // --- viewport helpers -------------------------------------------------
@@ -166,6 +172,12 @@ private:
 
     raylib::Camera2D viewCam_{{0, 0}, {400, 225}, 0.0f, 1.0f};
     Rectangle viewportRect_{};
+    struct PanelSizes {
+        float left = 290, right = 340, bottom = 170, animation = 280, sceneShare = 0.55f;
+    } layout_;
+    enum class Splitter { None, Left, Right, Bottom, SceneFiles } splitter_ = Splitter::None;
+    Splitter lastSplitterClick_ = Splitter::None;
+    double lastSplitterClickTime_ = -10;
     float uiScale_ = 1.0f;
     Font uiFont_{};  // the interface font, loaded at the size it's shown on screen
     Rectangle inspectorRect_{};

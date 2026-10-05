@@ -46,6 +46,25 @@ else()
 endif()
 option(SPROUT_EDITOR_HOT_RELOAD "Reload the editor's C++ scripts while it runs" ${_hot_reload_default})
 
+# The editor's look (colors, fonts, images, layout): a theme file with a
+# makeTheme() function. Pick another with -DSPROUT_EDITOR_THEME=path/to/theme.cpp
+set(SPROUT_EDITOR_THEME "${CMAKE_CURRENT_SOURCE_DIR}/theme/default_theme.cpp" CACHE STRING
+    "The editor's theme file (see editor/theme/)")
+set(_theme "${SPROUT_EDITOR_THEME}")
+if(NOT IS_ABSOLUTE "${_theme}")
+    foreach(base "${CMAKE_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/theme")
+        if(EXISTS "${base}/${_theme}")
+            set(_theme "${base}/${_theme}")
+            break()
+        endif()
+    endforeach()
+endif()
+if(NOT EXISTS "${_theme}")
+    message(FATAL_ERROR "Sprout editor: theme file '${SPROUT_EDITOR_THEME}' not found")
+endif()
+get_filename_component(_theme_dir "${_theme}" DIRECTORY)
+list(APPEND SPROUT_EDITOR_SOURCES "${_theme}")
+
 if(SPROUT_EDITOR_HOT_RELOAD)
     add_executable(sprout_editor ${SPROUT_EDITOR_SOURCES})
 else()
@@ -69,6 +88,7 @@ target_compile_definitions(sprout_editor PRIVATE
     # For rebuilding scripts and exporting games: CMake, the build folder, and the
     # libraries' sources (exports reuse them instead of downloading again).
     SPROUT_EDITOR_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+    SPROUT_EDITOR_THEME_DIR="${_theme_dir}"
     SPROUT_EDITOR_CMAKE="${CMAKE_COMMAND}"
     SPROUT_EDITOR_BUILD_DIR="${CMAKE_BINARY_DIR}"
     SPROUT_EDITOR_DEPS_DIR="${FETCHCONTENT_BASE_DIR}")

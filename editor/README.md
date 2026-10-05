@@ -421,6 +421,47 @@ You can pick the mode yourself with `-DSPROUT_EDITOR_HOT_RELOAD=ON/OFF`.
 `sprout_editor --check-scripts` loads every script without opening a window
 and tells you whether they all work.
 
+## Customizing the editor
+
+### Panel sizes
+
+Drag the borders between the panels (Scene / FileSystem, the side docks, the
+Output and Animation panels) to resize them. The editor remembers your layout
+for next time (in its settings folder, as `layout.json`). Double-click a
+border to put it back to the theme's size.
+
+### Themes: colors, icons, pictures, fonts
+
+The editor's whole look comes from one C++ file,
+[`theme/default_theme.cpp`](theme/default_theme.cpp). Edit it, rebuild, and
+restart the editor. It sets:
+
+| What | Where in the file |
+|------|-------------------|
+| Widget look (buttons, text boxes...) | `t.widgets` = one of raygui's 20 styles, plus `t.customizeWidgets` for any `GuiSetStyle()` tweak |
+| Font and text size | `t.font` (a .ttf/.otf in `theme/`), `t.fontSize` |
+| Panel colors | `t.colors.background`, `panel`, `header`, `border`, `text`, `accent`, `selection`... |
+| Viewport colors | `t.viewport.background`, `grid`, axes, game frame, selection outline |
+| Gizmos | `t.gizmos.collisionShape`, `camera`... |
+| Each node type's color and icon | `t.nodes["Sprite2D"] = {color, ICON_..., "picture.png"}` (a picture replaces the icon) |
+| Default panel sizes | `t.layout.leftWidth`, `rightWidth`, `bottomHeight`, `toolbarHeight`, `rowHeight`... |
+| Background pictures | `t.images.toolbar`, `panels`, `viewport` (tiled or stretched, with a tint) |
+| Window title and icon | `t.title`, `t.images.windowIcon` |
+
+Pictures and fonts go in the theme file's folder and are named by file name.
+The icon names are raygui's (`ICON_PLAYER`, `ICON_FILETYPE_IMAGE`... see
+`raygui.h`).
+
+To keep your own theme as a separate file, copy `default_theme.cpp` (for
+example to `theme/my_theme.cpp`) and choose it when configuring:
+
+```
+cmake -S . -B build -DSPROUT_EDITOR_THEME=my_theme.cpp
+```
+
+[`theme/light_theme.cpp`](theme/light_theme.cpp) is a second example: a light
+theme that only sets what differs from the defaults.
+
 ## Files
 
 ```
@@ -437,7 +478,9 @@ editor/
 │   ├── projects.*        <- recent projects, making new ones
 │   ├── scene_io.*        <- scenes as JSON files
 │   ├── assets.*          <- texture cache
-│   └── raygui_*          <- raygui and its dark theme
+│   ├── theme.*           <- what a theme can set (Theme)
+│   └── raygui_*          <- raygui and its widget styles
+├── theme/                <- theme files (default_theme.cpp, light_theme.cpp) and their pictures
 ├── player/               <- the game runtime that exports are built from
 ├── scripts_module/       <- builds a project's scripts into the hot reload library
 └── project/              <- the demo project

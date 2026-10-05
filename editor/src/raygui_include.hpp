@@ -34,7 +34,7 @@
 #endif
 
 namespace s2d {
-void loadEditorStyle();      // raygui's dark theme
+void loadEditorStyle();      // the theme's widget style (see theme.hpp)
 void moveTextCursorToEnd();
 void setEditorFont(Font font);  // the font every control uses  // for a text box that just started editing
 }

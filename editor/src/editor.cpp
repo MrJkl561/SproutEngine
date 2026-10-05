@@ -22,6 +22,7 @@
 #include "projects.hpp"
 #include "scene_io.hpp"
 #include "script.hpp"
+#include "theme.hpp"
 #include "ui_scale.hpp"
 
 namespace fs = std::filesystem;
@@ -33,23 +34,74 @@ namespace {
 // ---------------------------------------------------------------------------
 // Look
 // ---------------------------------------------------------------------------
-constexpr float kToolbarH = 40;
-constexpr float kHeaderH = 28;
-constexpr float kRowH = 24;
+// All of these come from the theme (editor/theme/*.cpp); see loadTheme().
+float kToolbarH = 40;
+float kHeaderH = 28;
+float kRowH = 24;
 
-const Color kBg{30, 32, 38, 255};
-const Color kPanel{37, 40, 48, 255};
-const Color kHeader{26, 28, 34, 255};
-const Color kBorder{55, 60, 72, 255};
-const Color kText{220, 222, 228, 255};
-const Color kDim{140, 146, 158, 255};
-const Color kAccent{100, 160, 255, 255};
-const Color kSelect{55, 85, 140, 255};
-const Color kHover{48, 53, 64, 255};
-const Color kOrange{255, 160, 60, 255};
-const Color kFieldBg{24, 26, 31, 255};
-const Color kGood{120, 220, 140, 255};
-const Color kBad{255, 110, 100, 255};
+Color kBg, kPanel, kHeader, kBorder, kText, kDim, kAccent, kSelect, kHover, kOrange, kFieldBg, kGood, kBad;
+
+void loadTheme() {
+    const Theme& t = theme();
+    kToolbarH = t.layout.toolbarHeight;
+    kHeaderH = t.layout.headerHeight;
+    kRowH = t.layout.rowHeight;
+    kBg = t.colors.background;
+    kPanel = t.colors.panel;
+    kHeader = t.colors.header;
+    kBorder = t.colors.border;
+    kText = t.colors.text;
+    kDim = t.colors.dimText;
+    kAccent = t.colors.accent;
+    kSelect = t.colors.selection;
+    kHover = t.colors.hover;
+    kOrange = t.colors.warning;
+    kFieldBg = t.colors.field;
+    kGood = t.colors.good;
+    kBad = t.colors.bad;
+    GizmoColors& g = gizmoColors();
+    g.collisionShape = t.gizmos.collisionShape;
+    g.collisionShapeDisabled = t.gizmos.collisionShapeDisabled;
+    g.camera = t.gizmos.camera;
+    g.missingTexture = t.gizmos.missingTexture;
+}
+
+// Pictures named by the theme (panel backgrounds, node icons...), loaded once.
+std::map<std::string, std::unique_ptr<raylib::Texture>> gThemeImages;
+
+raylib::Texture* themeImage(const std::string& file) {
+    if (file.empty()) return nullptr;
+    auto it = gThemeImages.find(file);
+    if (it == gThemeImages.end()) {
+        std::unique_ptr<raylib::Texture> tex;
+        std::string path = themePath(file);
+        if (FileExists(path.c_str())) {
+            try {
+                tex = std::make_unique<raylib::Texture>(path);
+                tex->SetFilter(TEXTURE_FILTER_BILINEAR);
+            } catch (const raylib::RaylibException&) {
+                tex.reset();
+            }
+        }
+        it = gThemeImages.emplace(file, std::move(tex)).first;
+    }
+    return it->second.get();
+}
+
+// A theme picture over r: stretched, or repeated at its own size.
+void drawThemeImage(const std::string& file, Rectangle r, bool tile, Color tint) {
+    raylib::Texture* tex = themeImage(file);
+    if (!tex || r.width <= 0 || r.height <= 0) return;
+    if (!tile) {
+        DrawTexturePro(*tex, {0, 0, (float)tex->width, (float)tex->height}, r, {0, 0}, 0, tint);
+        return;
+    }
+    for (float y = r.y; y < r.y + r.height; y += tex->height)
+        for (float x = r.x; x < r.x + r.width; x += tex->width) {
+            float w = std::min((float)tex->width, r.x + r.width - x), h = std::min((float)tex->height, r.y + r.height - y);
+            DrawTexturePro(*tex, {0, 0, w, h}, {x, y, w, h}, {0, 0}, 0, tint);
+        }
+}
 
 float gUiScale = 1.0f;  // Editor::uiScale(), for the helpers below
 
@@ -72,6 +124,8 @@ float textWidth(const std::string& s) { return static_cast<float>(GuiGetTextWidt
 
 void drawHeader(Rectangle r, const std::string& title) {
     DrawRectangleRec(r, kPanel);
+    const Theme& t = theme();
+    drawThemeImage(t.images.panels, r, t.images.tilePanels, t.images.panelTint);
     DrawRectangleRec({r.x, r.y, r.width, kHeaderH}, kHeader);
     drawText(title, r.x + 10, r.y + 6, kText);
     DrawRectangleLinesEx(r, 1, kBorder);
@@ -95,28 +149,22 @@ std::string formatFloat(float v) {
     return s;
 }
 
-int iconFor(const Node* n) {
-    std::string t = n->typeName();
-    if (t == "Node2D") return ICON_TARGET_SMALL;
-    if (t == "Sprite2D") return ICON_FILETYPE_IMAGE;
-    if (t == "AnimatedSprite2D") return ICON_FILETYPE_VIDEO;
-    if (t == "ColorRect") return ICON_BOX;
-    if (t == "Label") return ICON_TEXT_A;
-    if (t == "Camera2D") return ICON_EYE_ON;
-    if (t == "CollisionShape2D") return ICON_BOX_CORNERS_SMALL;
-    if (t == "Area2D") return ICON_BOX_DOTS_SMALL;
-    if (t == "StaticBody2D") return ICON_BOX_GRID;
-    if (t == "CharacterBody2D") return ICON_PLAYER;
-    return ICON_EMPTYBOX_SMALL;
+const NodeStyle& styleFor(const Node* n) {
+    const Theme& t = theme();
+    auto it = t.nodes.find(n->typeName());
+    return it != t.nodes.end() ? it->second : t.otherNodes;
 }
 
-Color colorFor(const Node* n) {
-    std::string t = n->typeName();
-    if (t == "Node") return Color{210, 210, 210, 255};
-    if (t == "Camera2D") return Color{190, 140, 255, 255};
-    if (t == "CollisionShape2D" || t == "Area2D" || t == "StaticBody2D" || t == "CharacterBody2D")
-        return Color{110, 200, 255, 255};
-    return Color{130, 165, 255, 255};
+Color colorFor(const Node* n) { return styleFor(n).color; }
+
+// The node type's icon: the theme's picture, or a raygui icon.
+void drawNodeIcon(const Node* n, float x, float y) {
+    const NodeStyle& s = styleFor(n);
+    if (raylib::Texture* tex = themeImage(s.image)) {
+        DrawTexturePro(*tex, {0, 0, (float)tex->width, (float)tex->height}, {x, y, 16, 16}, {0, 0}, 0, WHITE);
+        return;
+    }
+    GuiDrawIcon(s.icon, static_cast<int>(x), static_cast<int>(y), 1, s.color);
 }
 
 std::vector<int> pathOf(Node* n) {
@@ -227,8 +275,11 @@ Editor::Editor(fs::path projectDir)
     : projectDir_(std::move(projectDir)), scriptsDir_(projectDir_ / "scripts"),
       workDir_(projects::workDir(projectDir_, SPROUT_EDITOR_BUILD_DIR)) {
     Assets::setProjectDir(projectDir_);
+    loadTheme();
+    loadEditorStyle();
+    loadLayout();
     setUiScale(systemUiScale());
-    setPrintHandler([this](const std::string& msg) { log(msg, Color{230, 230, 160, 255}); });
+    setPrintHandler([this](const std::string& msg) { log(msg, theme().colors.scriptPrint); });
 
     std::error_code ec;
     fs::create_directories(projectDir_ / "scenes", ec);
@@ -270,6 +321,7 @@ Editor::~Editor() {
     scripts_.reset();  // after the game: scripts' code lives in the library
     gameTexture_.reset();
     Assets::clear();
+    gThemeImages.clear();  // (textures must go before the window does)
 }
 
 void Editor::ensureDefaultAssets() {
@@ -378,14 +430,22 @@ void Editor::frame() {
     SetMouseScale(1 / uiScale_, 1 / uiScale_);  // mouse positions in UI pixels
     float sw = screenW();
     float sh = screenH();
-    // Docks shrink a little on small windows so the viewport keeps some room.
-    float kLeftW = std::floor(std::clamp(sw * 0.19f, 220.0f, 290.0f));
-    float kRightW = std::floor(std::clamp(sw * 0.22f, 260.0f, 340.0f));
-    float kOutputH = animationTabShown() ? std::floor(std::clamp(sh * 0.36f, 230.0f, 330.0f))
-                                         : std::floor(std::clamp(sh * 0.2f, 110.0f, 170.0f));
+    // Panel sizes: the user's (drag the borders), kept inside the window with
+    // room left for the viewport.
+    float kLeftW = std::clamp(layout_.left, 160.0f, std::max(160.0f, sw * 0.45f));
+    float kRightW = std::clamp(layout_.right, 220.0f, std::max(220.0f, sw * 0.45f));
+    if (float squeeze = 240 - (sw - kLeftW - kRightW); squeeze > 0) {
+        kLeftW = std::max(120.0f, kLeftW - squeeze / 2);
+        kRightW = std::max(160.0f, kRightW - squeeze / 2);
+    }
+    kLeftW = std::floor(kLeftW);
+    kRightW = std::floor(kRightW);
     float bodyH = sh - kToolbarH;
+    float kOutputH = std::floor(std::clamp(animationTabShown() ? layout_.animation : layout_.bottom, 80.0f,
+                                           std::max(80.0f, bodyH - 140)));
+    float sceneH = std::floor(bodyH * std::clamp(layout_.sceneShare, 0.15f, 0.85f));
     Rectangle toolbar{0, 0, sw, kToolbarH};
-    Rectangle sceneDock{0, kToolbarH, kLeftW, std::floor(bodyH * 0.55f)};
+    Rectangle sceneDock{0, kToolbarH, kLeftW, sceneH};
     Rectangle fileDock{0, kToolbarH + sceneDock.height, kLeftW, bodyH - sceneDock.height};
     Rectangle inspector{sw - kRightW, kToolbarH, kRightW, bodyH};
     Rectangle output{kLeftW, sh - kOutputH, sw - kLeftW - kRightW, kOutputH};
@@ -433,8 +493,9 @@ void Editor::frame() {
 
     pumpExport();
     pumpFolderPicker();
+    updateSplitters(sw, sh, kLeftW, kRightW, kOutputH, sceneH);
     bool modal = popup_.open || dialog_.open || confirm_.open || export_.open || projects_.open ||
-                 folderPick_.valid() || sheet_.open || swallowMouse_;
+                 folderPick_.valid() || sheet_.open || swallowMouse_ || splitter_ != Splitter::None;
     if (modal) GuiLock();
     {
         // While the game runs the scene can't be edited (it's a copy that's playing).
@@ -463,7 +524,7 @@ void Editor::frame() {
     EndDrawing();
 
     SetMouseCursor(mouseCursor_);
-    std::string title = "Sprout Editor - " + settings_.name + " - " + scenePath_ + (dirty_ ? " *" : "") + (playTree_ ? "  [playing]" : "");
+    std::string title = theme().title + " - " + settings_.name + " - " + scenePath_ + (dirty_ ? " *" : "") + (playTree_ ? "  [playing]" : "");
     if (title != windowTitle_) {
         windowTitle_ = title;
         SetWindowTitle(title.c_str());
@@ -485,17 +546,110 @@ void Editor::setUiScale(float scale) {
     static const Font styleFont = GuiGetFont();  // the theme's own font, the fallback
     Font old = uiFont_;
     uiFont_ = Font{};
+    std::string fontFile = themePath(theme().font);
 #if defined(SPROUT_EDITOR_FONT)
-    if (FileExists(SPROUT_EDITOR_FONT)) {
-        uiFont_ = LoadFontEx(SPROUT_EDITOR_FONT, static_cast<int>(std::lround(16 * scale)), nullptr, 0);
+    if (fontFile.empty()) fontFile = SPROUT_EDITOR_FONT;
+#endif
+    if (!fontFile.empty() && FileExists(fontFile.c_str())) {
+        uiFont_ = LoadFontEx(fontFile.c_str(), static_cast<int>(std::lround(theme().fontSize * scale)), nullptr, 0);
         if (uiFont_.texture.id != 0) {
             SetTextureFilter(uiFont_.texture, TEXTURE_FILTER_BILINEAR);
             setEditorFont(uiFont_);
         }
     }
-#endif
     if (uiFont_.texture.id == 0 && old.texture.id != 0) setEditorFont(styleFont);
     if (old.texture.id != 0) UnloadFont(old);
+}
+
+void Editor::loadLayout() {
+    const Theme::Layout& d = theme().layout;
+    layout_ = PanelSizes{d.leftWidth, d.rightWidth, d.bottomHeight, d.animationHeight, d.sceneDockShare};
+    std::ifstream in(projects::configDir() / "layout.json");
+    if (!in) return;
+    try {
+        nlohmann::json j = nlohmann::json::parse(in);
+        layout_.left = j.value("left", layout_.left);
+        layout_.right = j.value("right", layout_.right);
+        layout_.bottom = j.value("bottom", layout_.bottom);
+        layout_.animation = j.value("animation", layout_.animation);
+        layout_.sceneShare = j.value("scene_share", layout_.sceneShare);
+    } catch (const nlohmann::json::exception&) {
+    }
+}
+
+void Editor::saveLayout() const {
+    nlohmann::json j = {{"left", layout_.left},       {"right", layout_.right},
+                        {"bottom", layout_.bottom},   {"animation", layout_.animation},
+                        {"scene_share", layout_.sceneShare}};
+    std::error_code ec;
+    fs::create_directories(projects::configDir(), ec);
+    std::ofstream(projects::configDir() / "layout.json") << j.dump(2) << '\n';
+}
+
+void Editor::updateSplitters(float sw, float sh, float leftW, float rightW, float bottomH, float sceneH) {
+    raylib::Vector2 m = GetMousePosition();
+    float bodyH = sh - kToolbarH;
+    const float grab = 4;  // how far from a border it can be grabbed
+    Rectangle zones[] = {
+        {},                                                          // None
+        {leftW - grab, kToolbarH, grab * 2, bodyH},                   // Left
+        {sw - rightW - grab, kToolbarH, grab * 2, bodyH},             // Right
+        {leftW + grab, sh - bottomH - grab, sw - leftW - rightW - grab * 2, grab * 2},  // Bottom
+        {0, kToolbarH + sceneH - grab, leftW - grab, grab * 2},       // SceneFiles
+    };
+    auto cursorFor = [](Splitter s) {
+        return s == Splitter::Left || s == Splitter::Right ? MOUSE_CURSOR_RESIZE_EW : MOUSE_CURSOR_RESIZE_NS;
+    };
+
+    if (splitter_ == Splitter::None) {
+        bool busy = popup_.open || dialog_.open || confirm_.open || export_.open || projects_.open || sheet_.open ||
+                    folderPick_.valid() || swallowMouse_ || drag_.kind != DragKind::None ||
+                    viewDrag_ != ViewDrag::None || panning_ || !scrubField_.empty() || IsMouseButtonDown(MOUSE_BUTTON_LEFT);
+        if (busy && !IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) return;
+        if (popup_.open || dialog_.open || confirm_.open || export_.open || projects_.open || sheet_.open) return;
+        for (int i = 1; i <= 4; ++i) {
+            if (!CheckCollisionPointRec(m, zones[i])) continue;
+            Splitter s = static_cast<Splitter>(i);
+            mouseCursor_ = cursorFor(s);
+            if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                if (lastSplitterClick_ == s && GetTime() - lastSplitterClickTime_ < 0.35) {
+                    // Double-click: back to the theme's size.
+                    const Theme::Layout& d = theme().layout;
+                    if (s == Splitter::Left) layout_.left = d.leftWidth;
+                    if (s == Splitter::Right) layout_.right = d.rightWidth;
+                    if (s == Splitter::Bottom) (animationTabShown() ? layout_.animation : layout_.bottom) =
+                        animationTabShown() ? d.animationHeight : d.bottomHeight;
+                    if (s == Splitter::SceneFiles) layout_.sceneShare = d.sceneDockShare;
+                    saveLayout();
+                    lastSplitterClick_ = Splitter::None;
+                    swallowMouse_ = true;
+                } else {
+                    splitter_ = s;
+                    lastSplitterClick_ = s;
+                    lastSplitterClickTime_ = GetTime();
+                }
+            }
+            return;
+        }
+        return;
+    }
+
+    // Dragging a border
+    mouseCursor_ = cursorFor(splitter_);
+    if (!IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+        splitter_ = Splitter::None;
+        saveLayout();
+        return;
+    }
+    switch (splitter_) {
+        case Splitter::Left: layout_.left = std::max(120.0f, m.x); break;
+        case Splitter::Right: layout_.right = std::max(160.0f, sw - m.x); break;
+        case Splitter::Bottom:
+            (animationTabShown() ? layout_.animation : layout_.bottom) = std::max(80.0f, sh - m.y);
+            break;
+        case Splitter::SceneFiles: layout_.sceneShare = std::clamp((m.y - kToolbarH) / bodyH, 0.15f, 0.85f); break;
+        case Splitter::None: break;
+    }
 }
 
 void Editor::handleShortcuts() {
@@ -526,6 +680,7 @@ void Editor::handleShortcuts() {
 // ===========================================================================
 void Editor::drawToolbar(Rectangle r) {
     DrawRectangleRec(r, kHeader);
+    drawThemeImage(theme().images.toolbar, r, false, WHITE);
     DrawLineEx({r.x, r.y + r.height - 1}, {r.x + r.width, r.y + r.height - 1}, 1, kBorder);
 
     float x = 8, y = 6, h = 28;
@@ -698,10 +853,10 @@ void Editor::drawSceneDock(Rectangle r) {
             GuiDrawIcon(n->collapsed ? ICON_ARROW_RIGHT_FILL : ICON_ARROW_DOWN_FILL, static_cast<int>(ix),
                         static_cast<int>(row.y + 4), 1, kDim);
         }
-        GuiDrawIcon(iconFor(n), static_cast<int>(ix + 18), static_cast<int>(row.y + 4), 1, colorFor(n));
+        drawNodeIcon(n, ix + 18, row.y + (kRowH - 16) / 2);
         // Nodes that come from an instanced scene are drawn in a softer colour.
         drawText(n->name + (n->instanceMissing ? "  (missing scene)" : ""), ix + 40, row.y + 4,
-                 n->instanceMissing ? kBad : n->inInstance ? Color{150, 175, 215, 255} : kText);
+                 n->instanceMissing ? kBad : n->inInstance ? theme().colors.instancedText : kText);
         if (!n->sceneFile.empty()) {  // instanced scene: a scene icon at the right
             GuiDrawIcon(ICON_LAYERS, static_cast<int>(row.x + row.width - 46), static_cast<int>(row.y + 4), 1,
                         n->instanceMissing ? kBad : kAccent);
@@ -1102,11 +1257,11 @@ void Editor::drawGrid(Rectangle r) {
     while (step * viewCam_.zoom < 24) step *= 2;
     while (step * viewCam_.zoom > 160 && step > 8) step /= 2;
     float line = 1.0f / viewCam_.zoom;
-    Color minor{42, 45, 54, 255};
+    Color minor = theme().viewport.grid;
     for (float x = std::floor(a.x / step) * step; x <= b.x; x += step) DrawLineEx({x, a.y}, {x, b.y}, line, minor);
     for (float y = std::floor(a.y / step) * step; y <= b.y; y += step) DrawLineEx({a.x, y}, {b.x, y}, line, minor);
-    DrawLineEx({a.x, 0}, {b.x, 0}, line * 1.5f, Color{170, 70, 70, 200});  // x axis
-    DrawLineEx({0, a.y}, {0, b.y}, line * 1.5f, Color{70, 170, 90, 200});  // y axis
+    DrawLineEx({a.x, 0}, {b.x, 0}, line * 1.5f, theme().viewport.xAxis);
+    DrawLineEx({0, a.y}, {0, b.y}, line * 1.5f, theme().viewport.yAxis);
 }
 
 void Editor::drawViewport(Rectangle r) {
@@ -1127,7 +1282,8 @@ void Editor::drawViewport(Rectangle r) {
     viewCam_.offset = {r.x + r.width / 2, r.y + r.height / 2};
 
     beginClip(r);
-    DrawRectangleRec(r, Color{22, 24, 29, 255});
+    DrawRectangleRec(r, theme().viewport.background);
+    drawThemeImage(theme().images.viewport, r, false, theme().images.viewportTint);
 
     // The view camera works in UI pixels; draw through a copy scaled to screen pixels.
     raylib::Camera2D drawCam = viewCam_;
@@ -1137,7 +1293,7 @@ void Editor::drawViewport(Rectangle r) {
     drawGrid(r);
     float px = 1.0f / viewCam_.zoom;  // one screen pixel in world units
     DrawRectangleLinesEx({-px, -px, editTree_.gameSize.x + 2 * px, editTree_.gameSize.y + 2 * px}, 2 * px,
-                         Color{150, 110, 230, 200});  // the game window
+                         theme().viewport.gameFrame);  // the game window
     editTree_.draw({true, viewCam_.zoom});
 
     // Nodes with no size get a small cross so they can be seen and clicked
@@ -1155,8 +1311,9 @@ void Editor::drawViewport(Rectangle r) {
     auto* sel = selected_ ? selected_->as<Node2D>() : nullptr;
     if (sel) {
         Rectangle lr = sel->localRect();
-        if (lr.width > 0 && lr.height > 0) drawLocalRect(*sel, lr, BLANK, kOrange, 2 * px);
-        else DrawCircleLinesV(sel->globalPosition(), 9 * px, kOrange);
+        Color selColor = theme().viewport.selection;
+        if (lr.width > 0 && lr.height > 0) drawLocalRect(*sel, lr, BLANK, selColor, 2 * px);
+        else DrawCircleLinesV(sel->globalPosition(), 9 * px, selColor);
     }
     drawCam.EndMode();
     applyUiScale();
@@ -1166,9 +1323,10 @@ void Editor::drawViewport(Rectangle r) {
         raylib::Vector2 o = viewCam_.GetWorldToScreen(sel->globalPosition());
         raylib::Vector2 h = rotateHandlePos();
         bool hot = overRotateHandle(GetMousePosition()) || viewDrag_ == ViewDrag::Rotate;
-        DrawLineEx(o, h, 2, Fade(kOrange, 0.8f));
-        DrawCircleV(h, hot ? 8.0f : 6.0f, hot ? YELLOW : kOrange);
-        DrawCircleV(o, 4, kOrange);
+        Color selColor = theme().viewport.selection;
+        DrawLineEx(o, h, 2, Fade(selColor, 0.8f));
+        DrawCircleV(h, hot ? 8.0f : 6.0f, hot ? theme().viewport.handleHot : selColor);
+        DrawCircleV(o, 4, selColor);
     }
 
     if (drag_.active && drag_.kind == DragKind::File && drag_.file < files_.size() && mouseIn(r)) {
@@ -1215,7 +1373,7 @@ void Editor::renderGame() {
 }
 
 void Editor::drawGameView(Rectangle r) {
-    DrawRectangleRec(r, Color{12, 12, 15, 255});
+    DrawRectangleRec(r, theme().viewport.playingBackground);
     if (gameTexture_) {
         float gw = static_cast<float>(gameTexture_->texture.width);
         float gh = static_cast<float>(gameTexture_->texture.height);
@@ -1225,7 +1383,7 @@ void Editor::drawGameView(Rectangle r) {
     }
     drawText("Game running - press F8 or Esc (or Stop) to go back to editing. Edits made while playing are not kept.",
              r.x + 10, r.y + 10, kOrange);
-    DrawRectangleLinesEx(r, 2, Color{220, 90, 80, 255});
+    DrawRectangleLinesEx(r, 2, theme().viewport.playingBorder);
 }
 
 // ===========================================================================
@@ -1375,8 +1533,8 @@ void Editor::propertyRow(Property& p, float x, float& y, float width, const std:
             float half = (fw - 4) / 2;
             floatField({fx, y, half, 24}, id + ".x", v->x, p.step);
             floatField({fx + half + 4, y, half, 24}, id + ".y", v->y, p.step);
-            DrawRectangleRec({fx + 1, y + 1, 3, 22}, Color{220, 90, 90, 255});  // x is red, y is green
-            DrawRectangleRec({fx + half + 5, y + 1, 3, 22}, Color{90, 200, 110, 255});
+            DrawRectangleRec({fx + 1, y + 1, 3, 22}, theme().viewport.vectorX);  // x is red, y is green
+            DrawRectangleRec({fx + half + 5, y + 1, 3, 22}, theme().viewport.vectorY);
             break;
         }
         case PropKind::String: textField({fx, y, fw, 24}, id, *static_cast<std::string*>(p.ptr)); break;
@@ -1601,7 +1759,7 @@ void Editor::drawInspector(Rectangle r) {
     float x = view.x + 10, w = view.width - 20;
     float top = view.y + inspectorScroll_.y + 8, y = top;
 
-    GuiDrawIcon(iconFor(selected_), static_cast<int>(x), static_cast<int>(y + 2), 1, colorFor(selected_));
+    drawNodeIcon(selected_, x, y + 2);
     drawText(selected_->typeName(), x + 24, y + 2, kText);
     y += 30;
 
@@ -1814,7 +1972,7 @@ void drawFrameIn(const raylib::Texture& tex, Rectangle cell, Rectangle box, bool
         for (int cx = 0; cx * 8 < box.width; ++cx)
             DrawRectangleRec({box.x + cx * 8.0f, box.y + cy * 8.0f, std::min(8.0f, box.width - cx * 8),
                               std::min(8.0f, box.height - cy * 8)},
-                             (cx + cy) % 2 ? Color{58, 62, 72, 255} : Color{46, 50, 58, 255});
+                             (cx + cy) % 2 ? theme().colors.checkerA : theme().colors.checkerB);
     float s = std::min(box.width / cell.width, box.height / cell.height);
     if (s >= 1) s = std::floor(s);  // whole-pixel zoom keeps pixel art sharp
     float w = cell.width * s, h = cell.height * s;
@@ -2509,7 +2667,7 @@ void Editor::startExport() {
 void Editor::pumpExport() {
     if (!exporter_) return;
     for (auto& line : exporter_->takeLines()) {
-        Color c = line.kind == 1 ? kGood : line.kind == 2 ? kBad : line.kind == 3 ? kAccent : Color{120, 125, 135, 255};
+        Color c = line.kind == 1 ? kGood : line.kind == 2 ? kBad : line.kind == 3 ? kAccent : theme().colors.buildOutput;
         log(line.text, c);
     }
 }

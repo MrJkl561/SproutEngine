@@ -25,6 +25,8 @@ fs::path home() {
     return fs::current_path();
 }
 
+}  // namespace
+
 fs::path configDir() {
     if (const char* p = std::getenv("SPROUT_EDITOR_CONFIG_DIR")) return p;
 #if defined(_WIN32)
@@ -37,6 +39,8 @@ fs::path configDir() {
     return home() / ".config" / "sprout-editor";
 #endif
 }
+
+namespace {
 
 fs::path absoluteOf(const fs::path& p) {
     std::error_code ec;

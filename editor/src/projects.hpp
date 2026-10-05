@@ -31,6 +31,8 @@ std::string projectName(const std::filesystem::path& dir);  // from project.json
 bool createProject(const std::filesystem::path& dir, const std::string& name, std::string& error);
 
 std::filesystem::path defaultProjectsFolder();  // ~/SproutProjects
+// The editor's settings folder for this user (recent projects, panel layout).
+std::filesystem::path configDir();
 // Where the editor builds things for a project (its scripts, its exports).
 std::filesystem::path workDir(const std::filesystem::path& project, const std::filesystem::path& buildDir);
 

@@ -215,7 +215,8 @@ void Sprite2D::draw(const DrawOptions& options) {
     if (!tex) {
         // No texture yet: show a placeholder in the editor so the node can be found.
         if (options.editor) {
-            drawLocalRect(*this, {-16, -16, 32, 32}, Fade(MAGENTA, 0.25f), MAGENTA, 1.0f / options.zoom);
+            Color c = gizmoColors().missingTexture;
+            drawLocalRect(*this, {-16, -16, 32, 32}, Fade(c, 0.25f), c, 1.0f / options.zoom);
         }
         return;
     }
@@ -428,7 +429,7 @@ void Camera2D::draw(const DrawOptions& options) {
     raylib::Vector2 half = size / (2 * z);
     raylib::Vector2 center = globalPosition();
     DrawRectangleLinesEx({center.x - half.x, center.y - half.y, half.x * 2, half.y * 2}, 2.0f / options.zoom,
-                         Color{190, 120, 255, 220});
+                         gizmoColors().camera);
 }
 
 // ---------------------------------------------------------------------------
@@ -443,7 +444,7 @@ void CollisionShape2D::getProperties(std::vector<Property>& out) {
 
 void CollisionShape2D::draw(const DrawOptions& options) {
     if (!options.editor) return;
-    Color c = disabled ? Color{150, 150, 150, 255} : Color{60, 150, 255, 255};
+    Color c = disabled ? gizmoColors().collisionShapeDisabled : gizmoColors().collisionShape;
     drawLocalRect(*this, localRect(), Fade(c, 0.3f), c, 1.5f / options.zoom);
 }
 
@@ -543,6 +544,11 @@ void CharacterBody2D::moveAndSlide() {
     resolve(true, velocity.x * dt);
     resolve(false, velocity.y * dt);
     setGlobalPosition(pos);
+}
+
+GizmoColors& gizmoColors() {
+    static GizmoColors colors;
+    return colors;
 }
 
 // ---------------------------------------------------------------------------

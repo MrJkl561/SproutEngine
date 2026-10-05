@@ -27,6 +27,7 @@
 #include "projects.hpp"
 #include "raygui_include.hpp"
 #include "script.hpp"
+#include "theme.hpp"
 #include "ui_scale.hpp"
 
 #ifndef SPROUT_EDITOR_PROJECT_DIR
@@ -140,7 +141,13 @@ int main(int argc, char** argv) {
     fs::path project = startupProject(projectArg);
 
     SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_VSYNC_HINT | FLAG_MSAA_4X_HINT);
-    raylib::Window window(1280, 720, "Sprout Editor");
+    raylib::Window window(1280, 720, s2d::theme().title.c_str());
+    // The theme's window icon, if it has one
+    if (std::string icon = s2d::themePath(s2d::theme().images.windowIcon); !icon.empty() && FileExists(icon.c_str())) {
+        Image image = LoadImage(icon.c_str());
+        SetWindowIcon(image);
+        UnloadImage(image);
+    }
 
     // Size the window for the display: 1600x900 UI pixels at the display's
     // scale (e.g. 150% on many laptops), but never bigger than the screen.

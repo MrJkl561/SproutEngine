@@ -297,6 +297,16 @@ private:
 };
 
 // ---------------------------------------------------------------------------
+// The colors the editor draws nodes' outlines with (collision shapes, camera
+// frames...). The editor sets them from its theme; games never draw these.
+struct GizmoColors {
+    Color collisionShape{60, 150, 255, 255};
+    Color collisionShapeDisabled{150, 150, 150, 255};
+    Color camera{190, 120, 255, 220};
+    Color missingTexture{255, 0, 255, 255};
+};
+GizmoColors& gizmoColors();
+
 // Making nodes by type name (used by the "Add Node" menu and scene files).
 const std::vector<std::string>& nodeTypeNames();
 std::unique_ptr<Node> createNode(const std::string& typeName);
