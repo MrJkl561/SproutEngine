@@ -62,6 +62,26 @@ jobs:
         if: runner.os == 'Linux'
         run: SPROUT_TEST_FRAMES=120 timeout 60 xvfb-run -a editor/project/exports/linux/Sprout_Game
 
+      # GitHub's Mac runners have no GPU, so raylib can't open a window there and
+      # the app isn't played. Instead its contents are checked and it's uploaded,
+      # zipped, to try on a real Mac.
+      - name: Check the exported macOS app
+        if: runner.os == 'macOS'
+        run: |
+          app=editor/exports/macos/Sprout_Game.app
+          test -f "$app/Contents/Info.plist"
+          test -x "$app/Contents/MacOS/Sprout_Game"
+          test -f "$app/Contents/Resources/project/project.json"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          ditto -c -k --keepParent "$app" "$RUNNER_TEMP/Sprout_Game-macOS.zip"
+
+      - name: Upload the exported macOS app
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sprout_Game-macOS
+          path: ${{ runner.temp }}/Sprout_Game-macOS.zip
+
       - name: Run every game and example for 2 seconds
         if: runner.os == 'Linux'
         run: |
