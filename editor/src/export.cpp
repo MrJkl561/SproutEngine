@@ -45,6 +45,28 @@ bool usesVisualStudio() {
     return !g || std::string(g).find("Visual Studio") != std::string::npos;
 }
 
+std::string quoteNative(fs::path p);
+
+// Whether Visual Studio's ARM64 C++ tools are installed (an optional part of its
+// installer; without them it can't build for ARM64).
+bool vsHasArm64Tools() {
+#if defined(_WIN32)
+    const char* x86 = std::getenv("ProgramFiles(x86)");
+    if (!x86) return false;
+    fs::path vswhere = fs::path(x86) / "Microsoft Visual Studio" / "Installer" / "vswhere.exe";
+    std::error_code ec;
+    if (!fs::exists(vswhere, ec)) return false;
+    std::string out;
+    platform::runCommand(quoteNative(vswhere) +
+                             " -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.ARM64"
+                             " -property installationPath",
+                         out);
+    return out.find_first_not_of(" \r\n") != std::string::npos;
+#else
+    return false;
+#endif
+}
+
 // A build folder set up for another CPU (CMake refuses to change it): start it again.
 void resetIfOtherPlatform(const fs::path& build, const std::string& platformName) {
     std::ifstream cache(build / "CMakeCache.txt");
@@ -337,9 +359,15 @@ std::vector<ExportTarget> Exporter::detectTargets() const {
     list.push_back(windows);
     if (host == "windows") {
         // A native ARM64 build as well (faster on ARM64 PCs; doesn't run on x64 ones)
-        ExportTarget arm{"windows-arm64", "Windows ARM64", usesVisualStudio(), ""};
-        arm.note = arm.available ? "ARM64 .exe for Windows on ARM (needs Visual Studio's ARM64 build tools)."
-                                 : "Needs Visual Studio (CMAKE_GENERATOR is set to something else).";
+        ExportTarget arm{"windows-arm64", "Windows ARM64", false, ""};
+        if (!usesVisualStudio()) {
+            arm.note = "Needs Visual Studio (CMAKE_GENERATOR is set to something else).";
+        } else if (!vsHasArm64Tools()) {
+            arm.note = "Add \"MSVC ARM64/ARM64EC build tools\" in the Visual Studio Installer (Modify > Individual components).";
+        } else {
+            arm.available = true;
+            arm.note = "Native ARM64 .exe for Windows on ARM (doesn't run on x64 PCs).";
+        }
         list.push_back(arm);
     }
 

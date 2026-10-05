@@ -26,9 +26,35 @@ shift
 goto parse
 :parsed
 
+set "AUTOARCH="
 if not defined ARCH (
+    set "AUTOARCH=1"
     if /i "%PROCESSOR_ARCHITECTURE%"=="ARM64" (set "ARCH=arm64") else (set "ARCH=x64")
 )
+
+rem Visual Studio only builds for ARM64 if its ARM64 C++ tools are installed
+rem (an optional part of the installer). Ask its installer.
+set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+set "VSCHECK="
+if not defined CMAKE_GENERATOR if exist "%VSWHERE%" set "VSCHECK=1"
+set "HAVEARM64="
+if defined VSCHECK for /f "usebackq delims=" %%i in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.ARM64 -property installationPath`) do set "HAVEARM64=1"
+if /i not "%ARCH%"=="arm64" goto archok
+if not defined VSCHECK goto archok
+if defined HAVEARM64 goto archok
+if defined AUTOARCH goto archfallback
+echo Visual Studio's ARM64 C++ tools aren't installed, so it can't build for arm64.
+echo Add them in the Visual Studio Installer: Modify, Individual components,
+echo "MSVC ... ARM64/ARM64EC build tools (Latest)". Or build for x64 instead:
+echo     scripts\build.bat x64      (the same goes for the other scripts)
+exit /b 1
+:archfallback
+echo Note: Visual Studio's ARM64 C++ tools aren't installed, so this builds for x64.
+echo       x64 programs run fine on ARM64 Windows. To build natively for ARM64, add
+echo       "MSVC ... ARM64/ARM64EC build tools (Latest)" in the Visual Studio Installer.
+echo.
+set "ARCH=x64"
+:archok
 if /i "%ARCH%"=="arm64" (set "VSARCH=ARM64") else (set "VSARCH=x64")
 set "BUILD=%ROOT%\build-%ARCH%"
 set "EDITOR=%BUILD%\bin\sprout_editor\sprout_editor.exe"
