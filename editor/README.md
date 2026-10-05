@@ -232,17 +232,33 @@ carry over, and falling off the world restarts the level.
 ## Animation
 
 `AnimatedSprite2D` plays animations from a sprite sheet: one picture with all
-the frames in a grid.
+the frames in a grid. Selecting one opens the **Animation** panel at the bottom
+(next to Output), like Godot's SpriteFrames panel:
 
-1. Add an AnimatedSprite2D (**Add** in the Scene dock) and pick the sheet as
-   its **texture**.
-2. Set **hframes** and **vframes** to the number of columns and rows. The
-   inspector shows the sheet with each frame's number on it.
-3. Under **animations**, give each animation a name, its **frames** (`0-3`,
-   `4, 5, 4, 6`...), a speed in **fps**, and whether it **loop**s. **Add
-   Animation** adds another.
-4. **animation** is the one shown; with **autoplay** it starts when the game
-   does (and plays in the editor's viewport as a preview).
+```
++--------------------+----------------------------------------+-----------+
+| New    Delete      | Stop  Add Frames from Sheet  < > [bin]  |           |
+| name [run       ]  |  +-----+ +-----+ +-----+ +-----+        |  preview  |
+| fps  [10 ]  [x]loop|  |  1  | |  2  | |  3  | |  4  |        | (playing) |
+| idle       (start) |  +-----+ +-----+ +-----+ +-----+        |           |
+| run                |   #2      #3      #4      #5            | frame 2/4 |
++--------------------+----------------------------------------+-----------+
+```
+
+- **Left:** the animations. **New** / **Delete**, rename, speed (**fps**) and
+  **loop**. "(start)" marks the one that plays when the game starts.
+- **Middle:** the frames of the picked animation. Click one to show it, move it
+  with **<** **>**, remove it with the bin. **Add Frames from Sheet** opens the
+  sheet: set its **columns** and **rows**, then click frames in the order they
+  should play (numbers show the order), and **Add**. **Play at start** makes the
+  picked animation the one the game starts with.
+- **Right:** a live preview, with **Play** / **Stop**. The sprite in the viewport
+  plays the same animation while you work on it.
+- **While the game runs** the panel still works: changes to frames, speed and
+  loop show up in the running game straight away (and are kept afterwards).
+
+The same settings are also in the inspector (the sheet with each frame's number,
+**animation**, **autoplay**, **speed scale** and the animations list).
 
 From a script:
 

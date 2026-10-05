@@ -55,6 +55,9 @@ struct SpriteAnimation {
     bool loop = true;
 
     std::vector<int> frameList() const;  // "0-3, 6" -> {0, 1, 2, 3, 6}
+    static std::string framesText(const std::vector<int>& list);  // {0, 1, 2, 3, 6} -> "0-3, 6"
+    // Which entry of the frame list shows `seconds` into the animation.
+    size_t indexAt(double seconds, size_t count) const;
 };
 
 struct DrawOptions {
@@ -194,6 +197,13 @@ public:
     bool isPlaying() const { return playing_; }
     bool isFinished() const { return finished_; }  // a non-looping animation reached its end
     const SpriteAnimation* findAnimation(const std::string& name) const;
+    SpriteAnimation* findAnimation(const std::string& name);
+
+    // Editor only (not saved): the Animation panel shows its animation or frame
+    // in the viewport through these, for as long as it keeps refreshing them.
+    std::string editorPreviewAnimation;
+    int editorPreviewFrame = -1;  // -1: play editorPreviewAnimation
+    double editorPreviewStart = 0, editorPreviewUntil = 0;
 
 protected:
     int shownFrame(const DrawOptions& options) const override;

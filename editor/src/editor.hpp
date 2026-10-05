@@ -58,7 +58,11 @@ private:
     void drawSceneDock(Rectangle r);
     void drawFileSystem(Rectangle r);
     void drawInspector(Rectangle r);
-    void drawOutput(Rectangle r);
+    void drawOutput(Rectangle r);  // the bottom panel: Output, or Animation for an AnimatedSprite2D
+    void drawAnimationPanel(Rectangle r, AnimatedSprite2D& sprite);
+    void drawSheetDialog();
+    void syncAnimationToGame();  // edits made while playing reach the running game
+    bool animationTabShown() const;
     void drawViewport(Rectangle r);
     void drawGameView(Rectangle r);
     void drawPopup();
@@ -130,7 +134,7 @@ private:
                         std::function<void(const std::string&)> onOk);
     bool isTyping() const {
         return !activeField_.empty() || dialog_.open || confirm_.open || export_.open || projects_.open ||
-               folderPick_.valid();
+               folderPick_.valid() || sheet_.open;
     }
 
     // --- exporting -----------------------------------------------------------
@@ -277,6 +281,20 @@ private:
         bool nameEdit = false, locationEdit = false, pathEdit = false;
         std::string error;
     } projects_;
+
+    // The Animation panel (like Godot's SpriteFrames panel)
+    int bottomTab_ = 0;  // 0 Output, 1 Animation
+    int animSel_ = 0;    // the animation picked in the panel's list
+    int frameSel_ = 0;   // the frame picked in its filmstrip
+    bool animPreview_ = true;  // playing the preview (else showing frameSel_)
+    double animPreviewStart_ = 0;
+    raylib::Vector2 animListScroll_{0, 0}, filmScroll_{0, 0};
+    struct SheetDialog {  // "Add Frames from Sheet"
+        bool open = false;
+        int hframes = 1, vframes = 1;
+        bool hEdit = false, vEdit = false;
+        std::vector<int> picked;  // in the order they were clicked
+    } sheet_;
 
     struct ConfirmDialog {
         bool open = false;

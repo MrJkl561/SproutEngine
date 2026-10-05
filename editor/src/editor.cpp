@@ -381,7 +381,8 @@ void Editor::frame() {
     // Docks shrink a little on small windows so the viewport keeps some room.
     float kLeftW = std::floor(std::clamp(sw * 0.19f, 220.0f, 290.0f));
     float kRightW = std::floor(std::clamp(sw * 0.22f, 260.0f, 340.0f));
-    float kOutputH = std::floor(std::clamp(sh * 0.2f, 110.0f, 170.0f));
+    float kOutputH = animationTabShown() ? std::floor(std::clamp(sh * 0.36f, 230.0f, 330.0f))
+                                         : std::floor(std::clamp(sh * 0.2f, 110.0f, 170.0f));
     float bodyH = sh - kToolbarH;
     Rectangle toolbar{0, 0, sw, kToolbarH};
     Rectangle sceneDock{0, kToolbarH, kLeftW, std::floor(bodyH * 0.55f)};
@@ -433,7 +434,7 @@ void Editor::frame() {
     pumpExport();
     pumpFolderPicker();
     bool modal = popup_.open || dialog_.open || confirm_.open || export_.open || projects_.open ||
-                 folderPick_.valid() || swallowMouse_;
+                 folderPick_.valid() || sheet_.open || swallowMouse_;
     if (modal) GuiLock();
     {
         // While the game runs the scene can't be edited (it's a copy that's playing).
@@ -1752,8 +1753,27 @@ void Editor::log(const std::string& message, Color color) {
     TraceLog(LOG_INFO, "EDITOR: %s", message.c_str());
 }
 
+bool Editor::animationTabShown() const {
+    return bottomTab_ == 1 && selected_ && selected_->as<AnimatedSprite2D>();
+}
+
 void Editor::drawOutput(Rectangle r) {
-    drawHeader(r, "Output");
+    // Tabs: Output, and Animation when an AnimatedSprite2D is selected.
+    auto* sprite = selected_ ? selected_->as<AnimatedSprite2D>() : nullptr;
+    drawHeader(r, "");
+    auto tab = [&](float x, float w, const char* text, int index) {
+        bool active = bottomTab_ == index;
+        Rectangle t{x, r.y + 2, w, kHeaderH - 2};
+        if (active) DrawRectangleRec(t, kPanel);
+        drawText(text, x + 10, r.y + 6, active ? kText : kDim);
+        if (!GuiIsLocked() && mouseIn(t) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) bottomTab_ = index;
+    };
+    tab(r.x + 2, 80, "Output", 0);
+    if (sprite) tab(r.x + 84, 100, "Animation", 1);
+    if (animationTabShown()) {
+        drawAnimationPanel({r.x, r.y + kHeaderH, r.width, r.height - kHeaderH}, *sprite);
+        return;
+    }
     if (GuiButton({r.x + r.width - 64, r.y + 2, 58, 24}, "Clear")) logLines_.clear();
 
     Rectangle area{r.x, r.y + kHeaderH, r.width, r.height - kHeaderH};
@@ -1772,6 +1792,319 @@ void Editor::drawOutput(Rectangle r) {
         drawText(logLines_[i].text, view.x + 8, y, logLines_[i].color);
     }
     EndScissorMode();
+}
+
+// ===========================================================================
+// Animation panel (like Godot's SpriteFrames)
+// ===========================================================================
+namespace {
+
+// Where frame `index` of a sheet with cols x rows frames is, in texture pixels.
+Rectangle sheetCell(const raylib::Texture& tex, int cols, int rows, int index) {
+    cols = std::max(cols, 1);
+    rows = std::max(rows, 1);
+    float w = static_cast<float>(tex.width) / cols, h = static_cast<float>(tex.height) / rows;
+    index = std::clamp(index, 0, cols * rows - 1);
+    return {(index % cols) * w, (index / cols) * h, w, h};
+}
+
+// Draws a frame of the sheet scaled to fit (and centred in) box, on a checkerboard.
+void drawFrameIn(const raylib::Texture& tex, Rectangle cell, Rectangle box, bool flipH = false) {
+    for (int cy = 0; cy * 8 < box.height; ++cy)
+        for (int cx = 0; cx * 8 < box.width; ++cx)
+            DrawRectangleRec({box.x + cx * 8.0f, box.y + cy * 8.0f, std::min(8.0f, box.width - cx * 8),
+                              std::min(8.0f, box.height - cy * 8)},
+                             (cx + cy) % 2 ? Color{58, 62, 72, 255} : Color{46, 50, 58, 255});
+    float s = std::min(box.width / cell.width, box.height / cell.height);
+    if (s >= 1) s = std::floor(s);  // whole-pixel zoom keeps pixel art sharp
+    float w = cell.width * s, h = cell.height * s;
+    Rectangle src = cell;
+    if (flipH) src.width = -src.width;
+    DrawTexturePro(tex, src, {box.x + (box.width - w) / 2, box.y + (box.height - h) / 2, w, h}, {0, 0}, 0, WHITE);
+}
+
+}  // namespace
+
+void Editor::syncAnimationToGame() {
+    if (!playTree_ || !selected_ || !playTree_->root()) return;
+    auto* from = selected_->as<AnimatedSprite2D>();
+    Node* match = nodeAt(playTree_->root(), pathOf(selected_));
+    auto* to = match ? match->as<AnimatedSprite2D>() : nullptr;
+    if (!from || !to || to->name != from->name) return;  // the game has moved on (e.g. another scene)
+    to->animations = from->animations;
+    to->hframes = from->hframes;
+    to->vframes = from->vframes;
+    to->texture = from->texture;
+    to->speedScale = from->speedScale;
+}
+
+void Editor::drawAnimationPanel(Rectangle r, AnimatedSprite2D& sprite) {
+    DrawRectangleRec(r, kPanel);
+    auto& anims = sprite.animations;
+    animSel_ = std::clamp(animSel_, 0, std::max(0, static_cast<int>(anims.size()) - 1));
+    SpriteAnimation* anim = anims.empty() ? nullptr : &anims[animSel_];
+    std::vector<int> frames = anim ? anim->frameList() : std::vector<int>{};
+    frameSel_ = std::clamp(frameSel_, 0, std::max(0, static_cast<int>(frames.size()) - 1));
+    raylib::Texture* tex = Assets::texture(sprite.texture);
+    bool changed = false;
+    std::string id = std::to_string(reinterpret_cast<uintptr_t>(&sprite)) + "/anim/";
+
+    // --- Left: the animations ---------------------------------------------
+    const float leftW = 240;
+    float x = r.x + 8, y = r.y + 6, w = leftW - 16;
+    if (GuiButton({x, y, (w - 4) / 2, 26}, GuiIconText(ICON_CIRCLE_ADD, "New"))) {
+        touch();
+        SpriteAnimation a;
+        a.frames = "";
+        std::string base = "new_animation";
+        a.name = base;
+        for (int n = 2; sprite.findAnimation(a.name); ++n) a.name = base + std::to_string(n);
+        anims.push_back(a);  // (may move the list: look the selection up again)
+        animSel_ = static_cast<int>(anims.size()) - 1;
+        frameSel_ = 0;
+        anim = &anims[animSel_];
+        frames.clear();
+        changed = true;
+    }
+    if (!anim) GuiDisable();
+    if (GuiButton({x + (w + 4) / 2, y, (w - 4) / 2, 26}, GuiIconText(ICON_BIN, "Delete")) && anim) {
+        touch();
+        anims.erase(anims.begin() + animSel_);
+        animSel_ = std::max(0, animSel_ - 1);
+        changed = true;
+        anim = nullptr;  // drawn again next frame
+        frames.clear();
+        GuiDisable();    // (so the GuiEnable below matches)
+    }
+    if (!anim) GuiEnable();
+    y += 32;
+    if (anim) {
+        // Rename (and keep the node's current animation pointing at it)
+        drawText("name", x, y + 4, kDim);
+        std::string oldName = anim->name;
+        if (textField({x + 48, y, w - 48, 24}, id + std::to_string(animSel_) + "/name", anim->name)) {
+            if (anim->name.empty()) anim->name = oldName;
+            for (auto& other : anims)
+                if (&other != anim && other.name == anim->name) anim->name = oldName;  // names must differ
+            if (sprite.animation == oldName) sprite.animation = anim->name;
+            changed = true;
+        }
+        y += 30;
+        drawText("fps", x, y + 4, kDim);
+        if (floatField({x + 48, y, 70, 24}, id + std::to_string(animSel_) + "/fps", anim->fps, 0.1f)) {
+            anim->fps = std::max(0.0f, anim->fps);
+            changed = true;
+        }
+        bool loop = anim->loop;
+        GuiCheckBox({x + 130, y + 3, 18, 18}, "loop", &loop);
+        if (loop != anim->loop) {
+            touch();
+            anim->loop = loop;
+            changed = true;
+        }
+        y += 30;
+    }
+    // The list
+    Rectangle listArea{r.x + 4, y, leftW - 8, r.y + r.height - y - 4};
+    Rectangle listContent{0, 0, listArea.width - 16, anims.size() * 24.0f + 4};
+    Rectangle listView{};
+    GuiScrollPanel(listArea, nullptr, listContent, &animListScroll_, &listView);
+    beginClip(listView);
+    for (size_t i = 0; i < anims.size(); ++i) {
+        Rectangle row{listView.x, listView.y + animListScroll_.y + 2 + i * 24, listView.width, 24};
+        bool hover = !GuiIsLocked() && mouseIn(row) && mouseIn(listView);
+        if (static_cast<int>(i) == animSel_) DrawRectangleRec(row, kSelect);
+        else if (hover) DrawRectangleRec(row, kHover);
+        bool startsWith = sprite.autoplay && sprite.animation == anims[i].name;
+        drawText(anims[i].name, row.x + 8, row.y + 4, kText);
+        if (startsWith) drawText("(start)", row.x + row.width - textWidth("(start)") - 8, row.y + 4, kGood);
+        if (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            animSel_ = static_cast<int>(i);
+            frameSel_ = 0;
+            animPreviewStart_ = GetTime();
+        }
+    }
+    EndScissorMode();
+    DrawLineEx({r.x + leftW, r.y}, {r.x + leftW, r.y + r.height}, 1, kBorder);
+
+    // --- Right: the live preview ---------------------------------------------
+    float previewSize = std::min(r.height - 34, 200.0f);
+    Rectangle preview{r.x + r.width - previewSize - 10, r.y + 6, previewSize, previewSize};
+    int shownIndex = frameSel_;
+    if (anim && animPreview_ && !frames.empty())
+        shownIndex = static_cast<int>(anim->indexAt((GetTime() - animPreviewStart_) * sprite.speedScale, frames.size()));
+    if (tex && !frames.empty()) {
+        drawFrameIn(*tex, sheetCell(*tex, sprite.hframes, sprite.vframes, frames[shownIndex]), preview, sprite.flipH);
+    } else {
+        DrawRectangleRec(preview, kFieldBg);
+    }
+    DrawRectangleLinesEx(preview, 1, kBorder);
+    std::string counter = frames.empty() ? "no frames" : "frame " + std::to_string(shownIndex + 1) + " / " +
+                                                             std::to_string(frames.size());
+    drawText(counter, preview.x, preview.y + preview.height + 6, kDim);
+
+    // --- Middle: toolbar and filmstrip ---------------------------------------
+    float mx = r.x + leftW + 10, mw = preview.x - 10 - mx, my = r.y + 6;
+    if (!anim) GuiDisable();
+    if (GuiButton({mx, my, 84, 26}, GuiIconText(animPreview_ ? ICON_PLAYER_STOP : ICON_PLAYER_PLAY,
+                                                 animPreview_ ? "Stop" : "Play"))) {
+        animPreview_ = !animPreview_;
+        animPreviewStart_ = GetTime();
+    }
+    float bx = mx + 88;
+    if (GuiButton({bx, my, 190, 26}, GuiIconText(ICON_BOX_GRID, "Add Frames from Sheet")) && anim) {
+        if (!tex) {
+            log("Pick a sprite sheet as the node's texture first (in the inspector).", kOrange);
+        } else {
+            sheet_ = SheetDialog{};
+            sheet_.open = true;
+            sheet_.hframes = std::max(sprite.hframes, 1);
+            sheet_.vframes = std::max(sprite.vframes, 1);
+        }
+    }
+    bx += 194;
+    bool haveFrame = anim && !frames.empty();
+    if (!haveFrame) GuiDisable();
+    auto moveFrame = [&](int to) {
+        if (to < 0 || to >= static_cast<int>(frames.size())) return;
+        touch();
+        std::swap(frames[frameSel_], frames[to]);
+        frameSel_ = to;
+        anim->frames = SpriteAnimation::framesText(frames);
+        changed = true;
+    };
+    if (GuiButton({bx, my, 30, 26}, GuiIconText(ICON_ARROW_LEFT_FILL, nullptr))) moveFrame(frameSel_ - 1);
+    if (GuiButton({bx + 33, my, 30, 26}, GuiIconText(ICON_ARROW_RIGHT_FILL, nullptr))) moveFrame(frameSel_ + 1);
+    if (GuiButton({bx + 66, my, 30, 26}, GuiIconText(ICON_BIN, nullptr)) && haveFrame) {
+        touch();
+        frames.erase(frames.begin() + frameSel_);
+        frameSel_ = std::max(0, frameSel_ - 1);
+        anim->frames = SpriteAnimation::framesText(frames);
+        changed = true;
+    }
+    if (!haveFrame) GuiEnable();
+    bx += 104;
+    bool isStart = anim && sprite.autoplay && sprite.animation == anim->name;
+    if (GuiButton({bx, my, 120, 26}, GuiIconText(ICON_PLAYER_PLAY, isStart ? "Plays first" : "Play at start")) &&
+        anim && !isStart) {
+        touch();
+        sprite.animation = anim->name;
+        sprite.autoplay = true;
+        changed = true;
+    }
+    if (!anim) GuiEnable();
+
+    // The filmstrip
+    Rectangle film{mx, my + 34, mw, r.y + r.height - (my + 34) - 6};
+    float thumb = std::clamp(film.height - 34, 40.0f, 120.0f);
+    Rectangle filmContent{0, 0, std::max(film.width - 4, frames.size() * (thumb + 8) + 8), film.height - 16};
+    Rectangle filmView{};
+    GuiScrollPanel(film, nullptr, filmContent, &filmScroll_, &filmView);
+    beginClip(filmView);
+    if (!anim) {
+        drawText("Make an animation with New.", filmView.x + 10, filmView.y + 10, kDim);
+    } else if (frames.empty()) {
+        drawText("No frames yet: use Add Frames from Sheet.", filmView.x + 10, filmView.y + 10, kDim);
+    }
+    for (size_t i = 0; i < frames.size(); ++i) {
+        Rectangle cell{filmView.x + filmScroll_.x + 8 + i * (thumb + 8), filmView.y + 6, thumb, thumb};
+        if (tex) drawFrameIn(*tex, sheetCell(*tex, sprite.hframes, sprite.vframes, frames[i]), cell);
+        bool sel = static_cast<int>(i) == frameSel_ && !animPreview_;
+        bool now = static_cast<int>(i) == shownIndex && animPreview_;
+        DrawRectangleLinesEx(cell, sel || now ? 2.0f : 1.0f, sel ? kOrange : now ? kAccent : kBorder);
+        drawText(std::to_string(i + 1), cell.x + 4, cell.y + 2, kText);
+        drawText("#" + std::to_string(frames[i]), cell.x + 4, cell.y + cell.height + 4, kDim);
+        if (!GuiIsLocked() && mouseIn(cell) && mouseIn(filmView) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            frameSel_ = static_cast<int>(i);
+            animPreview_ = false;  // show the frame that was clicked
+        }
+    }
+    EndScissorMode();
+
+    // The viewport shows the same thing as the preview box.
+    sprite.editorPreviewUntil = GetTime() + 0.3;
+    sprite.editorPreviewAnimation = anim ? anim->name : "";
+    sprite.editorPreviewStart = animPreviewStart_;
+    sprite.editorPreviewFrame = (anim && !animPreview_ && !frames.empty()) ? frames[frameSel_] : -1;
+
+    if (changed) syncAnimationToGame();
+}
+
+void Editor::drawSheetDialog() {
+    auto* sprite = selected_ ? selected_->as<AnimatedSprite2D>() : nullptr;
+    raylib::Texture* tex = sprite ? Assets::texture(sprite->texture) : nullptr;
+    if (!sprite || !tex || sprite->animations.empty()) {
+        sheet_.open = false;
+        return;
+    }
+    float sw = screenW(), sh = screenH();
+    DrawRectangle(0, 0, static_cast<int>(sw), static_cast<int>(sh), Fade(BLACK, 0.55f));
+    float bw = std::min(820.0f, sw - 40), bh = std::min(600.0f, sh - 40);
+    Rectangle box{std::floor((sw - bw) / 2), std::floor((sh - bh) / 2), bw, bh};
+    bool close = GuiWindowBox(box, "Add Frames from Sheet") != 0;
+    float x = box.x + 16, y = box.y + 38, w = box.width - 32;
+
+    drawText("Columns", x, y + 5, kDim);
+    if (GuiValueBox({x + 72, y, 70, 26}, nullptr, &sheet_.hframes, 1, 256, sheet_.hEdit)) sheet_.hEdit = !sheet_.hEdit;
+    drawText("Rows", x + 160, y + 5, kDim);
+    if (GuiValueBox({x + 206, y, 70, 26}, nullptr, &sheet_.vframes, 1, 256, sheet_.vEdit)) sheet_.vEdit = !sheet_.vEdit;
+    int count = sheet_.hframes * sheet_.vframes;
+    if (GuiButton({x + 300, y, 100, 26}, "Select All")) {
+        sheet_.picked.clear();
+        for (int i = 0; i < count; ++i) sheet_.picked.push_back(i);
+    }
+    if (GuiButton({x + 404, y, 70, 26}, "Clear")) sheet_.picked.clear();
+    y += 36;
+    drawText("Click frames in the order they should play (click again to unpick).", x, y, kDim);
+    y += 24;
+
+    // The sheet with its grid; picked frames show their order.
+    float by = box.y + box.height - 44;
+    Rectangle area{x, y, w, by - y - 10};
+    float s = std::min(area.width / tex->width, area.height / tex->height);
+    if (s >= 1) s = std::floor(s);
+    Rectangle img{area.x + (area.width - tex->width * s) / 2, area.y + (area.height - tex->height * s) / 2,
+                  tex->width * s, tex->height * s};
+    drawFrameIn(*tex, {0, 0, (float)tex->width, (float)tex->height}, img);
+    float cw = img.width / sheet_.hframes, ch = img.height / sheet_.vframes;
+    for (int i = 0; i < count; ++i) {
+        Rectangle cell{img.x + (i % sheet_.hframes) * cw, img.y + (i / sheet_.hframes) * ch, cw, ch};
+        auto it = std::find(sheet_.picked.begin(), sheet_.picked.end(), i);
+        bool picked = it != sheet_.picked.end();
+        bool hover = !GuiIsLocked() && mouseIn(cell);
+        if (picked) DrawRectangleRec(cell, Fade(kAccent, 0.25f));
+        else if (hover) DrawRectangleRec(cell, Fade(WHITE, 0.1f));
+        DrawRectangleLinesEx(cell, picked ? 2.0f : 1.0f, picked ? kAccent : Fade(kAccent, 0.5f));
+        if (picked) {
+            std::string order = std::to_string(it - sheet_.picked.begin() + 1);
+            DrawRectangleRec({cell.x + 2, cell.y + 2, textWidth(order) + 6, 18}, kAccent);
+            drawText(order, cell.x + 5, cell.y + 3, WHITE);
+        }
+        if (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            if (picked) sheet_.picked.erase(it);
+            else sheet_.picked.push_back(i);
+        }
+    }
+
+    std::string addText = "Add " + std::to_string(sheet_.picked.size()) + " Frames";
+    if (sheet_.picked.empty()) GuiDisable();
+    if (GuiButton({box.x + box.width - 260, by, 150, 30}, addText.c_str()) && !sheet_.picked.empty()) {
+        touch();
+        sprite->hframes = sheet_.hframes;
+        sprite->vframes = sheet_.vframes;
+        animSel_ = std::clamp(animSel_, 0, static_cast<int>(sprite->animations.size()) - 1);
+        SpriteAnimation& anim = sprite->animations[animSel_];
+        auto frames = anim.frameList();
+        frames.insert(frames.end(), sheet_.picked.begin(), sheet_.picked.end());
+        anim.frames = SpriteAnimation::framesText(frames);
+        animPreview_ = true;
+        animPreviewStart_ = GetTime();
+        syncAnimationToGame();
+        sheet_.open = false;
+    }
+    if (sheet_.picked.empty()) GuiEnable();
+    if (GuiButton({box.x + box.width - 104, by, 90, 30}, "Cancel")) close = true;
+    if (close || (IsKeyPressed(KEY_ESCAPE) && !sheet_.hEdit && !sheet_.vEdit)) sheet_.open = false;
 }
 
 // ===========================================================================
@@ -2194,6 +2527,7 @@ void Editor::requestOpenScene(const std::string& scenePath) {
 }
 
 void Editor::drawModal() {
+    if (sheet_.open) drawSheetDialog();
     bool picking = folderPick_.valid();
     if (picking) GuiLock();  // the folder window is open: everything here waits
     if (export_.open) drawExportDialog();
@@ -2262,6 +2596,16 @@ void Editor::select(Node* node) {
     if (node == selected_) return;
     selected_ = node;
     inspectorScript_.reset();
+    if (auto* sprite = node ? node->as<AnimatedSprite2D>() : nullptr) {
+        // Like Godot: selecting an AnimatedSprite2D opens its animations.
+        bottomTab_ = 1;
+        animSel_ = 0;
+        for (size_t i = 0; i < sprite->animations.size(); ++i)
+            if (sprite->animations[i].name == sprite->animation) animSel_ = static_cast<int>(i);
+        frameSel_ = 0;
+        animPreview_ = true;
+        animPreviewStart_ = GetTime();
+    }
     activeField_.clear();
     scrubField_.clear();
     openColorPicker_.clear();

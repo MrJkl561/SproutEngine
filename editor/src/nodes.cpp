@@ -261,6 +261,30 @@ std::vector<int> SpriteAnimation::frameList() const {
     return out;
 }
 
+std::string SpriteAnimation::framesText(const std::vector<int>& list) {
+    // Runs of 3 or more counting up become "a-b".
+    std::string out;
+    for (size_t i = 0; i < list.size();) {
+        size_t j = i;
+        while (j + 1 < list.size() && list[j + 1] == list[j] + 1) ++j;
+        if (!out.empty()) out += ", ";
+        if (j - i >= 2) {
+            out += std::to_string(list[i]) + "-" + std::to_string(list[j]);
+            i = j + 1;
+        } else {
+            out += std::to_string(list[i]);
+            ++i;
+        }
+    }
+    return out;
+}
+
+size_t SpriteAnimation::indexAt(double seconds, size_t count) const {
+    if (count == 0 || fps <= 0) return 0;
+    size_t step = static_cast<size_t>(std::max(0.0, seconds) * fps);
+    return loop ? step % count : std::min(step, count - 1);
+}
+
 void AnimatedSprite2D::getProperties(std::vector<Property>& out) {
     Sprite2D::getProperties(out);
     out.push_back({"AnimatedSprite2D", PropKind::Section});
@@ -271,6 +295,12 @@ void AnimatedSprite2D::getProperties(std::vector<Property>& out) {
 }
 
 const SpriteAnimation* AnimatedSprite2D::findAnimation(const std::string& name) const {
+    for (auto& a : animations)
+        if (a.name == name) return &a;
+    return nullptr;
+}
+
+SpriteAnimation* AnimatedSprite2D::findAnimation(const std::string& name) {
     for (auto& a : animations)
         if (a.name == name) return &a;
     return nullptr;
@@ -323,6 +353,15 @@ void AnimatedSprite2D::update(float delta) {
 }
 
 int AnimatedSprite2D::shownFrame(const DrawOptions& options) const {
+    // The editor's Animation panel is showing an animation or a frame.
+    if (options.editor && GetTime() < editorPreviewUntil) {
+        if (editorPreviewFrame >= 0) return editorPreviewFrame;
+        if (const SpriteAnimation* a = findAnimation(editorPreviewAnimation)) {
+            auto list = a->frameList();
+            if (!list.empty()) return list[a->indexAt((GetTime() - editorPreviewStart) * speedScale, list.size())];
+        }
+        return frame;
+    }
     // In the editor, preview the animation (when it would autoplay) by the clock.
     if (options.editor && autoplay) {
         if (const SpriteAnimation* a = findAnimation(animation); a && a->fps > 0) {
