@@ -87,6 +87,15 @@ fs::path findNinja() {
             }
         }
     }
+    // winget install Ninja-build.Ninja (found even before the editor is restarted)
+    if (const char* local = std::getenv("LOCALAPPDATA")) {
+        fs::path links = fs::path(local) / "Microsoft" / "WinGet" / "Links" / "ninja.exe";
+        if (fs::exists(links, ec)) return links;
+        fs::path packages = fs::path(local) / "Microsoft" / "WinGet" / "Packages";
+        for (fs::directory_iterator it(packages, ec), end; !ec && it != end; it.increment(ec))
+            if (it->path().filename().string().rfind("Ninja-build.Ninja", 0) == 0 && fs::exists(it->path() / "ninja.exe", ec))
+                return it->path() / "ninja.exe";
+    }
     if (const char* pf = std::getenv("ProgramFiles"))
         for (const char* year : {"2022", "2019", "18"})
             for (const char* edition : {"Community", "Professional", "Enterprise", "BuildTools"})

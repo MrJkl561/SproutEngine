@@ -3246,6 +3246,9 @@ void Editor::openExportDialog() {
                                 settings_.exportTargets.end();
         export_.chosen.push_back(wanted && t.available);
     }
+    // The reasons can be long for the dialog: say them in full in the Output panel too.
+    for (auto& t : export_.targets)
+        if (!t.available) log("Export " + t.label + " not available: " + t.note, kDim);
     std::snprintf(export_.name, sizeof export_.name, "%s", settings_.name.c_str());
     std::string dir = settings_.exportDir.empty() ? defaultExportDir() : settings_.exportDir;
     std::snprintf(export_.dir, sizeof export_.dir, "%s", dir.c_str());
@@ -3385,6 +3388,8 @@ void Editor::drawExportDialog() {
     if (GuiButton({bx, by, 96, 30}, GuiIconText(ICON_ROTATE_FILL, "Recheck"))) {
         auto chosen = export_.chosen;
         export_.targets = exporter_->detectTargets();
+        for (auto& t : export_.targets)
+            log("Export " + t.label + ": " + (t.available ? "ready" : "not available - " + t.note), t.available ? kGood : kOrange);
         for (size_t i = 0; i < export_.targets.size(); ++i) export_.chosen[i] = chosen[i] && export_.targets[i].available;
     }
 
