@@ -48,6 +48,10 @@ public:
     // Which platforms can be built on this computer, and why not.
     std::vector<ExportTarget> detectTargets() const;
 
+    // Installs and activates Emscripten in an emsdk folder (emsdk install/activate
+    // latest) in the background, like an export; false if something is running.
+    bool setUpEmsdk(const std::filesystem::path& emsdk);
+
     // Starts exporting in the background; false if one is already running.
     bool start(const std::vector<std::string>& targetIds, const std::string& gameName,
                const std::filesystem::path& outDir);
@@ -68,6 +72,14 @@ private:
     std::vector<Line> lines_;
     std::string current_;
 };
+
+// Emscripten's SDK (emsdk), for web exports: the folder picked in the Export
+// window, else $EMSDK, else a usual place (home, Desktop, Documents, C:\emsdk).
+// Empty if there isn't one.
+std::filesystem::path findEmsdk();
+void setEmsdkFolder(const std::filesystem::path& folder);  // remembered for this user
+bool isEmsdkFolder(const std::filesystem::path& folder);    // has emsdk.py in it
+bool emsdkInstalled(const std::filesystem::path& emsdk);    // `emsdk install/activate` was done
 
 // A file-name-safe version of the game's name: "My Game!" -> "My_Game".
 std::string programName(const std::string& gameName);

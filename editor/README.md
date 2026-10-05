@@ -200,9 +200,15 @@ Nothing is downloaded: it reuses the libraries the editor was built with.
 - **Web:** browsers won't open the game straight from the disk. Serve the folder
   (`python -m http.server` in it, then open http://localhost:8000) or upload
   it to a site like itch.io as an HTML game.
-- **Emscripten** has to be on the PATH, or `EMSDK` set, when the editor starts.
-  Start the editor from a terminal where you ran `emsdk_env` (on Windows, web
-  exports also need [Ninja](https://ninja-build.org/)).
+- **Emscripten (web):** get emsdk with
+  `git clone https://github.com/emscripten-core/emsdk.git` anywhere. The Export
+  window finds it in your home folder, Desktop, Documents or `C:\emsdk` (or
+  use **Choose...** next to "Emscripten"). If it's freshly cloned, press
+  **Set Up**: that runs `emsdk install latest` and `emsdk activate latest` for
+  you (about 1 GB to download). You don't need to run `emsdk_env` yourself.
+  On Windows, Set Up needs [Python](https://www.python.org/downloads/) for its
+  first run, and web builds need Ninja: the one that comes with Visual Studio's
+  "C++ CMake tools" is found automatically, or `winget install Ninja-build.Ninja`.
 - Exporting from the command line works too, e.g.
   `sprout_editor --export linux,windows,web [folder]`.
 

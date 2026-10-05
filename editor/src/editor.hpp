@@ -310,6 +310,7 @@ private:
         char dir[512] = {};
         int width = 800, height = 450;
         bool nameEdit = false, dirEdit = false, widthEdit = false, heightEdit = false;
+        bool wasBusy = false;  // to look at the platforms again when an export or setup finishes
     } export_;
 
     std::filesystem::path workDir_;  // this project's builds (scripts, exports)

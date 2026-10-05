@@ -4,7 +4,10 @@
 #include <fstream>
 #include <sstream>
 
+#include <nlohmann/json.hpp>
+
 #include "platform.hpp"
+#include "projects.hpp"
 
 namespace fs = std::filesystem;
 
@@ -22,15 +25,71 @@ const char* kHost = "linux";
 
 std::string quote(const fs::path& p) { return "\"" + p.generic_string() + "\""; }
 
-fs::path findEmcmake() {
-    if (fs::path p = platform::findProgram("emcmake"); !p.empty()) return p;
-    if (const char* emsdk = std::getenv("EMSDK")) {
-        for (const char* name : {"emcmake", "emcmake.bat"}) {
-            fs::path p = fs::path(emsdk) / "upstream" / "emscripten" / name;
-            std::error_code ec;
-            if (fs::is_regular_file(p, ec)) return p;
+// A path for the command line: native slashes on Windows (cmd.exe's `call` needs them).
+std::string quoteNative(fs::path p) { return "\"" + p.make_preferred().string() + "\""; }
+
+fs::path emcmakeIn(const fs::path& emsdk) {
+#if defined(_WIN32)
+    const char* names[] = {"emcmake.bat"};
+#else
+    const char* names[] = {"emcmake"};
+#endif
+    for (const char* name : names) {
+        fs::path p = emsdk / "upstream" / "emscripten" / name;
+        std::error_code ec;
+        if (fs::is_regular_file(p, ec)) return p;
+    }
+    return {};
+}
+
+// emcmake, and what to run first so Emscripten's tools work (its python, node...).
+// From a terminal where emsdk_env already ran, emcmake is simply on the PATH.
+struct WebTools {
+    fs::path emcmake;
+    std::string env;  // a command prefix, e.g. call "...\emsdk_env.bat" >nul &&
+};
+WebTools findWebTools() {
+    WebTools t;
+    if (fs::path p = platform::findProgram("emcmake"); !p.empty()) {
+        t.emcmake = p;
+        return t;
+    }
+    fs::path emsdk = findEmsdk();
+    if (emsdk.empty() || !emsdkInstalled(emsdk)) return t;
+    t.emcmake = emcmakeIn(emsdk);
+#if defined(_WIN32)
+    t.env = "call " + quoteNative(emsdk / "emsdk_env.bat") + " >nul 2>&1 && ";
+#endif
+    return t;
+}
+
+// Ninja: on the PATH, or (Windows) the one that comes with Visual Studio.
+fs::path findNinja() {
+    if (fs::path p = platform::findProgram("ninja"); !p.empty()) return p;
+#if defined(_WIN32)
+    std::error_code ec;
+    std::vector<fs::path> roots;
+    if (const char* x86 = std::getenv("ProgramFiles(x86)")) {
+        fs::path vswhere = fs::path(x86) / "Microsoft Visual Studio" / "Installer" / "vswhere.exe";
+        if (fs::exists(vswhere, ec)) {
+            std::string out;
+            platform::runCommand(quoteNative(vswhere) + " -all -property installationPath", out);
+            std::stringstream lines(out);
+            for (std::string line; std::getline(lines, line);) {
+                while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+                if (!line.empty()) roots.push_back(line);
+            }
         }
     }
+    if (const char* pf = std::getenv("ProgramFiles"))
+        for (const char* year : {"2022", "2019", "18"})
+            for (const char* edition : {"Community", "Professional", "Enterprise", "BuildTools"})
+                roots.push_back(fs::path(pf) / "Microsoft Visual Studio" / year / edition);
+    for (const fs::path& root : roots) {
+        fs::path p = root / "Common7" / "IDE" / "CommonExtensions" / "Microsoft" / "CMake" / "Ninja" / "ninja.exe";
+        if (fs::exists(p, ec)) return p;
+    }
+#endif
     return {};
 }
 
@@ -61,6 +120,117 @@ void stageProject(const fs::path& project, const fs::path& stage, const fs::path
 }
 
 }  // namespace
+
+// ---------------------------------------------------------------------------
+// Emscripten (emsdk)
+// ---------------------------------------------------------------------------
+namespace {
+fs::path toolsFile() { return projects::configDir() / "tools.json"; }
+}  // namespace
+
+bool isEmsdkFolder(const fs::path& folder) {
+    std::error_code ec;
+    return !folder.empty() && fs::is_regular_file(folder / "emsdk.py", ec);
+}
+
+bool emsdkInstalled(const fs::path& emsdk) {
+    std::error_code ec;
+    // `emsdk activate` writes .emscripten (the tools' settings) next to emsdk.py
+    return !emcmakeIn(emsdk).empty() && fs::exists(emsdk / ".emscripten", ec);
+}
+
+void setEmsdkFolder(const fs::path& folder) {
+    nlohmann::json j = nlohmann::json::object();
+    {
+        std::ifstream in(toolsFile());
+        if (in) j = nlohmann::json::parse(in, nullptr, false);
+        if (!j.is_object()) j = nlohmann::json::object();
+    }
+    j["emsdk"] = folder.string();
+    std::error_code ec;
+    fs::create_directories(projects::configDir(), ec);
+    std::ofstream(toolsFile()) << j.dump(2) << '\n';
+}
+
+fs::path findEmsdk() {
+    std::vector<fs::path> candidates;
+    {
+        std::ifstream in(toolsFile());
+        nlohmann::json j = in ? nlohmann::json::parse(in, nullptr, false) : nlohmann::json();
+        if (j.is_object() && j.contains("emsdk") && j["emsdk"].is_string())
+            candidates.push_back(j["emsdk"].get<std::string>());
+    }
+    if (const char* env = std::getenv("EMSDK")) candidates.push_back(env);
+    std::vector<fs::path> homes;
+    if (const char* h = std::getenv("USERPROFILE")) homes.push_back(h);
+    if (const char* h = std::getenv("HOME")) homes.push_back(h);
+    for (const fs::path& home : homes)
+        for (const char* sub : {"emsdk", "Desktop/emsdk", "OneDrive/Desktop/emsdk", "Documents/emsdk",
+                                "OneDrive/Documents/emsdk", "source/repos/emsdk", "dev/emsdk", "tools/emsdk"})
+            candidates.push_back(home / sub);
+#if defined(_WIN32)
+    candidates.push_back("C:/emsdk");
+    candidates.push_back("C:/tools/emsdk");
+#else
+    candidates.push_back("/opt/emsdk");
+    candidates.push_back("/usr/local/emsdk");
+#endif
+    // Prefer one that's ready to use
+    for (const fs::path& c : candidates)
+        if (isEmsdkFolder(c) && emsdkInstalled(c)) return c;
+    for (const fs::path& c : candidates)
+        if (isEmsdkFolder(c)) return c;
+    return {};
+}
+
+bool Exporter::setUpEmsdk(const fs::path& emsdk) {
+    if (busy_ || !isEmsdkFolder(emsdk)) return false;
+    wait();
+    busy_ = true;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        current_ = "Emscripten setup";
+    }
+    thread_ = std::thread([this, emsdk] {
+        say("== Setting up Emscripten in " + emsdk.string() + " ==", 3);
+        say("This downloads about 1 GB the first time, so it can take a while.");
+#if defined(_WIN32)
+        std::string tool = quoteNative(emsdk / "emsdk.bat");
+        std::string cd = "cd /d " + quoteNative(emsdk) + " && ";
+#else
+        std::string tool = "./emsdk";
+        std::string cd = "cd " + quote(emsdk) + " && ";
+#endif
+        bool ok = true;
+        for (const char* step : {"install latest", "activate latest"}) {
+            say(std::string("emsdk ") + step + "...");
+            std::string output;
+            int code = platform::runCommand(cd + tool + " " + step, output, [&](const std::string& line) {
+                bool bad = line.find("error") != std::string::npos || line.find("Error") != std::string::npos;
+                say("  " + line, bad ? 2 : 0);
+            });
+            if (code != 0) {
+                say(std::string("emsdk ") + step + " failed (exit code " + std::to_string(code) + ").", 2);
+#if defined(_WIN32)
+                say("If it says Python wasn't found: install Python from python.org (tick \"Add python.exe to "
+                    "PATH\"), restart the editor and press Set Up again.", 2);
+#endif
+                ok = false;
+                break;
+            }
+        }
+        if (ok) {
+            setEmsdkFolder(emsdk);
+            say("Emscripten is ready: tick Web in the Export window.", 1);
+        }
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            current_.clear();
+        }
+        busy_ = false;
+    });
+    return true;
+}
 
 std::string programName(const std::string& gameName) {
     std::string out;
@@ -108,11 +278,14 @@ std::vector<ExportTarget> Exporter::detectTargets() const {
     list.push_back(mac);
 
     ExportTarget web{"web", "Web", false, ""};
-    fs::path emcmake = findEmcmake();
-    if (emcmake.empty()) {
-        web.note = "Install Emscripten (emsdk), and start the editor from a terminal where emsdk_env has run.";
-    } else if (host == "windows" && platform::findProgram("ninja").empty()) {
-        web.note = "Emscripten found, but web builds on Windows also need Ninja on the PATH.";
+    WebTools tools = findWebTools();
+    fs::path emsdk = findEmsdk();
+    if (tools.emcmake.empty() && emsdk.empty()) {
+        web.note = "Needs Emscripten: get emsdk (emscripten.org), then pick its folder below.";
+    } else if (tools.emcmake.empty()) {
+        web.note = "emsdk found but not installed yet: press Set Up below.";
+    } else if (host == "windows" && findNinja().empty()) {
+        web.note = "Also needs Ninja: winget install Ninja-build.Ninja (or Visual Studio's C++ CMake tools).";
     } else {
         web.available = true;
         web.note = "Built with Emscripten (a web page).";
@@ -197,14 +370,19 @@ bool Exporter::exportOne(const ExportTarget& t, const std::string& program, cons
     fs::path deps = paths_.depsDir;
     std::string cmake = quote(paths_.cmake);
     std::string host = kHost;
-    bool ninja = !platform::findProgram("ninja").empty();
+    fs::path ninjaPath = findNinja();
+    bool ninja = !ninjaPath.empty();
+    WebTools web = t.id == "web" ? findWebTools() : WebTools{};
 
     // 1. Configure (only slow the first time: it builds raylib for that platform)
     std::string configure;
-    if (t.id == "web") configure = quote(findEmcmake()) + " ";
+    if (t.id == "web") configure = web.env + quote(web.emcmake) + " ";
     configure += cmake + " -S " + quote(paths_.editorDir / "player") + " -B " + quote(build);
     bool native = t.id == host;
-    if (ninja && !(native && host == "windows")) configure += " -G Ninja";  // VS on Windows picks its own
+    if (ninja && !(native && host == "windows")) {  // VS on Windows picks its own
+        configure += " -G Ninja";
+        if (platform::findProgram("ninja").empty()) configure += " -DCMAKE_MAKE_PROGRAM=" + quote(ninjaPath);
+    }
     configure += " -DCMAKE_BUILD_TYPE=Release";
     configure += " -DSPROUT_GAME_NAME=" + program;
     configure += " -DSPROUT_GAME_PROJECT_DIR=" + quote(stage);
@@ -235,7 +413,8 @@ bool Exporter::exportOne(const ExportTarget& t, const std::string& program, cons
     std::error_code ec;
     if (t.id == "macos") fs::remove(build / "out" / (program + ".app") / "Contents" / "MacOS" / program, ec);
     else fs::remove_all(build / "out", ec);
-    if (!run("Building " + t.label, cmake + " --build " + quote(build) + " --config Release --parallel")) return false;
+    if (!run("Building " + t.label, web.env + cmake + " --build " + quote(build) + " --config Release --parallel"))
+        return false;
 
     // 3. Package: the program and the project folder, side by side
     fs::path out = build / "out";

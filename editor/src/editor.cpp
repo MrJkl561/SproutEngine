@@ -3256,7 +3256,7 @@ void Editor::openExportDialog() {
 void Editor::drawExportDialog() {
     float sw = screenW(), sh = screenH();
     DrawRectangle(0, 0, static_cast<int>(sw), static_cast<int>(sh), Fade(BLACK, 0.5f));
-    float bw = std::min(640.0f, sw - 40), bh = std::min(520.0f, sh - 40);
+    float bw = std::min(640.0f, sw - 40), bh = std::min(560.0f, sh - 40);
     Rectangle box{std::floor((sw - bw) / 2), std::floor((sh - bh) / 2), bw, bh};
     bool close = GuiWindowBox(box, "Export Game") != 0;
     bool editing = export_.nameEdit || export_.dirEdit || export_.widthEdit || export_.heightEdit;
@@ -3306,7 +3306,45 @@ void Editor::drawExportDialog() {
         drawText(note, x + 240, y + 4, kDim);
         y += 30;
     }
-    y += 8;
+    y += 4;
+
+    // Emscripten's folder (for Web)
+    {
+        fs::path emsdk = findEmsdk();
+        bool ready = !emsdk.empty() && emsdkInstalled(emsdk);
+        label("Emscripten");
+        std::string where = emsdk.empty() ? "emsdk not found" : emsdk.string() + (ready ? "" : "  (not set up yet)");
+        float buttonsW = (platform::canPickFolder() ? 104 : 0) + (!emsdk.empty() && !ready ? 104 : 0);
+        float room = w - labelW - buttonsW - 8;
+        while (where.size() > 4 && textWidth(where) > room) where = "..." + where.substr(4);
+        drawText(where, x + labelW, y + 5, ready ? kText : kOrange);
+        float bx = x + w - buttonsW;
+        if (!emsdk.empty() && !ready) {
+            if (exporter_->busy()) GuiDisable();
+            if (GuiButton({bx, y, 100, 26}, "Set Up")) {
+                if (exporter_->setUpEmsdk(emsdk)) log("Setting up Emscripten (see below)...", kAccent);
+            }
+            if (exporter_->busy()) GuiEnable();
+            bx += 104;
+        }
+        if (platform::canPickFolder() && GuiButton({bx, y, 100, 26}, "Choose...")) {
+            std::error_code ec;
+            pickFolder("Emscripten's emsdk folder", emsdk.empty() ? fs::path() : emsdk, [this](const fs::path& p) {
+                if (!isEmsdkFolder(p)) {
+                    log(p.string() + " isn't an emsdk folder (it has no emsdk.py). Get emsdk with: git clone "
+                        "https://github.com/emscripten-core/emsdk.git", kBad);
+                    return;
+                }
+                setEmsdkFolder(p);
+                log("Emscripten folder: " + p.string(), kGood);
+                auto chosen = export_.chosen;
+                export_.targets = exporter_->detectTargets();
+                for (size_t i = 0; i < export_.targets.size(); ++i)
+                    export_.chosen[i] = chosen[i] && export_.targets[i].available;
+            });
+        }
+        y += 34;
+    }
 
     label("Export to");
     float browseW = platform::canPickFolder() ? 100 : 0;
@@ -3325,6 +3363,12 @@ void Editor::drawExportDialog() {
     // Bottom row
     float by = box.y + box.height - 44;
     bool busy = exporter_->busy();
+    if (export_.wasBusy && !busy) {  // e.g. Emscripten was just set up
+        auto chosen = export_.chosen;
+        export_.targets = exporter_->detectTargets();
+        for (size_t i = 0; i < export_.targets.size(); ++i) export_.chosen[i] = chosen[i] && export_.targets[i].available;
+    }
+    export_.wasBusy = busy;
     if (busy) {
         drawText("Exporting " + exporter_->currentLabel() + "... (see Output)", x, by + 6, kOrange);
     } else if (std::none_of(export_.chosen.begin(), export_.chosen.end(), [](bool b) { return b; })) {
