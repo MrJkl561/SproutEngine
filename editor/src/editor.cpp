@@ -801,8 +801,15 @@ void Editor::drawToolbar(Rectangle r) {
                                                            : "Scripts: " + std::to_string(scripts_->scriptNames().size()) +
                                                                  " loaded";
         Color c = scripts_->isBuilding() ? kOrange : scripts_->lastBuildFailed() ? kBad : kDim;
-        drawText(status, x + 42, y + 6, c);
-        x += 42 + textWidth(status) + 16;
+        // Only as much as fits before the controls on the right (gear, UI size)
+        float rightControls = r.width - 8 - 30 - 8 - textWidth("300%") - 34 - textWidth("UI size") - 8 - 42 - 12;
+        if (x + 42 + textWidth(status) > rightControls) status = "Scripts";
+        if (x + 42 + textWidth(status) <= rightControls) {
+            drawText(status, x + 42, y + 6, c);
+            x += 42 + textWidth(status) + 16;
+        } else {
+            x += 42;
+        }
     }
     if (exporter_ && exporter_->busy()) {
         std::string status = "Exporting " + exporter_->currentLabel() + "...";

@@ -23,7 +23,41 @@ const char* kHost = "macos";
 const char* kHost = "linux";
 #endif
 
+#if defined(__aarch64__) || defined(_M_ARM64)
+const char* kHostArch = "arm64";
+#elif defined(__x86_64__) || defined(_M_X64)
+const char* kHostArch = "x86_64";
+#else
+const char* kHostArch = "this kind of";
+#endif
+
 std::string quote(const fs::path& p) { return "\"" + p.generic_string() + "\""; }
+
+bool isWindowsTarget(const std::string& id) { return id.rfind("windows", 0) == 0; }
+
+// Visual Studio's name for the CPU a Windows export is built for.
+const char* vsPlatform(const std::string& id) { return id == "windows-arm64" ? "ARM64" : "x64"; }
+
+// True if CMake will use Visual Studio here (its default on Windows, unless
+// CMAKE_GENERATOR says otherwise).
+bool usesVisualStudio() {
+    const char* g = std::getenv("CMAKE_GENERATOR");
+    return !g || std::string(g).find("Visual Studio") != std::string::npos;
+}
+
+// A build folder set up for another CPU (CMake refuses to change it): start it again.
+void resetIfOtherPlatform(const fs::path& build, const std::string& platformName) {
+    std::ifstream cache(build / "CMakeCache.txt");
+    if (!cache) return;
+    std::string line, used;
+    while (std::getline(cache, line))
+        if (line.rfind("CMAKE_GENERATOR_PLATFORM:", 0) == 0) used = line.substr(line.find('=') + 1);
+    cache.close();
+    if (used != platformName) {
+        std::error_code ec;
+        fs::remove_all(build, ec);
+    }
+}
 
 #if defined(_WIN32)
 // Emscripten has no Windows ARM64 build, so emsdk is always asked for the x64 one
@@ -284,14 +318,15 @@ std::vector<ExportTarget> Exporter::detectTargets() const {
     std::vector<ExportTarget> list;
 
     ExportTarget onLinux{"linux", "Linux", host == "linux", ""};
-    onLinux.note = onLinux.available ? "Built with this computer's compiler."
-                                 : "Needs Linux (on Windows, run the editor in WSL).";
+    onLinux.note = onLinux.available
+                       ? std::string("Built with this computer's compiler, for ") + kHostArch + " Linux PCs."
+                       : "Needs Linux (on Windows, run the editor in WSL).";
     list.push_back(onLinux);
 
     ExportTarget windows{"windows", "Windows", false, ""};
     if (host == "windows") {
         windows.available = true;
-        windows.note = "Built with this computer's compiler.";
+        windows.note = "x64 .exe: runs on every Windows PC (ARM64 ones too, through emulation).";
     } else if (!findMingw().empty()) {
         windows.available = true;
         windows.note = "Built with MinGW-w64 (64-bit .exe).";
@@ -300,9 +335,16 @@ std::vector<ExportTarget> Exporter::detectTargets() const {
                                        : "Install MinGW-w64: sudo apt install mingw-w64";
     }
     list.push_back(windows);
+    if (host == "windows") {
+        // A native ARM64 build as well (faster on ARM64 PCs; doesn't run on x64 ones)
+        ExportTarget arm{"windows-arm64", "Windows ARM64", usesVisualStudio(), ""};
+        arm.note = arm.available ? "ARM64 .exe for Windows on ARM (needs Visual Studio's ARM64 build tools)."
+                                 : "Needs Visual Studio (CMAKE_GENERATOR is set to something else).";
+        list.push_back(arm);
+    }
 
     ExportTarget mac{"macos", "macOS", host == "macos", ""};
-    mac.note = mac.available ? "Built with this Mac's compiler (.app)."
+    mac.note = mac.available ? "A universal .app: runs on Apple Silicon and Intel Macs."
                              : "Needs a Mac: Apple's compiler and SDK only run on macOS.";
     list.push_back(mac);
 
@@ -400,7 +442,6 @@ bool Exporter::exportOne(const ExportTarget& t, const std::string& program, cons
     say("== Exporting " + t.label + " ==", 3);
     fs::path build = paths_.workDir / t.id;
     fs::path stage = build / "stage" / "project";
-    stageProject(paths_.projectDir, stage, outDir);
     fs::path deps = paths_.depsDir;
     std::string cmake = quote(paths_.cmake);
     std::string host = kHost;
@@ -412,8 +453,13 @@ bool Exporter::exportOne(const ExportTarget& t, const std::string& program, cons
     std::string configure;
     if (t.id == "web") configure = web.env + quote(web.emcmake) + " ";
     configure += cmake + " -S " + quote(paths_.editorDir / "player") + " -B " + quote(build);
-    bool native = t.id == host;
-    if (ninja && !(native && host == "windows")) {  // VS on Windows picks its own
+    bool native = t.id == host || (host == "windows" && isWindowsTarget(t.id));
+    bool visualStudio = native && host == "windows" && usesVisualStudio();
+    if (visualStudio) {
+        // Visual Studio would build for this PC's own CPU: say which one is wanted.
+        resetIfOtherPlatform(build, vsPlatform(t.id));
+        configure += std::string(" -A ") + vsPlatform(t.id);
+    } else if (ninja && !(native && host == "windows")) {
         configure += " -G Ninja";
         if (platform::findProgram("ninja").empty()) configure += " -DCMAKE_MAKE_PROGRAM=" + quote(ninjaPath);
     }
@@ -428,6 +474,8 @@ bool Exporter::exportOne(const ExportTarget& t, const std::string& program, cons
     if (t.id == "windows" && host != "windows")
         configure += " -DCMAKE_TOOLCHAIN_FILE=" + quote(paths_.editorDir / "player" / "mingw-w64.cmake");
     if (t.id == "web") configure += " -DPLATFORM=Web";
+    // One app for both kinds of Mac
+    if (t.id == "macos") configure += " \"-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64\"";
 
     auto run = [&](const std::string& what, const std::string& cmd) {
         say(what + "...");
@@ -439,6 +487,7 @@ bool Exporter::exportOne(const ExportTarget& t, const std::string& program, cons
         if (code != 0) say(what + " failed (exit code " + std::to_string(code) + ").", 2);
         return code == 0;
     };
+    stageProject(paths_.projectDir, stage, outDir);  // (after a reset above)
     if (!run("Configuring " + t.label, configure)) return false;
 
     // 2. Build (the old output is removed first, so the game is always re-linked
@@ -478,7 +527,7 @@ bool Exporter::exportOne(const ExportTarget& t, const std::string& program, cons
         // inside, or a downloaded copy is reported as damaged instead of opening.
         if (!run("Signing " + t.label, "codesign --force --deep --sign - " + quote(app))) return false;
     } else {
-        std::string exe = program + (t.id == "windows" ? ".exe" : "");
+        std::string exe = program + (isWindowsTarget(t.id) ? ".exe" : "");
         fs::copy_file(out / exe, dest / exe);
         copyTree(stage, dest / "project");
     }

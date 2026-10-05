@@ -73,6 +73,10 @@ jobs:
           test -x "$app/Contents/MacOS/Sprout_Game"
           test -f "$app/Contents/Resources/project/project.json"
           codesign --verify --deep --strict --verbose=2 "$app"
+          # A universal app: native on Apple Silicon and Intel Macs
+          archs=$(lipo -archs "$app/Contents/MacOS/Sprout_Game")
+          echo "Architectures: $archs"
+          case "$archs" in *arm64*x86_64*|*x86_64*arm64*) ;; *) echo "::error::not universal: $archs"; exit 1 ;; esac
           ditto -c -k --keepParent "$app" "$RUNNER_TEMP/Sprout_Game-macOS.zip"
 
       - name: Upload the exported macOS app

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <set>
 #include <system_error>
 
@@ -39,6 +40,19 @@ bool ScriptReloader::runBuild(std::string& output) const {
         cmd = cmake + " -S " + q(fs::path(SPROUT_EDITOR_DIR) / "scripts_module") + " -B " + q(workDir_);
 #if !defined(_WIN32)
         if (!platform::findProgram("ninja").empty()) cmd += " -G Ninja";
+#elif defined(_MSC_VER)
+        // The DLL has to be built for the editor's own CPU (x64 or ARM64), not
+        // whatever Visual Studio would pick for this PC.
+        const char* generator = std::getenv("CMAKE_GENERATOR");
+        if (!generator || std::string(generator).find("Visual Studio") != std::string::npos) {
+#if defined(_M_ARM64)
+            cmd += " -A ARM64";
+#elif defined(_M_X64)
+            cmd += " -A x64";
+#elif defined(_M_IX86)
+            cmd += " -A Win32";
+#endif
+        }
 #endif
         cmd += std::string(" -DCMAKE_BUILD_TYPE=") + SPROUT_EDITOR_BUILD_CONFIG;
         cmd += " -DSPROUT_SCRIPTS_DIR=" + q(scriptsDir_);
