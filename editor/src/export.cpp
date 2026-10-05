@@ -68,14 +68,17 @@ bool vsHasArm64Tools() {
 }
 
 // A build folder set up for another CPU (CMake refuses to change it): start it again.
-void resetIfOtherPlatform(const fs::path& build, const std::string& platformName) {
+// The same for another generator (e.g. a different Visual Studio).
+void resetIfOtherPlatform(const fs::path& build, const std::string& platformName, const std::string& generator) {
     std::ifstream cache(build / "CMakeCache.txt");
     if (!cache) return;
-    std::string line, used;
-    while (std::getline(cache, line))
+    std::string line, used, usedGenerator;
+    while (std::getline(cache, line)) {
         if (line.rfind("CMAKE_GENERATOR_PLATFORM:", 0) == 0) used = line.substr(line.find('=') + 1);
+        if (line.rfind("CMAKE_GENERATOR:", 0) == 0) usedGenerator = line.substr(line.find('=') + 1);
+    }
     cache.close();
-    if (used != platformName) {
+    if (used != platformName || (!generator.empty() && usedGenerator != generator)) {
         std::error_code ec;
         fs::remove_all(build, ec);
     }
@@ -485,7 +488,13 @@ bool Exporter::exportOne(const ExportTarget& t, const std::string& program, cons
     bool visualStudio = native && host == "windows" && usesVisualStudio();
     if (visualStudio) {
         // Visual Studio would build for this PC's own CPU: say which one is wanted.
-        resetIfOtherPlatform(build, vsPlatform(t.id));
+        resetIfOtherPlatform(build, vsPlatform(t.id),
+                             paths_.generator.find("Visual Studio") != std::string::npos ? paths_.generator : "");
+        if (paths_.generator.find("Visual Studio") != std::string::npos) {
+            configure += " -G \"" + paths_.generator + "\"";
+            if (!paths_.generatorInstance.empty())
+                configure += " \"-DCMAKE_GENERATOR_INSTANCE=" + paths_.generatorInstance + "\"";
+        }
         configure += std::string(" -A ") + vsPlatform(t.id);
     } else if (ninja && !(native && host == "windows")) {
         configure += " -G Ninja";

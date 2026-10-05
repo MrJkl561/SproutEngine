@@ -34,6 +34,8 @@ public:
         std::filesystem::path workDir;     // where each platform is built
         std::filesystem::path depsDir;     // raylib etc. sources (the editor's own copies)
         std::string cmake;                 // the cmake program
+        std::string generator;             // the editor's own CMake generator and Visual Studio
+        std::string generatorInstance;     // (Windows: exports use the same one)
     };
     struct Line {
         std::string text;

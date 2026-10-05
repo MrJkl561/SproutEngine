@@ -90,6 +90,11 @@ target_compile_definitions(sprout_editor PRIVATE
     SPROUT_EDITOR_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
     SPROUT_EDITOR_THEME_DIR="${_theme_dir}"
     SPROUT_EDITOR_CMAKE="${CMAKE_COMMAND}"
+    # The Visual Studio that built the editor (hot reloading and Windows exports
+    # use the same one; CMake on its own would pick the newest installed, even
+    # one without the C++ tools)
+    SPROUT_EDITOR_GENERATOR="${CMAKE_GENERATOR}"
+    SPROUT_EDITOR_GENERATOR_INSTANCE="${CMAKE_GENERATOR_INSTANCE}"
     SPROUT_EDITOR_BUILD_DIR="${CMAKE_BINARY_DIR}"
     SPROUT_EDITOR_DEPS_DIR="${FETCHCONTENT_BASE_DIR}")
 

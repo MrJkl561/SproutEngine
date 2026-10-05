@@ -75,7 +75,7 @@ int exportGame(const fs::path& project, const std::string& targets, const std::s
     s2d::ProjectSettings settings = s2d::ProjectSettings::load(project);
     s2d::Exporter exporter({SPROUT_EDITOR_DIR, project, project / "scripts",
                             s2d::projects::workDir(project, SPROUT_EDITOR_BUILD_DIR) / "exports",
-                            SPROUT_EDITOR_DEPS_DIR, SPROUT_EDITOR_CMAKE});
+                            SPROUT_EDITOR_DEPS_DIR, SPROUT_EDITOR_CMAKE, SPROUT_EDITOR_GENERATOR, SPROUT_EDITOR_GENERATOR_INSTANCE});
     std::vector<std::string> ids;
     for (size_t start = 0; start <= targets.size();) {
         size_t comma = targets.find(',', start);

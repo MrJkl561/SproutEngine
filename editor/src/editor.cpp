@@ -333,7 +333,7 @@ Editor::Editor(fs::path projectDir)
     editTree_.gameSize = raylib::Vector2{static_cast<float>(settings_.width), static_cast<float>(settings_.height)};
     exporter_ = std::make_unique<Exporter>(Exporter::Paths{
         SPROUT_EDITOR_DIR, projectDir_, scriptsDir_, workDir_ / "exports",
-        SPROUT_EDITOR_DEPS_DIR, SPROUT_EDITOR_CMAKE});
+        SPROUT_EDITOR_DEPS_DIR, SPROUT_EDITOR_CMAKE, SPROUT_EDITOR_GENERATOR, SPROUT_EDITOR_GENERATOR_INSTANCE});
     scenePath_ = settings_.mainScene;
     if (!openScene(scenePath_)) newScene();
     undoStack_.clear();

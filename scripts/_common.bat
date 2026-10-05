@@ -32,28 +32,35 @@ if not defined ARCH (
     if /i "%PROCESSOR_ARCHITECTURE%"=="ARM64" (set "ARCH=arm64") else (set "ARCH=x64")
 )
 
-rem Visual Studio only builds for ARM64 if its ARM64 C++ tools are installed
-rem (an optional part of the installer). Ask its installer.
+rem Which Visual Studio to use: the newest one that has the C++ tools for this
+rem CPU. (CMake would pick the newest one installed, even one without C++.)
 set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
-set "VSCHECK="
-if not defined CMAKE_GENERATOR if exist "%VSWHERE%" set "VSCHECK=1"
-set "HAVEARM64="
-if defined VSCHECK for /f "usebackq delims=" %%i in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.ARM64 -property installationPath`) do set "HAVEARM64=1"
-if /i not "%ARCH%"=="arm64" goto archok
-if not defined VSCHECK goto archok
-if defined HAVEARM64 goto archok
-if defined AUTOARCH goto archfallback
-echo Visual Studio's ARM64 C++ tools aren't installed, so it can't build for arm64.
-echo Add them in the Visual Studio Installer: Modify, Individual components,
-echo "MSVC ... ARM64/ARM64EC build tools (Latest)". Or build for x64 instead:
-echo     scripts\build.bat x64      (the same goes for the other scripts)
-exit /b 1
-:archfallback
+set "VSGEN="
+set "VSPATH="
+if defined CMAKE_GENERATOR goto archok
+if not exist "%VSWHERE%" goto archok
+if /i "%ARCH%"=="arm64" (call :findvs Microsoft.VisualStudio.Component.VC.Tools.ARM64) else (call :findvs Microsoft.VisualStudio.Component.VC.Tools.x86.x64)
+if defined VSPATH goto archok
+if /i not "%ARCH%"=="arm64" goto novs
+if not defined AUTOARCH goto noarm
 echo Note: Visual Studio's ARM64 C++ tools aren't installed, so this builds for x64.
 echo       x64 programs run fine on ARM64 Windows. To build natively for ARM64, add
 echo       "MSVC ... ARM64/ARM64EC build tools (Latest)" in the Visual Studio Installer.
 echo.
 set "ARCH=x64"
+call :findvs Microsoft.VisualStudio.Component.VC.Tools.x86.x64
+if defined VSPATH goto archok
+:novs
+echo No Visual Studio with the C++ tools was found.
+echo Open the Visual Studio Installer, click Modify, and tick the workload
+echo "Desktop development with C++" (it includes "MSVC ... x64/x86 build tools").
+exit /b 1
+:noarm
+echo Visual Studio's ARM64 C++ tools aren't installed, so it can't build for arm64.
+echo Add them in the Visual Studio Installer: Modify, Individual components,
+echo "MSVC ... ARM64/ARM64EC build tools (Latest)". Or build for x64 instead:
+echo     scripts\build.bat x64      (the same goes for the other scripts)
+exit /b 1
 :archok
 if /i "%ARCH%"=="arm64" (set "VSARCH=ARM64") else (set "VSARCH=x64")
 set "BUILD=%ROOT%\build-%ARCH%"
@@ -63,6 +70,7 @@ rem Visual Studio needs to be told the CPU (another generator picks its own)
 set "ARCHFLAG="
 if not defined CMAKE_GENERATOR set "ARCHFLAG=-A %VSARCH%"
 echo %CMAKE_GENERATOR% | findstr /i /c:"Visual Studio" >nul && set "ARCHFLAG=-A %VSARCH%"
+if defined VSGEN set ARCHFLAG=-G "%VSGEN%" -A %VSARCH% "-DCMAKE_GENERATOR_INSTANCE=%VSPATH%"
 
 where cmake >nul 2>&1
 if errorlevel 1 (
@@ -71,3 +79,18 @@ if errorlevel 1 (
     exit /b 1
 )
 exit /b 0
+
+rem :findvs <component>  ->  VSPATH (its folder) and VSGEN (CMake's name for it)
+:findvs
+set "VSPATH="
+set "VSGEN="
+set "VSVER="
+for /f "usebackq delims=" %%i in (`"%VSWHERE%" -latest -products * -requires %1 -property installationPath`) do set "VSPATH=%%i"
+for /f "usebackq delims=" %%i in (`"%VSWHERE%" -latest -products * -requires %1 -property installationVersion`) do set "VSVER=%%i"
+if not defined VSPATH goto :eof
+for /f "tokens=1 delims=." %%v in ("%VSVER%") do (
+    if "%%v"=="18" set "VSGEN=Visual Studio 18 2026"
+    if "%%v"=="17" set "VSGEN=Visual Studio 17 2022"
+    if "%%v"=="16" set "VSGEN=Visual Studio 16 2019"
+)
+goto :eof

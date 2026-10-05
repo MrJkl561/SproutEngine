@@ -43,8 +43,15 @@ bool ScriptReloader::runBuild(std::string& output) const {
 #elif defined(_MSC_VER)
         // The DLL has to be built for the editor's own CPU (x64 or ARM64), not
         // whatever Visual Studio would pick for this PC.
+        const std::string editorGenerator = SPROUT_EDITOR_GENERATOR;
+        const std::string instance = SPROUT_EDITOR_GENERATOR_INSTANCE;
+        if (editorGenerator.find("Visual Studio") != std::string::npos) {
+            cmd += " -G \"" + editorGenerator + "\"";
+            if (!instance.empty()) cmd += " \"-DCMAKE_GENERATOR_INSTANCE=" + instance + "\"";
+        }
         const char* generator = std::getenv("CMAKE_GENERATOR");
-        if (!generator || std::string(generator).find("Visual Studio") != std::string::npos) {
+        if (editorGenerator.find("Visual Studio") != std::string::npos ||
+            !generator || std::string(generator).find("Visual Studio") != std::string::npos) {
 #if defined(_M_ARM64)
             cmd += " -A ARM64";
 #elif defined(_M_X64)
