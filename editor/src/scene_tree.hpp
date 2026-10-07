@@ -59,6 +59,7 @@ public:
 
 private:
     void attachScripts(Node* node);
+    void connectSaved(Node* node);  // the signal connections made in the editor, below node
     void readyRecursive(Node* node);
 
     void switchScene();

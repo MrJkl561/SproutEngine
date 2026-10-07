@@ -174,6 +174,26 @@ std::vector<std::string>& loadingScenes() {
     return stack;
 }
 
+json connectionsToJson(const std::vector<SavedConnection>& list) {
+    json out = json::array();
+    for (const SavedConnection& c : list) {
+        json e = {{"signal", c.signal}, {"target", c.target}, {"method", c.method}};
+        if (c.oneShot) e["one_shot"] = true;
+        out.push_back(e);
+    }
+    return out;
+}
+
+void addConnections(Node& node, const json& list) {
+    if (!list.is_array()) return;
+    for (const json& e : list) {
+        SavedConnection c{e.value("signal", ""), e.value("target", "."), e.value("method", ""), e.value("one_shot", false)};
+        if (c.signal.empty() || c.method.empty()) continue;
+        if (std::find(node.connections.begin(), node.connections.end(), c) == node.connections.end())
+            node.connections.push_back(c);
+    }
+}
+
 std::unique_ptr<Node> instanceFromJson(const json& j) {
     std::string path = j.value("instance", std::string());
     auto& loading = loadingScenes();
@@ -202,6 +222,7 @@ std::unique_ptr<Node> instanceFromJson(const json& j) {
     if (j.contains("script")) node->scriptName = j.value("script", std::string());
     if (j.contains("properties")) applyProperties(*node, j["properties"]);
     if (j.contains("script_vars")) setScriptVars(*node, j["script_vars"]);
+    if (j.contains("connections")) addConnections(*node, j["connections"]);  // made in the level, on top of the scene's own
 
     // Changes made to nodes inside this copy (they don't touch the original).
     if (j.contains("overrides") && j["overrides"].is_object() && !node->instanceMissing) {
@@ -252,6 +273,11 @@ json nodeToJson(Node& node) {
             if (!changed.empty()) j["properties"] = changed;
             if (node.scriptName != source->scriptName) j["script"] = node.scriptName;
             if (node.scriptVars != source->scriptVars) j["script_vars"] = scriptVarsToJson(node);
+            std::vector<SavedConnection> added;
+            for (const SavedConnection& c : node.connections)
+                if (std::find(source->connections.begin(), source->connections.end(), c) == source->connections.end())
+                    added.push_back(c);
+            if (!added.empty()) j["connections"] = connectionsToJson(added);
 
             // Nodes inside the instance: save only what this copy changed.
             json overrides = json::object();
@@ -275,12 +301,14 @@ json nodeToJson(Node& node) {
             j["properties"] = mine;
             if (!node.scriptName.empty()) j["script"] = node.scriptName;
             if (!node.scriptVars.empty()) j["script_vars"] = scriptVarsToJson(node);
+            if (!node.connections.empty()) j["connections"] = connectionsToJson(node.connections);
         }
         return j;
     }
 
     if (!node.scriptName.empty()) j["script"] = node.scriptName;
     if (!node.scriptVars.empty()) j["script_vars"] = scriptVarsToJson(node);
+    if (!node.connections.empty()) j["connections"] = connectionsToJson(node.connections);
     j["properties"] = propertiesToJson(node);
     json& kids = j["children"] = json::array();
     for (auto& c : node.children()) kids.push_back(nodeToJson(*c));
@@ -296,6 +324,7 @@ std::unique_ptr<Node> nodeFromJson(const json& j) {
     node->scriptName = j.value("script", std::string());
     if (j.contains("properties")) applyProperties(*node, j["properties"]);
     if (j.contains("script_vars")) setScriptVars(*node, j["script_vars"]);
+    if (j.contains("connections")) addConnections(*node, j["connections"]);
 
     if (j.contains("children")) {
         for (const json& c : j["children"])

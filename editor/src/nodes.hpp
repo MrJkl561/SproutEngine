@@ -73,6 +73,18 @@ struct DrawOptions {
     float zoom = 1.0f;    // view zoom, used to keep gizmo lines one pixel wide
 };
 
+// A signal connection made in the editor (the Inspector's Signals list),
+// saved in the scene file and connected when the game starts.
+struct SavedConnection {
+    std::string signal;  // e.g. "body_entered"
+    std::string target;  // the node with the script, from this node: ".", "..", "../Hud"
+    std::string method;  // a function of its script, marked CALLABLE(method)
+    bool oneShot = false;
+    bool operator==(const SavedConnection& o) const {
+        return signal == o.signal && target == o.target && method == o.method && oneShot == o.oneShot;
+    }
+};
+
 // ---------------------------------------------------------------------------
 class Node {
 public:
@@ -91,6 +103,7 @@ public:
     bool inInstance = false;       // part of an instanced scene (not its root): edit it in its own file
     bool instanceMissing = false;  // sceneFile couldn't be loaded; this is a stand-in
     bool addedWhilePlaying = false;  // added by a script (not loaded with the scene): MultiplayerSpawner copies these
+    std::vector<SavedConnection> connections;  // this node's signals, connected in the editor
 
     Node();
     virtual ~Node();

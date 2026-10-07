@@ -47,6 +47,30 @@ void SceneTree::attachScripts(Node* node) {
     });
 }
 
+void SceneTree::connectSaved(Node* node) {
+    forEachNode(node, [](Node* n) {
+        for (const SavedConnection& c : n->connections) {
+            Node* target = n->getNode(c.target);
+            std::string what = "'" + n->name + "' " + c.signal + " -> " + c.target + " " + c.method + "(): ";
+            if (!target) {
+                print("Signal connection " + what + "there's no node at '" + c.target + "' (renamed or moved?)");
+                continue;
+            }
+            if (!target->script) {
+                print("Signal connection " + what + "'" + target->name + "' has no script (loaded)");
+                continue;
+            }
+            auto fn = target->script->callable(c.method);
+            if (!fn) {
+                print("Signal connection " + what + "script " + target->scriptName + " has no CALLABLE(" + c.method +
+                      ") (add it next to the function)");
+                continue;
+            }
+            target->script->connectCall(n, c.signal, std::move(fn), c.oneShot);
+        }
+    });
+}
+
 void SceneTree::readyRecursive(Node* node) {
     // Children are ready before their parent, like in Godot.
     for (size_t i = 0; i < node->children().size(); ++i) readyRecursive(node->children()[i].get());
@@ -58,6 +82,7 @@ void SceneTree::start() {
     playing_ = true;
     if (!root_) return;
     attachScripts(root_.get());
+    connectSaved(root_.get());
     readyRecursive(root_.get());
 }
 
@@ -68,6 +93,7 @@ void SceneTree::dropScripts() {
 void SceneTree::restartScripts() {
     if (!playing_ || !root_) return;
     attachScripts(root_.get());
+    connectSaved(root_.get());
     readyRecursive(root_.get());
 }
 
@@ -75,6 +101,7 @@ void SceneTree::nodeAdded(Node* node) {
     if (!playing_) return;
     node->addedWhilePlaying = true;
     attachScripts(node);
+    connectSaved(node);
     readyRecursive(node);
 }
 
@@ -137,6 +164,7 @@ void SceneTree::switchScene() {
     print("Changed scene to " + path);
     if (playing_) {
         attachScripts(root_.get());
+        connectSaved(root_.get());
         readyRecursive(root_.get());
     }
 }

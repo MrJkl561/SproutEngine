@@ -56,6 +56,57 @@ std::vector<std::string> splitArgs(const std::string& line) {
     return out;
 }
 
+// The path from one node to another, for a signal connection: ".", "..",
+// "Sprite", "../Hud/Score"...
+std::string relativePath(Node* from, Node* to) {
+    if (from == to) return ".";
+    std::vector<Node*> up;  // from, its parent, ... the root
+    for (Node* n = from; n; n = n->parent()) up.push_back(n);
+    Node* common = to;
+    while (common && std::find(up.begin(), up.end(), common) == up.end()) common = common->parent();
+    if (!common) return pathBetween(nullptr, to);
+    std::string path;
+    for (Node* n = from; n != common; n = n->parent()) path += path.empty() ? ".." : "/..";
+    std::string down = pathBetween(common, to);
+    if (path.empty()) return down;
+    return down.empty() ? path : path + "/" + down;
+}
+
+// Every editor-made signal connection in the scene, with where it points, so
+// paths can be fixed after a node is renamed or moved.
+struct ResolvedConnection {
+    Node* from;
+    size_t index;
+    Node* to;
+};
+std::vector<ResolvedConnection> resolveConnections(Node* root) {
+    std::vector<ResolvedConnection> out;
+    forEachNode(root, [&](Node* n) {
+        for (size_t i = 0; i < n->connections.size(); ++i)
+            out.push_back({n, i, n->getNode(n->connections[i].target)});
+    });
+    return out;
+}
+void rewriteConnections(const std::vector<ResolvedConnection>& list) {
+    for (const ResolvedConnection& r : list)
+        if (r.to && r.index < r.from->connections.size()) r.from->connections[r.index].target = relativePath(r.from, r.to);
+}
+
+// "body_entered" -> "BodyEntered", "Coin 2" -> "Coin2"
+std::string pascalWords(const std::string& text) {
+    std::string out;
+    bool upper = true;
+    for (char c : text) {
+        if (std::isalnum(static_cast<unsigned char>(c))) {
+            out += upper ? static_cast<char>(std::toupper(static_cast<unsigned char>(c))) : c;
+            upper = false;
+        } else {
+            upper = true;
+        }
+    }
+    return out;
+}
+
 // So VS Code, Visual Studio, CLion... find script.hpp and raylib (see
 // ide_files.hpp). Returns what went wrong, if anything.
 std::string refreshIdeFiles(const fs::path& project) {
@@ -574,7 +625,8 @@ void Editor::frame() {
     pumpFolderPicker();
     updateSplitters(sw, sh, kLeftW, kRightW, kOutputH, sceneH);
     bool modal = popup_.open || dialog_.open || confirm_.open || export_.open || projects_.open ||
-                 folderPick_.valid() || sheet_.open || codeEditorDialog_.open || instancesDialog_.open || swallowMouse_ ||
+                 folderPick_.valid() || sheet_.open || codeEditorDialog_.open || instancesDialog_.open || connectDialog_.open ||
+                 swallowMouse_ ||
                  splitter_ != Splitter::None;
     if (modal) GuiLock();
     {
@@ -1245,9 +1297,11 @@ void Editor::reparent(Node* node, Node* target, int zone) {
     touch();
     auto* n2 = node->as<Node2D>();
     raylib::Vector2 global = n2 ? n2->globalPosition() : raylib::Vector2{0, 0};
+    auto connections = resolveConnections(editTree_.root());
     auto owned = node->detach();
     owned->name = uniqueChildName(newParent, owned->name);
     newParent->addChild(std::move(owned), index);
+    rewriteConnections(connections);  // signal connections still point at the same nodes
     if (n2) n2->setGlobalPosition(global);  // stays where it was on screen
     newParent->collapsed = false;
 }
@@ -1932,6 +1986,14 @@ void Editor::drawInspector(Rectangle r) {
         selected_->name = "";  // so it doesn't clash with itself
         selected_->name = uniqueChildName(selected_->parent(), wanted);
     }
+    if (selected_->name != oldName) {
+        // Signal connections pointing through this node follow the new name
+        std::string newName = selected_->name;
+        selected_->name = oldName;
+        auto connections = resolveConnections(editTree_.root());
+        selected_->name = newName;
+        rewriteConnections(connections);
+    }
 
     std::vector<Property> props;
     selected_->getProperties(props);
@@ -1980,22 +2042,7 @@ void Editor::drawInspector(Rectangle r) {
     y += 34;
     scriptVariableRows(x, y, w);
 
-    // Signals it can send (like Godot's Node dock): connect to them in a script
-    {
-        std::vector<SignalInfo> signals = selected_->signalList();
-        if (inspectorScript_ && inspectorScriptNode_ == selected_)
-            for (const SignalInfo& s : inspectorScript_->signals()) signals.push_back(s);
-        Property signalSection{"Signals", PropKind::Section};
-        propertyRow(signalSection, x, y, w);
-        for (const SignalInfo& s : signals) {
-            GuiDrawIcon(ICON_LINK_NET, static_cast<int>(x), static_cast<int>(y + 2), 1, kAccent);
-            drawText(s.name, x + 22, y + 3, kText);
-            if (!s.args.empty()) drawText("(" + s.args + ")", x + 22 + textWidth(s.name) + 6, y + 3, kDim);
-            y += 22;
-        }
-        drawText("In a script: connect(node, \"name\", ...)", x, y + 2, kDim);
-        y += 26;
-    }
+    signalRows(x, y, w);
 
     // Scene: instancing (like Godot's "instance" and "Save Branch as Scene")
     if (selected_->parent()) {
@@ -3583,6 +3630,7 @@ void Editor::drawModal() {
     if (sheet_.open) drawSheetDialog();
     if (codeEditorDialog_.open) drawCodeEditorDialog();
     if (instancesDialog_.open) drawRunInstancesDialog();
+    if (connectDialog_.open) drawConnectDialog();
     bool picking = folderPick_.valid();
     if (picking) GuiLock();  // the folder window is open: everything here waits
     if (export_.open) drawExportDialog();
@@ -4056,6 +4104,255 @@ void Editor::createScript(const std::string& className) {
     } else {
         log("Rebuild the editor (cmake --build build) to compile it, then press Play.", kOrange);
     }
+}
+
+// ===========================================================================
+// Signals: the Inspector's list of a node's signals, and connecting them to a
+// script's function (like Godot's Node dock)
+// ===========================================================================
+void Editor::signalRows(float x, float& y, float w) {
+    std::vector<SignalInfo> signals = selected_->signalList();
+    if (inspectorScript_ && inspectorScriptNode_ == selected_)
+        for (const SignalInfo& s : inspectorScript_->signals()) signals.push_back(s);
+    Property signalSection{"Signals", PropKind::Section};
+    propertyRow(signalSection, x, y, w);
+    bool editable = !selected_->inInstance && !playTree_;
+    for (const SignalInfo& s : signals) {
+        GuiDrawIcon(ICON_LINK_NET, static_cast<int>(x), static_cast<int>(y + 3), 1, kAccent);
+        drawText(s.name, x + 22, y + 4, kText);
+        if (!s.args.empty() && x + 22 + textWidth(s.name) + 6 + textWidth("(" + s.args + ")") < x + w - 84)
+            drawText("(" + s.args + ")", x + 22 + textWidth(s.name) + 6, y + 4, kDim);
+        if (editable && GuiButton({x + w - 80, y, 80, 24}, "Connect...")) openConnectDialog(s);
+        y += 28;
+        // Its connections: click one to see the function, x to remove it
+        for (size_t i = 0; i < selected_->connections.size(); ++i) {
+            const SavedConnection& c = selected_->connections[i];
+            if (c.signal != s.name) continue;
+            Node* target = selected_->getNode(c.target);
+            std::string label = "-> " + (target ? target->name : c.target + " (missing)") + "." + c.method + "()" +
+                                (c.oneShot ? "  once" : "");
+            Rectangle row{x + 18, y, w - 18 - (editable ? 30 : 0), 22};
+            bool hover = mouseIn(row) && !GuiIsLocked();
+            if (hover) DrawRectangleRec(row, kHover);
+            drawText(label, row.x + 4, y + 3, target ? kGood : kBad);
+            if (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && target)
+                addCallableToScript(target->scriptName, c.method, s.args, "");  // (opens it; adds it if it's missing)
+            if (editable && GuiButton({x + w - 26, y, 26, 22}, GuiIconText(ICON_CROSS_SMALL, nullptr))) {
+                touch();
+                selected_->connections.erase(selected_->connections.begin() + static_cast<long>(i));
+                log("Disconnected " + s.name + " from " + c.method + "()", kAccent);
+                break;
+            }
+            y += 24;
+        }
+    }
+    drawText(selected_->inInstance ? "Connect this in its own scene file." : "Or in a script: connect(node, \"name\", ...)",
+             x, y + 2, kDim);
+    y += 26;
+}
+
+void Editor::openConnectDialog(const SignalInfo& signal) {
+    ConnectDialog& d = connectDialog_;
+    d = ConnectDialog{};
+    d.open = true;
+    d.signal = signal;
+    d.emitter = selected_;
+    // The target: the node itself if it has a script, else the nearest one above it that has
+    d.target = editTree_.root();
+    for (Node* n = selected_; n; n = n->parent())
+        if (!n->scriptName.empty()) {
+            d.target = n;
+            break;
+        }
+    d.autoName = "on" + (d.target == selected_ ? "" : pascalWords(selected_->name)) + pascalWords(signal.name);
+    std::snprintf(d.method, sizeof d.method, "%s", d.autoName.c_str());
+}
+
+void Editor::drawConnectDialog() {
+    ConnectDialog& d = connectDialog_;
+    float sw = screenW(), sh = screenH();
+    DrawRectangle(0, 0, static_cast<int>(sw), static_cast<int>(sh), Fade(BLACK, 0.5f));
+    float w = std::min(700.0f, sw - 40), h = std::min(540.0f, sh - 40);
+    Rectangle box{std::floor(sw / 2 - w / 2), std::floor(sh / 2 - h / 2), w, h};
+    bool cancel = GuiWindowBox(box, ("Connect a Signal: " + d.signal.name).c_str()) != 0;
+    float x = box.x + 14, y = box.y + 38, iw = box.width - 28;
+
+    drawText("When '" + d.emitter->name + "' sends " + d.signal.name + "(" + d.signal.args + "), call a function of:", x, y,
+             kText);
+    y += 26;
+
+    // The scene's nodes: pick the one whose script gets the call
+    struct Row {
+        Node* node;
+        int depth;
+    };
+    std::vector<Row> rows;
+    std::function<void(Node*, int)> walk = [&](Node* n, int depth) {
+        rows.push_back({n, depth});
+        for (auto& c : n->children()) walk(c.get(), depth + 1);
+    };
+    walk(editTree_.root(), 0);
+    Rectangle area{x, y, iw, std::max(120.0f, box.y + box.height - 200 - y)};
+    Rectangle content{0, 0, area.width - 16, std::max(1.0f, rows.size() * kRowH)};
+    Rectangle view{};
+    if (d.scrollToTarget) {  // show the chosen node
+        d.scrollToTarget = false;
+        for (size_t i = 0; i < rows.size(); ++i)
+            if (rows[i].node == d.target)
+                d.scroll.y = -std::max(0.0f, i * kRowH - (area.height - 16) / 2);
+    }
+    GuiScrollPanel(area, nullptr, content, &d.scroll, &view);
+    beginClip(view);
+    for (size_t i = 0; i < rows.size(); ++i) {
+        Node* n = rows[i].node;
+        Rectangle row{view.x, view.y + d.scroll.y + i * kRowH, view.width, kRowH};
+        bool hover = mouseIn(row) && mouseIn(view);
+        if (n == d.target) DrawRectangleRec(row, kSelect);
+        else if (hover) DrawRectangleRec(row, kHover);
+        float tx = row.x + 8 + rows[i].depth * 16;
+        drawText(n->name, tx, row.y + 4, n->scriptName.empty() ? kDim : kText);
+        std::string tag = n->scriptName.empty() ? "(no script)" : n->scriptName;
+        if (n == d.emitter) tag += "  (sends it)";
+        drawText(tag, tx + textWidth(n->name) + 12, row.y + 4, n->scriptName.empty() ? kDim : kAccent);
+        if (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && d.target != n) {
+            d.target = n;
+            if (d.method == d.autoName) {  // still the suggestion: suggest one for this target
+                d.autoName = "on" + (n == d.emitter ? "" : pascalWords(d.emitter->name)) + pascalWords(d.signal.name);
+                std::snprintf(d.method, sizeof d.method, "%s", d.autoName.c_str());
+            }
+        }
+    }
+    EndScissorMode();
+    y = area.y + area.height + 12;
+
+    drawText("Function", x, y + 5, kDim);
+    float fx = x + textWidth("Function") + 12;
+    if (GuiTextBox({fx, y, iw - (fx - x), 28}, d.method, sizeof d.method, d.methodEdit)) d.methodEdit = !d.methodEdit;
+    y += 36;
+    GuiCheckBox({x, y + 4, 18, 18}, "Only the first time (one shot)", &d.oneShot);
+    y += 32;
+
+    static const std::regex identifier("[A-Za-z_][A-Za-z0-9_]*");
+    std::string method = d.method;
+    bool hasScript = d.target && !d.target->scriptName.empty();
+    bool validName = std::regex_match(method, identifier);
+    bool inInstance = d.target && d.target->inInstance;
+    std::string note;
+    Color noteColor = kDim;
+    if (!hasScript) {
+        note = "'" + (d.target ? d.target->name : std::string("?")) +
+               "' has no script: attach one first (Inspector, Script, New), or pick another node.";
+        noteColor = kOrange;
+    } else if (!validName) {
+        note = "The function needs a C++ name: letters, digits and _, not starting with a digit.";
+        noteColor = kOrange;
+    } else if (inInstance) {
+        note = "That node is inside an instanced scene: its script can't be changed from here.";
+        noteColor = kOrange;
+    } else {
+        note = "Adds  void " + method + "(" + d.signal.args + ")  to " + d.target->scriptName +
+               " if it isn't there, and shows it.";
+    }
+    drawText(note, x, y, noteColor);
+
+    bool ok = hasScript && validName && !inInstance;
+    if (!ok) GuiDisable();
+    bool connect = GuiButton({box.x + box.width - 214, box.y + box.height - 42, 104, 30}, "Connect") ||
+                   (ok && !d.methodEdit && (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER)));
+    if (!ok) GuiEnable();
+    if (GuiButton({box.x + box.width - 104, box.y + box.height - 42, 90, 30}, "Cancel") ||
+        (!d.methodEdit && IsKeyPressed(KEY_ESCAPE)))
+        cancel = true;
+    if (cancel) {
+        d.open = false;
+        return;
+    }
+    if (!connect || !ok) return;
+
+    SavedConnection c{d.signal.name, relativePath(d.emitter, d.target), method, d.oneShot};
+    auto& list = d.emitter->connections;
+    if (std::find(list.begin(), list.end(), c) == list.end()) {
+        touch();
+        list.push_back(c);
+        log("Connected " + d.emitter->name + " " + c.signal + " to " + d.target->name + "." + method + "()", kGood);
+    }
+    d.open = false;
+    addCallableToScript(d.target->scriptName, method, d.signal.args,
+                        "Called by the \"" + d.signal.name + "\" signal of " + d.emitter->name + " (connected in the editor)");
+}
+
+void Editor::addCallableToScript(const std::string& className, const std::string& method, const std::string& args,
+                                 const std::string& comment) {
+    fs::path file = scriptFileOf(className);
+    std::string snippet = "CALLABLE(" + method + ");\n    void " + method + "(" + args + ") { }";
+    if (file.empty()) {
+        log("Couldn't find the file of script " + className + ". Add this to it yourself:  " + snippet, kOrange);
+        return;
+    }
+    TextDocument* doc = openDocument(file);
+    if (!doc) return;
+    std::string text = doc->text();
+    auto lineOf = [&](size_t pos) { return 1 + static_cast<int>(std::count(text.begin(), text.begin() + pos, '\n')); };
+
+    // There already: just show it
+    if (size_t at = text.find("CALLABLE(" + method + ")"); at != std::string::npos) {
+        doc->goToLine(lineOf(at) + 1);
+        return;
+    }
+    // The function is there, but not marked: mark it
+    std::smatch fn;
+    if (std::regex_search(text, fn, std::regex("(^|\\n)([ \\t]*)void\\s+" + method + "\\s*\\("))) {
+        size_t at = static_cast<size_t>(fn.position(0)) + fn[1].length();
+        std::string indent = fn[2].str();
+        text.insert(at, indent + "CALLABLE(" + method + ");  // (lets signals connected in the editor call it)\n");
+        int line = lineOf(at) + 1;
+        doc->setText(text);
+        saveDocument(*doc);
+        doc->goToLine(line);
+        log("Marked " + className + "::" + method + "() with CALLABLE, so the signal can call it.", kGood);
+        return;
+    }
+    if (comment.empty()) {  // (only showing an existing connection)
+        log(className + " has no " + method + "() yet. Add it with:  " + snippet, kOrange);
+        return;
+    }
+    // Find the class, then its closing brace
+    std::smatch m;
+    std::regex classStart("(class|struct)\\s+" + className + "\\b[^;{]*\\{");
+    if (!std::regex_search(text, m, classStart)) {
+        log("Couldn't find 'class " + className + "' in " + file.string() + ". Add this to it yourself:  " + snippet,
+            kOrange);
+        return;
+    }
+    size_t open = static_cast<size_t>(m.position(0) + m.length(0)) - 1;
+    int depth = 0;
+    size_t close = std::string::npos;
+    for (size_t i = open; i < text.size(); ++i) {
+        if (text.compare(i, 2, "//") == 0) i = text.find('\n', i);  // (skip comments)
+        if (i == std::string::npos) break;
+        if (text[i] == '{') ++depth;
+        if (text[i] == '}' && --depth == 0) {
+            close = i;
+            break;
+        }
+    }
+    if (close == std::string::npos) {
+        log("Couldn't find the end of class " + className + ". Add this to it yourself:  " + snippet, kOrange);
+        return;
+    }
+    size_t lineStart = text.rfind('\n', close);
+    lineStart = lineStart == std::string::npos ? 0 : lineStart + 1;
+    std::string add = "\n    // " + comment + "\n    CALLABLE(" + method + ");\n    void " + method + "(" + args +
+                      ") {\n        \n    }\n";
+    // (no blank line right after an opening brace)
+    if (lineStart >= 2 && text[lineStart - 2] == '{') add.erase(0, 1);
+    text.insert(lineStart, add);
+    int bodyLine = lineOf(lineStart) + static_cast<int>(std::count(add.begin(), add.end(), '\n')) - 2;
+    doc->setText(text);
+    saveDocument(*doc);  // (the script reloads with the new function)
+    doc->goToLine(bodyLine, 9);
+    codeFocused_ = true;
+    log("Added " + method + "() to " + className + ".", kGood);
 }
 
 // ===========================================================================

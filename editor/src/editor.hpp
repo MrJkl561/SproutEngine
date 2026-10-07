@@ -152,7 +152,7 @@ private:
     bool isTyping() const {
         return !activeField_.empty() || dialog_.open || confirm_.open || export_.open || projects_.open ||
                folderPick_.valid() || sheet_.open || codeEditorDialog_.open || instancesDialog_.open ||
-               (mainView_ == MainView::Script && (codeFocused_ || find_.findEdit || find_.withEdit));
+               connectDialog_.open || (mainView_ == MainView::Script && (codeFocused_ || find_.findEdit || find_.withEdit));
     }
 
     // --- code editor (VS Code, Visual Studio...) -----------------------------
@@ -175,8 +175,17 @@ private:
     void setDiagnostics(TextDocument& doc) const;  // the last build's messages for its file
     bool dialogOpen() const {
         return dialog_.open || confirm_.open || export_.open || projects_.open || folderPick_.valid() || sheet_.open ||
-               codeEditorDialog_.open || instancesDialog_.open;
+               codeEditorDialog_.open || instancesDialog_.open || connectDialog_.open;
     }
+
+    // --- Signals (the Inspector's Signals list and its Connect dialog) --------
+    void signalRows(float x, float& y, float w);
+    void openConnectDialog(const SignalInfo& signal);
+    void drawConnectDialog();
+    // Adds "CALLABLE(method); void method(args) {}" to a script class (if it
+    // isn't there) and shows it in the Script tab.
+    void addCallableToScript(const std::string& className, const std::string& method, const std::string& args,
+                             const std::string& comment);
 
     // --- Run Instances (several copies of the game, for multiplayer) ---------
     void openRunInstancesDialog();
@@ -392,6 +401,19 @@ private:
         char command[512] = {};
         bool commandEdit = false;
     } codeEditorDialog_;
+
+    struct ConnectDialog {
+        bool open = false;
+        SignalInfo signal;
+        Node* emitter = nullptr;
+        Node* target = nullptr;
+        char method[96] = {};
+        bool methodEdit = false;
+        bool oneShot = false;
+        bool scrollToTarget = true;  // (on opening)
+        std::string autoName;        // the name it suggested (changes with the target until you type your own)
+        raylib::Vector2 scroll{0, 0};
+    } connectDialog_;
 
     struct RunInstancesDialog {
         bool open = false;

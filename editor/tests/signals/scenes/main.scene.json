@@ -28,6 +28,13 @@
             },
             "children": []
           }
+        ],
+        "connections": [
+          {
+            "signal": "body_entered",
+            "target": "..",
+            "method": "onAreaBody"
+          }
         ]
       },
       {
@@ -84,7 +91,20 @@
           "wait_time": 0.1,
           "autostart": true
         },
-        "children": []
+        "children": [],
+        "connections": [
+          {
+            "signal": "timeout",
+            "target": "..",
+            "method": "onTickFromEditor"
+          },
+          {
+            "signal": "timeout",
+            "target": "..",
+            "method": "onTickOnce",
+            "one_shot": true
+          }
+        ]
       },
       {
         "type": "Timer",

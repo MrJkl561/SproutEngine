@@ -435,6 +435,7 @@ and it's compiled in the background, ready for Play.
 | `tree()->values["coins"]` | Numbers that last from one scene to the next |
 | `print("hello")` | Writes to the Output panel |
 | `connect(node, "body_entered", &Coin::onBody)` | Calls a function when a node sends a signal ([more](#signals)) |
+| `CALLABLE(onBody);` | Lets signals connected in the editor call that function ([more](#signals)) |
 | `SIGNAL(died);`, `emitSignal("died")` | Declares and sends a signal of your own ([more](#signals)) |
 | `EXPORT(float, speed, 200);` | A variable shown in the inspector ([more](#script-variables-shown-in-the-inspector)) |
 
@@ -636,6 +637,34 @@ under *Signals*):
 | `Timer` | `timeout` |
 | `AnimatedSprite2D` | `animation_finished`, `animation_looped`, `frame_changed` |
 | `MultiplayerSpawner` | `spawned(Node* node)`, `despawned(Node* node)` (on clients) |
+
+**Connecting in the editor** (like Godot's Node dock): select the node that
+sends the signal, find the signal under **Signals** in the Inspector and press
+**Connect...**. Pick the node whose script should get the call (nodes without
+a script are greyed out), check the function's name and press **Connect**:
+
+- The connection is saved in the scene and made when the game starts (before
+  `ready()`), and again after a hot reload or scene change.
+- If the script doesn't have the function yet, the editor adds it, ready to
+  fill in, and shows it in the Script tab:
+
+  ```cpp
+  // Called by the "body_entered" signal of Coin2 (connected in the editor)
+  CALLABLE(onCoin2BodyEntered);
+  void onCoin2BodyEntered(Node* body) {
+
+  }
+  ```
+
+  `CALLABLE(name)` is what lets a connection made in the editor call a
+  function by its name (C++ can't do that by itself). If the function is
+  already there, the editor only adds the `CALLABLE` line above it.
+- The Inspector lists each signal's connections under it: click one to see
+  its function, **x** to remove it. **Only the first time** makes a one-shot
+  connection.
+- Renaming or moving nodes in the Scene dock keeps their connections
+  pointing at the same nodes. On an instanced scene, connect its root in the
+  level; what's inside it is connected in its own scene file.
 
 **Signals of your own.** Declare them in the script with `SIGNAL` (the types
 of the values they send, if any), and send them with `emitSignal`. Other

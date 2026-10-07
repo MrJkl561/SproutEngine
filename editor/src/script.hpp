@@ -220,6 +220,16 @@ public:
     const std::vector<SignalInfo>& signals() const { return signals_; }
     void declareSignal(SignalInfo info) { signals_.push_back(std::move(info)); }
 
+    // Functions marked CALLABLE(name), which signals connected in the editor
+    // call by name (C++ can't find a function from its name by itself).
+    void addCallable(const std::string& name, std::function<void(const SignalArgs&)> fn) {
+        callables_[name] = std::move(fn);
+    }
+    std::function<void(const SignalArgs&)> callable(const std::string& name) const {
+        auto it = callables_.find(name);
+        return it == callables_.end() ? nullptr : it->second;
+    }
+
     // Lag compensation, on the server inside an RPC from a client: runs fn
     // with every synced node moved back to where that client saw it when it
     // sent the RPC (then puts them back). For hit checks:
@@ -293,6 +303,7 @@ private:
     std::vector<std::pair<std::weak_ptr<SignalHub>, std::size_t>> connections_;
     std::vector<SignalInfo> signals_;
     std::set<std::string> warned_;
+    std::map<std::string, std::function<void(const SignalArgs&)>> callables_;
 };
 
 namespace detail {
@@ -525,3 +536,25 @@ public:
 }  // namespace s2d::detail
 
 #define SIGNAL(name, ...) ::s2d::detail::SignalField s2dSignal_##name { this, #name, #__VA_ARGS__ }
+
+// ---------------------------------------------------------------------------
+// CALLABLE: lets a signal connected in the editor (the Inspector's Signals
+// list) call this function. The editor writes it for you when you connect:
+//
+//     CALLABLE(onCoinBodyEntered);
+//     void onCoinBodyEntered(Node* body) { ... }
+namespace s2d::detail {
+class CallableField {
+public:
+    CallableField(Script* script, const char* name, std::function<void(const SignalArgs&)> fn) {
+        script->addCallable(name, std::move(fn));
+    }
+    CallableField(const CallableField&) = delete;
+    CallableField& operator=(const CallableField&) = delete;
+};
+}  // namespace s2d::detail
+
+#define CALLABLE(name)                                                                                     \
+    ::s2d::detail::CallableField s2dCallable_##name {                                                      \
+        this, #name, ::s2d::detail::bindMethod(this, &std::remove_pointer_t<decltype(this)>::name, #name) \
+    }

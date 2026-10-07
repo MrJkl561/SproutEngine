@@ -273,9 +273,10 @@ you'll make a character that runs and jumps, in about 15 minutes.
   from your desktop.
 - **C++ scripts on nodes** with `ready()` and `process(delta)`, which **hot
   reload** while the game runs.
-- **Signals** like Godot's: `connect(getNode("Area2D"), "body_entered",
-  &Coin::onBody)`, your own with `SIGNAL(died)` and `emitSignal("died")`, and
-  a `Timer` node.
+- **Signals** like Godot's: connect them in the Inspector (the editor writes
+  the function for you) or in code with `connect(getNode("Area2D"),
+  "body_entered", &Coin::onBody)`; your own with `SIGNAL(died)` and
+  `emitSignal("died")`; and a `Timer` node.
 - **`EXPORT(float, speed, 250);`** puts a script variable in the Inspector, so
   every node can have its own value.
 - **A built-in script editor** with autocomplete, and **errors as you type**

@@ -40,6 +40,16 @@ public:
         connect(getNode("Tick"), "timout", [] {});
     }
 
+    // Connected in the editor (saved in the scene file, see Tick and Area)
+    CALLABLE(onTickFromEditor);
+    void onTickFromEditor() { ++editorTicks; }
+    CALLABLE(onTickOnce);
+    void onTickOnce() { ++editorOnce; }
+    CALLABLE(onAreaBody);
+    void onAreaBody(Node* body) {
+        if (body && body->name == "Body") check("editor_connection_with_value");
+    }
+
     void onBodyEntered(Node* body) {
         if (body->name == "Body") check("body_entered_method");
     }
@@ -53,6 +63,8 @@ public:
         if (at(0.35)) {
             if (ticks >= 3) check("timer_repeats");
             if (oneShotCalls == 1) check("one_shot_connection");
+            if (editorTicks >= 3) check("editor_connection");
+            if (editorOnce == 1) check("editor_connection_one_shot");
             disconnect(tickId);
             disconnectableAt = disconnectable;
             listenerAt = tree()->values["listener_ticks"];
@@ -73,13 +85,15 @@ private:
         static const std::vector<std::string> all = {
             "body_entered_method", "body_exited_typed_lambda", "body_exited_when_freed", "timer_repeats",
             "one_shot_connection", "disconnect", "one_shot_timer", "freed_listener_not_called", "custom_signal_value",
-            "listener_takes_fewer_values", "animation_finished", "tree_exiting", "ready"};
+            "listener_takes_fewer_values", "animation_finished", "tree_exiting", "ready", "editor_connection",
+            "editor_connection_one_shot", "editor_connection_with_value"};
         for (const auto& n : all)
             if (!passed.count(n)) return;
         print("SIGNALS TEST PASSED");
     }
 
     double time = 0, listenerAt = 0;
+    int editorTicks = 0, editorOnce = 0;
     int ticks = 0, oneShotCalls = 0, onceTimeouts = 0, disconnectable = 0, disconnectableAt = 0;
     std::size_t tickId = 0;
     std::set<std::string> passed;
