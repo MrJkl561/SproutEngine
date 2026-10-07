@@ -72,7 +72,7 @@
         "type": "MultiplayerSynchronizer",
         "name": "MultiplayerSynchronizer",
         "properties": {
-          "properties": "position, velocity, Sprite:flip_h"
+          "properties": "position, velocity, Sprite:flip_h, :hits"
         },
         "children": []
       }

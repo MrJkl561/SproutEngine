@@ -7,8 +7,11 @@
 //   dedicated server) and makes that peer its multiplayer authority.
 // - The MultiplayerSpawner copies every player the server adds below "Players"
 //   to all the other games, including ones that join later.
-// - Each Player's MultiplayerSynchronizer sends its position from the game that
-//   controls it to everyone else (see net_player.cpp).
+// - Players are moved with prediction: each player's own game moves at once
+//   and sends its keys to the server, which makes the real move; each
+//   Player's MultiplayerSynchronizer sends the server's result to everyone
+//   (see net_player.cpp). Shots are lag compensated.
+// - Try it over a slow network: add "--lag 150" to a copy in Run Instances.
 //
 // Press Play: Run Instances (the window button next to Stop) starts two
 // copies, one with --host and one with --join 127.0.0.1. Or start them by hand
@@ -33,7 +36,12 @@ public:
         else setStatus("Press H to host a game, or J to join " + address);
     }
 
-    void process(float) override {
+    void process(float delta) override {
+        // A client shows its ping (the time to the server and back) every second
+        if (multiplayer().isConnected() && !multiplayer().isServer() && (sincePing += delta) > 1) {
+            sincePing = 0;
+            showPlayers();
+        }
         if (multiplayer().isActive()) return;
         if (IsKeyPressed(KEY_H)) startServer(true);
         if (IsKeyPressed(KEY_J)) joinGame(address);
@@ -86,13 +94,17 @@ public:
     void showPlayers() {
         int count = static_cast<int>(multiplayer().peers().size()) + 1;
         std::string me = multiplayer().isServer() ? "the server" : "player " + std::to_string(multiplayer().uniqueId());
-        setStatus("You are " + me + ". Players online: " + std::to_string(count));
+        std::string ping = multiplayer().isServer() ? "" : "   Ping: " + std::to_string(multiplayer().ping()) + " ms";
+        setStatus("You are " + me + ". Players online: " + std::to_string(count) + ping);
     }
 
     void setStatus(const std::string& text) {
         if (auto* label = findNode<Label>("Status")) label->text = text;
-        print(text);
+        if (text.find("Ping") == std::string::npos) print(text);  // (not the ping, every second)
     }
+
+private:
+    float sincePing = 0;
 };
 
 REGISTER_SCRIPT(Lobby)

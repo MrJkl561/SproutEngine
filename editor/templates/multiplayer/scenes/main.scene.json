@@ -223,7 +223,7 @@
             12,
             36
           ],
-          "text": "Arrows: move   Space: jump   E: wave",
+          "text": "Arrows: move   Space: jump   E: wave   F: shoot",
           "font_size": 16,
           "color": [
             170,

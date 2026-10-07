@@ -20,6 +20,8 @@ with a `MultiplayerSpawner`, and scripts call each other's functions with
 - [MultiplayerSynchronizer](#multiplayersynchronizer-keep-values-the-same-everywhere)
 - [MultiplayerSpawner](#multiplayerspawner-add-things-to-everyones-game)
 - [RPCs](#rpcs-call-a-function-on-other-players-games)
+- [Prediction: no waiting for the server](#prediction-no-waiting-for-the-server)
+- [Lag compensation: hit what you see](#lag-compensation-hit-what-you-see)
 - [Testing: Run Instances](#testing-run-instances)
 - [Dedicated servers](#dedicated-servers)
 - [Playing over a network](#playing-over-a-network)
@@ -35,9 +37,12 @@ with a `MultiplayerSpawner`, and scripts call each other's functions with
 2. Press **Play**. Two copies of the game start: one in the editor (it hosts)
    and one in a window of its own (it joins).
 3. Click into either one and play: **arrow keys** move, **Space** jumps,
-   **E** waves to the others. Each game moves its own player, and sees the
-   other one move.
-4. Press **Stop**: both copies stop.
+   **E** waves to the others, **F** shoots. Your player moves the instant you
+   press a key (prediction), the server decides where everyone really is,
+   and shots count where you saw the others (lag compensation).
+4. To feel a slow connection, open the window button next to **Stop** and add
+   `--lag 150` to copy 2's command line. It still moves at once.
+5. Press **Stop**: both copies stop.
 
 The template's two scripts, `scripts/lobby.cpp` and `scripts/net_player.cpp`,
 are short and full of comments. They're the best place to start reading.
@@ -123,7 +128,9 @@ isMultiplayerAuthority()               // in a script: is it us?
 ```
 
 The rule of thumb: **only the authority changes a node; everyone else just
-shows it.** So a player script starts like this:
+shows it.** So a simple player script starts like this (for players, the
+better way is [prediction](#prediction-no-waiting-for-the-server), where
+the server makes the real moves):
 
 ```cpp
 void process(float delta) override {
@@ -260,6 +267,122 @@ void requestScore(int points) {
 }
 ```
 
+## Prediction: no waiting for the server
+
+There are two ways to move a player:
+
+| | **The player's game decides** | **The server decides, with prediction** |
+|---|---|---|
+| How | The player's game moves it and sends the position | The player's game sends its **keys**; the server moves it |
+| Your own player | Moves at once | Moves at once (predicted) |
+| Cheating | A modified game can put its player anywhere | Can't: the server only takes keys |
+| Bumping into others | Each game sees its own version | The server's version counts |
+| Code | `process()` with `isMultiplayerAuthority()` | `INPUT`, `gatherInput()`, `simulate()` |
+
+For players, the second is better, and it's what the template does. Mark
+what the player controls with `INPUT`, read the keyboard in
+`gatherInput()`, and move in `simulate()`:
+
+```cpp
+class NetPlayer : public Script {
+public:
+    EXPORT(float, speed, 220);
+
+    // What the player presses: sent to the server 60 times a second
+    INPUT(float, moveX, 0);
+    INPUT(bool, jump, false);
+
+    // On the player's own game only: read the keyboard into the INPUTs
+    void gatherInput() override {
+        moveX = (IsKeyDown(KEY_RIGHT) ? 1.0f : 0.0f) - (IsKeyDown(KEY_LEFT) ? 1.0f : 0.0f);
+        jump = IsKeyDown(KEY_SPACE);
+    }
+
+    // On the server (the real move) and the player's own game (the prediction)
+    void simulate(float delta) override {
+        auto* body = self<CharacterBody2D>();
+        body->velocity.x = moveX * speed;
+        body->velocity.y += 1300 * delta;
+        if (jump && body->isOnFloor()) body->velocity.y = -520;
+        body->moveAndSlide();
+    }
+};
+```
+
+Give the node a `MultiplayerSynchronizer` listing what `simulate()` changes
+(`position, velocity`), and set its multiplayer authority to the player's peer
+id as before. Then, 60 times a second:
+
+1. The player's own game calls `gatherInput()`, sends the inputs to the
+   server, and calls `simulate()` straight away: **the player moves with no
+   delay**. It keeps the inputs it sent.
+2. The server calls `simulate()` with each input as it arrives: **that's the
+   real move**. Its synchronizer sends the result to everyone, saying which
+   input it got up to.
+3. Everyone else shows the server's result, [interpolated](#smooth-movement-interpolation).
+4. The player's own game takes the server's result and **replays** the inputs
+   the server hadn't got to yet on top of it. Usually that lands exactly where
+   it already was, so nothing changes on screen. If the server saw something
+   different (someone was in the way), the player is quietly put right.
+
+Things to know:
+
+- `INPUT` works with `float`, `int`, `bool` and `Vector2`. Use `IsKeyDown`
+  (held) in `gatherInput()` rather than `IsKeyPressed`: it runs 60 times a
+  second, not once per frame, so a press could fall between two calls.
+- `simulate()` runs at exactly 60 ticks a second everywhere, whatever the
+  frame rate, with the same `delta`. Keep **everything that moves** the
+  player in it, and nothing else: the same inputs must give the same moves.
+- During a replay, `multiplayer().isReplaying()` is `true`: don't play
+  sounds or make effects in `simulate()` then (or keep them in `process()`).
+- `process()` still runs every frame on every game, for animations, labels
+  and so on. `isMultiplayerAuthority()` is still how a script knows it's the
+  player's own game (e.g. to send an RPC when a key is pressed).
+- The server only takes inputs from the player whose node it is, and ignores
+  positions sent by clients for predicted nodes.
+- `multiplayer().predictionError()` says how far (pixels) the last correction
+  moved your player: 0 almost always. `multiplayer().ping()` is the round trip
+  to the server in milliseconds.
+- When the game isn't networked, or on the server's own player, the inputs
+  are simply used straight away.
+
+## Lag compensation: hit what you see
+
+Other players are shown a moment in the past (interpolation, plus the time
+their moves took to reach you). So when you shoot at someone, by the time
+the server hears about it they've moved on, and you'd miss what you aimed at.
+
+**Lag compensation** fixes that. Every RPC a client sends says what moment
+that client was seeing. On the server, inside the RPC, `lagCompensated()`
+runs your check with **every synced node moved back to where that client
+saw it**, then puts them back:
+
+```cpp
+// On the player's own game, when F is pressed
+rpcId(1, "shoot", body->position, dir);
+
+// On the server
+RPC(shoot);
+void shoot(Vector2 from, float dir) {
+    if (!multiplayer().isServer()) return;
+    Node* victim = nullptr;
+    lagCompensated([&] {
+        // ...look for a player whose CollisionShape2D the shot crosses...
+    });
+    if (victim) { /* count the hit, tell everyone */ }
+}
+```
+
+The template's `shoot()` in `net_player.cpp` is a complete example.
+
+- It moves back the nodes that have a `MultiplayerSynchronizer` (where their
+  synchronizer's parent was), except the shooter's own: the shot starts from
+  where the shooter is now.
+- The server keeps one second of history, and never goes back more than half
+  a second (so a cheater can't claim to have seen the distant past).
+- Outside a client's RPC (on the server's own player, or when not networked)
+  it just runs your check as things are.
+
 ## Testing: Run Instances
 
 To test a multiplayer game you need several copies of it running. The
@@ -273,6 +396,10 @@ sets how many copies **Play** starts, from 1 to 4:
   and `--join 127.0.0.1` for copy 2. Scripts read them with `hasArg()` and
   `argValue()`.
 - `--server` makes a copy a **dedicated server** with no window (see below).
+- `--lag 150` makes a copy's network slow: 150 ms added to the round trip.
+  Add `--jitter 30` for uneven delays and `--loss 5` to lose 5% of the
+  updates. Great for seeing prediction, interpolation and lag compensation
+  at work without a second computer.
 - **Stop** stops them all.
 
 This is saved in the project's `project.json`. The extra windows use the
@@ -280,8 +407,13 @@ scripts as they were when you pressed Play: after changing a script, press
 Stop and Play again to see it in all of them.
 
 The editor's own multiplayer is tested on every build with three real games
-(a server and two clients, no windows): see `scripts/test-multiplayer.sh`
+(a server and two clients, no windows), once on a perfect network and once
+with `--lag 120 --jitter 20 --loss 5`: see `scripts/test-multiplayer.sh`
 (`scripts\test-multiplayer.bat` on Windows) and `editor/tests/multiplayer/`.
+It checks, among the rest, that prediction is exact (0 px of correction),
+that a client can't move its predicted player by itself, and that a
+lag-compensated shot finds the target where the client saw it (within a
+pixel, against about 25 px off without compensation).
 
 ## Dedicated servers
 
@@ -344,15 +476,18 @@ the library Godot uses too. It's downloaded with the editor's other libraries.
 | `MultiplayerSynchronizer` (replication config) | `MultiplayerSynchronizer` (`properties` field) |
 | `MultiplayerSpawner` (spawn path + auto spawn list) | `MultiplayerSpawner` (`spawn_path`) |
 | Debug → Customize Run Instances | the window button next to Stop |
+| (addons like netfox) rollback / prediction | `INPUT`, `gatherInput()`, `simulate()` |
 | `--headless` dedicated server export | any desktop export, started with `--server` |
 
 ## Limits
 
 - **Not in web games.** Browsers can't use UDP. In a web export, `host()`
   and `join()` return `false` and the game plays alone.
-- **No prediction.** Other players are shown 0.1 seconds in the past
-  (interpolation), which hides jitter but means you see them slightly
-  behind. There's no lag compensation for things like shooting at them.
+- **Prediction is for your own player.** Things others push around (a ball
+  you kick) are moved by the server and shown interpolated, so your effect on
+  them shows up after a round trip.
+- **Lag compensation moves positions only** (of nodes with a synchronizer),
+  not other properties, and only inside a client's RPC on the server.
 - **RPCs can be called by anyone.** Check `rpcSender()` and
   `multiplayer().isServer()` where it matters.
 - **Scene changes aren't synced.** If the server calls `changeScene()`, tell

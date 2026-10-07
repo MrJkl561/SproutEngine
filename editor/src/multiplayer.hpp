@@ -12,6 +12,11 @@
 //     void jump(float height) { ... }
 //     rpc("jump", 300.0f);                       // run jump(300) on every other peer
 //
+// Prediction: a script with INPUT(...) variables is moved by its inputs. The
+// player's own game moves it at once (predicted) and sends the inputs; the
+// server makes the real move; everyone else sees the server's result. See
+// INPUT in script.hpp. Lag compensation: lagCompensated() in Script.
+//
 // Two nodes do the rest without code:
 //   MultiplayerSynchronizer - keeps properties (position, ...) the same everywhere
 //   MultiplayerSpawner      - copies scenes the server adds below a node to everyone
@@ -25,6 +30,7 @@
 
 #include <raylib-cpp.hpp>
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <variant>
@@ -65,6 +71,17 @@ public:
 
     // Used by Script::rpc / rpcId. target: 0 = every other peer, else one peer.
     void sendRpc(const Node* node, const std::string& method, const NetArgs& args, int target);
+
+    // Prediction (scripts with INPUT, see script.hpp)
+    bool isReplaying() const;       // simulate() is replaying old inputs: skip sounds, effects...
+    float predictionError() const;  // how far (pixels) the last server answer moved our own player
+    int ping() const;               // round trip to the server, in milliseconds (0 on the server)
+    // Lag compensation: see Script::lagCompensated
+    void lagCompensated(const Node* caller, const std::function<void()>& fn);
+
+    // Called by the SceneTree every frame, between poll() and the scripts:
+    // runs the predicted scripts' fixed 60-a-second ticks.
+    void simulate(SceneTree& tree, float delta);
 
     // Called by the SceneTree every frame: poll() before scripts run (messages
     // in, events to scripts), flush() after (synchronizers and spawners out).

@@ -76,6 +76,10 @@ template <class T> NetValue toNet(T&& v) {
     if constexpr (std::is_same_v<D, bool>) return NetValue(v);
     else if constexpr (std::is_floating_point_v<D>) return NetValue(static_cast<float>(v));
     else if constexpr (std::is_integral_v<D> || std::is_enum_v<D>) return NetValue(static_cast<int>(v));
+    // raylib-cpp's Vector2 / Color (e.g. body->position): send the plain raylib
+    // ones (first: they can also turn into text)
+    else if constexpr (std::is_base_of_v<::Vector2, D>) return NetValue(::Vector2{v.x, v.y});
+    else if constexpr (std::is_base_of_v<::Color, D>) return NetValue(::Color{v.r, v.g, v.b, v.a});
     else if constexpr (std::is_convertible_v<D, std::string>) return NetValue(std::string(v));
     else return NetValue(std::forward<T>(v));
 }
@@ -96,6 +100,24 @@ public:
     }
     // (Used by EXPORT.)
     void addAutoExport(std::function<void(Exports&)> add) { autoExports_.push_back(std::move(add)); }
+
+    // Prediction (see INPUT below and multiplayer.hpp). A script with INPUT
+    // variables is moved by its inputs, 60 times a second:
+    //   gatherInput()   on the player's own game: read the keyboard into the INPUTs
+    //   simulate(delta) on the server (the real move) and on the player's own
+    //                   game (predicted at once, replayed when the server answers)
+    // Everyone else sees the server's result (smoothly, through a MultiplayerSynchronizer).
+    virtual void gatherInput() {}
+    virtual void simulate(float /*delta*/) {}
+    bool isPredicted() const { return !inputs_.empty(); }
+    std::vector<Property>& inputs() { return inputs_; }  // (used by INPUT and the multiplayer code)
+
+    // Lag compensation, on the server inside an RPC from a client: runs fn
+    // with every synced node moved back to where that client saw it when it
+    // sent the RPC (then puts them back). For hit checks:
+    //   RPC(shoot);
+    //   void shoot(Vector2 from, Vector2 dir) { lagCompensated([&] { ...check what the shot hits... }); }
+    void lagCompensated(const std::function<void()>& fn) const { multiplayer().lagCompensated(node_, fn); }
 
     // Multiplayer events (see multiplayer.hpp), sent to every script:
     virtual void peerConnected(int /*id*/) {}     // a peer joined (the server sees clients; clients see each other)
@@ -157,6 +179,7 @@ private:
     Node* node_ = nullptr;
     std::vector<std::function<void(Exports&)>> autoExports_;
     std::map<std::string, std::function<void(const NetArgs&)>> rpcs_;
+    std::vector<Property> inputs_;
 };
 
 // Makes a new copy of a scene file, to add with addChild(), e.g.
@@ -328,3 +351,34 @@ public:
             ::s2d::detail::callRpc(this, &std::remove_pointer_t<decltype(this)>::name, rpcArgs, #name); \
         }                                                                                                \
     }
+
+// ---------------------------------------------------------------------------
+// INPUT: one thing the player controls, for prediction (see simulate() above).
+// Set it in gatherInput(), use it in simulate():
+//
+//     INPUT(float, moveX, 0);    // -1 left, 1 right
+//     INPUT(bool, jump, false);
+//
+// Works with float, int, bool and Vector2.
+namespace s2d::detail {
+template <class T> inline constexpr bool inputType =
+    std::is_same_v<T, float> || std::is_same_v<T, int> || std::is_same_v<T, bool> || std::is_same_v<T, Vector2> ||
+    std::is_same_v<T, raylib::Vector2>;
+template <class T> class InputField {
+public:
+    InputField(Script* script, const char* name, T& value) {
+        PropKind kind = std::is_same_v<T, float> ? PropKind::Float
+                        : std::is_same_v<T, int> ? PropKind::Int
+                        : std::is_same_v<T, bool> ? PropKind::Bool
+                                                  : PropKind::Vec2;
+        script->inputs().push_back({exportName(name), kind, &value});
+    }
+    InputField(const InputField&) = delete;
+    InputField& operator=(const InputField&) = delete;
+};
+}  // namespace s2d::detail
+
+#define INPUT(Type, name, ...)                                                                   \
+    static_assert(::s2d::detail::inputType<Type>, "INPUT works with float, int, bool and Vector2"); \
+    Type name{__VA_ARGS__};                                                                      \
+    ::s2d::detail::InputField<Type> s2dInput_##name { this, #name, name }

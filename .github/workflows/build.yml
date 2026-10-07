@@ -67,6 +67,9 @@ jobs:
           exe=build/bin/sprout_editor/sprout_editor
           if [ -f "$exe.exe" ]; then exe="$exe.exe"; fi
           SPROUT_EDITOR="$PWD/$exe" scripts/test-multiplayer.sh
+          # again over a slow, lossy network (prediction, interpolation, lag compensation)
+          SPROUT_EDITOR="$PWD/$exe" SPROUT_TEST_LAG="--lag 120 --jitter 20 --loss 5" SPROUT_TEST_PORT=7791 \
+            scripts/test-multiplayer.sh
 
       # Exports the editor's demo game for this runner's own platform, the way
       # the editor's Export window does, and plays the Linux one for 2 seconds.

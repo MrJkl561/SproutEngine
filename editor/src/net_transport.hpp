@@ -37,6 +37,11 @@ public:
     // older ones are dropped if a newer one arrived first (channel 1).
     void send(int peer, const std::vector<std::uint8_t>& data, bool reliable);
     void flush();
+    int roundTripMs(int peer) const;  // ENet's estimate (0 if unknown)
+    // Pretend the network is slow, for testing: adds lagMs to the round trip
+    // (half on the way out, half on the way in), plus up to jitterMs either
+    // way, and drops lossPercent of the unreliable messages.
+    void simulateLag(int lagMs, int jitterMs, float lossPercent);
     void close();  // disconnects everyone at once
 
 private:

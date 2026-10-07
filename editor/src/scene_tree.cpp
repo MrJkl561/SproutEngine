@@ -87,6 +87,7 @@ void SceneTree::process(float delta) {
     std::vector<Node*> nodes;
     forEachNode(root_.get(), [&](Node* n) { nodes.push_back(n); });
     for (Node* n : nodes) n->update(delta);  // nodes that move by themselves (animations)
+    multiplayer().simulate(*this, delta);    // scripts with INPUT: their fixed 60-a-second moves
     for (Node* n : nodes)
         if (n->script && !n->isQueuedForDeletion()) n->script->process(delta);
 

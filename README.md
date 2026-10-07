@@ -284,7 +284,10 @@ you'll make a character that runs and jumps, in about 15 minutes.
   **web**, with one button.
 - **Multiplayer** like Godot's: host or join a game, `MultiplayerSynchronizer`
   and `MultiplayerSpawner` nodes, `RPC`s, **Run Instances** to test several
-  copies at once, and dedicated servers (`--server`). Start from the
+  copies at once, and dedicated servers (`--server`). Other players move
+  smoothly (interpolation), your own moves at once while the server stays in
+  charge (client-side prediction), and shots hit what you saw (lag
+  compensation). Start from the
   **Multiplayer** project template.
 - **Several projects**, a Project Manager, undo/redo, and editable themes and
   panel sizes.

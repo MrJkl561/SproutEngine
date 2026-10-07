@@ -301,6 +301,12 @@ public:
     bool isOnFloor() const { return onFloor_; }
     bool isOnWall() const { return onWall_; }
     bool isOnCeiling() const { return onCeiling_; }
+    // (Used by multiplayer prediction, to put the body back as the server had it.)
+    void setContacts(bool floor, bool wall, bool ceiling) {
+        onFloor_ = floor;
+        onWall_ = wall;
+        onCeiling_ = ceiling;
+    }
 
 private:
     bool onFloor_ = false, onWall_ = false, onCeiling_ = false;

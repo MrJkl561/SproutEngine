@@ -1,8 +1,12 @@
 #include "net_transport.hpp"
 
+#include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <deque>
 #include <map>
+#include <random>
 
 #if !defined(PLATFORM_WEB) && !defined(SPROUT_NO_NETWORK)
 #define SPROUT_HAS_ENET 1
@@ -31,6 +35,10 @@ bool startEnet() {
     return ok;
 }
 int idOf(ENetPeer* peer) { return static_cast<int>(reinterpret_cast<std::intptr_t>(peer->data)); }
+
+double seconds() {
+    return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
 }  // namespace
 
 struct Transport::Impl {
@@ -38,6 +46,48 @@ struct Transport::Impl {
     bool server = false;
     int nextId = 2;
     std::map<int, ENetPeer*> peers;
+
+    // Simulated lag (simulateLag): messages wait in these, oldest due first
+    double halfLag = 0, jitter = 0, loss = 0;
+    struct Out {
+        double due;
+        int peer;
+        std::vector<std::uint8_t> data;
+        bool reliable;
+    };
+    struct In {
+        double due;
+        Event event;
+    };
+    std::deque<Out> outgoing;
+    std::deque<In> incoming;
+    double lastOut = 0, lastIn = 0;  // reliable things keep their order
+    std::mt19937 random{12345};
+
+    bool lagging() const { return halfLag > 0 || jitter > 0 || loss > 0; }
+    double delay(bool reliable, double& last) {
+        std::uniform_real_distribution<double> j(-jitter, jitter);
+        double due = seconds() + std::max(0.0, halfLag + j(random));
+        if (reliable) due = last = std::max(due, last);
+        return due;
+    }
+    bool lose() {
+        std::uniform_real_distribution<double> r(0, 100);
+        return loss > 0 && r(random) < loss;
+    }
+    void sendNow(int peer, const std::vector<std::uint8_t>& data, bool reliable) {
+        auto it = peers.find(peer);
+        if (it == peers.end()) return;
+        ENetPacket* packet = enet_packet_create(data.data(), data.size(), reliable ? ENET_PACKET_FLAG_RELIABLE : 0);
+        enet_peer_send(it->second, reliable ? 0 : 1, packet);
+    }
+    void releaseOutgoing() {
+        double t = seconds();
+        while (!outgoing.empty() && outgoing.front().due <= t) {
+            sendNow(outgoing.front().peer, outgoing.front().data, outgoing.front().reliable);
+            outgoing.pop_front();
+        }
+    }
 };
 
 Transport::Transport() : impl_(std::make_unique<Impl>()) {}
@@ -91,44 +141,81 @@ bool Transport::connect(const std::string& address, int port, std::string& error
 }
 
 bool Transport::service(Event& out) {
-    if (!impl_->host) return false;
+    Impl& m = *impl_;
+    if (!m.host) return false;
+    m.releaseOutgoing();
     ENetEvent ev;
-    while (enet_host_service(impl_->host, &ev, 0) > 0) {
+    while (enet_host_service(m.host, &ev, 0) > 0) {
+        Event got;
+        bool reliable = true;
         switch (ev.type) {
         case ENET_EVENT_TYPE_CONNECT:
-            if (impl_->server) {
-                int id = impl_->nextId++;
+            if (m.server) {
+                int id = m.nextId++;
                 ev.peer->data = reinterpret_cast<void*>(static_cast<std::intptr_t>(id));
                 enet_peer_timeout(ev.peer, 0, 3000, 6000);
-                impl_->peers[id] = ev.peer;
+                m.peers[id] = ev.peer;
             }
-            out = {Event::Kind::Connected, idOf(ev.peer), {}};
-            return true;
+            got = {Event::Kind::Connected, idOf(ev.peer), {}};
+            break;
         case ENET_EVENT_TYPE_RECEIVE:
-            out = {Event::Kind::Received, idOf(ev.peer),
+            reliable = (ev.packet->flags & ENET_PACKET_FLAG_RELIABLE) != 0;
+            got = {Event::Kind::Received, idOf(ev.peer),
                    std::vector<std::uint8_t>(ev.packet->data, ev.packet->data + ev.packet->dataLength)};
             enet_packet_destroy(ev.packet);
-            return true;
-        case ENET_EVENT_TYPE_DISCONNECT:
-            out = {Event::Kind::Disconnected, idOf(ev.peer), {}};
-            impl_->peers.erase(out.peer);
-            return true;
-        default:
             break;
+        case ENET_EVENT_TYPE_DISCONNECT:
+            got = {Event::Kind::Disconnected, idOf(ev.peer), {}};
+            m.peers.erase(got.peer);
+            break;
+        default:
+            continue;
         }
+        if (!m.lagging()) {
+            out = std::move(got);
+            return true;
+        }
+        if (!reliable && m.lose()) continue;
+        Impl::In in{m.delay(reliable, m.lastIn), std::move(got)};
+        auto at = std::upper_bound(m.incoming.begin(), m.incoming.end(), in.due,
+                                   [](double due, const Impl::In& x) { return due < x.due; });
+        m.incoming.insert(at, std::move(in));
+    }
+    if (!m.incoming.empty() && m.incoming.front().due <= seconds()) {
+        out = std::move(m.incoming.front().event);
+        m.incoming.pop_front();
+        return true;
     }
     return false;
 }
 
+void Transport::simulateLag(int lagMs, int jitterMs, float lossPercent) {
+    impl_->halfLag = std::max(0, lagMs) / 2000.0;
+    impl_->jitter = std::max(0, jitterMs) / 1000.0;
+    impl_->loss = std::clamp(lossPercent, 0.0f, 100.0f);
+}
+
 void Transport::send(int peer, const std::vector<std::uint8_t>& data, bool reliable) {
-    auto it = impl_->peers.find(peer);
-    if (it == impl_->peers.end()) return;
-    ENetPacket* packet = enet_packet_create(data.data(), data.size(), reliable ? ENET_PACKET_FLAG_RELIABLE : 0);
-    enet_peer_send(it->second, reliable ? 0 : 1, packet);
+    Impl& m = *impl_;
+    if (!m.lagging()) return m.sendNow(peer, data, reliable);
+    if (!reliable && m.lose()) return;
+    Impl::Out out{m.delay(reliable, m.lastOut), peer, data, reliable};
+    auto at = std::upper_bound(m.outgoing.begin(), m.outgoing.end(), out.due,
+                               [](double due, const Impl::Out& x) { return due < x.due; });
+    m.outgoing.insert(at, std::move(out));
 }
 
 void Transport::flush() {
-    if (impl_->host) enet_host_flush(impl_->host);
+    if (!impl_->host) return;
+    impl_->releaseOutgoing();
+    enet_host_flush(impl_->host);
+}
+
+int Transport::roundTripMs(int peer) const {
+    auto it = impl_->peers.find(peer);
+    if (it == impl_->peers.end()) return 0;
+    // (ENet times its own replies, which don't wait in simulateLag's queues: add that delay)
+    return static_cast<int>(it->second->roundTripTime) + static_cast<int>(impl_->halfLag * 2000);
 }
 
 void Transport::close() {
@@ -139,6 +226,8 @@ void Transport::close() {
     impl_->host = nullptr;
     impl_->peers.clear();
     impl_->nextId = 2;
+    impl_->outgoing.clear();
+    impl_->incoming.clear();
 }
 
 #else  // no networking (web games)
@@ -159,6 +248,8 @@ bool Transport::connect(const std::string&, int, std::string& error) {
 bool Transport::service(Event&) { return false; }
 void Transport::send(int, const std::vector<std::uint8_t>&, bool) {}
 void Transport::flush() {}
+int Transport::roundTripMs(int) const { return 0; }
+void Transport::simulateLag(int, int, float) {}
 void Transport::close() {}
 
 #endif

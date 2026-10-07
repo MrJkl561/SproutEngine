@@ -1,6 +1,6 @@
 # The Windows half of test-multiplayer.bat (see there): runs the server and
 # two clients and checks what they print.
-param([Parameter(Mandatory = $true)][string]$Editor, [int]$Port = 7790)
+param([Parameter(Mandatory = $true)][string]$Editor, [int]$Port = 7790, [string]$Lag = "")
 
 $root = Split-Path -Parent $PSScriptRoot
 $project = Join-Path $root "editor\tests\multiplayer"
@@ -18,9 +18,9 @@ if ($LASTEXITCODE -ne 0) { & $Editor --project $project --check-scripts; exit 1 
 
 $server = Start-Game "server" "--play --server --frames 900 -- --port $Port"
 Start-Sleep -Seconds 1
-$client1 = Start-Game "client1" "--play --headless --frames 780 -- --port $Port --expect-leave"
+$client1 = Start-Game "client1" "--play --headless --frames 780 -- --port $Port --expect-leave $Lag"
 Start-Sleep -Seconds 1
-$client2 = Start-Game "client2" "--play --headless --frames 360 -- --port $Port"
+$client2 = Start-Game "client2" "--play --headless --frames 360 -- --port $Port $Lag"
 $server, $client1, $client2 | Wait-Process -Timeout 120
 
 $ok = $true

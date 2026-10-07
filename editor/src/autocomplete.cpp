@@ -645,7 +645,7 @@ struct Parser {
         std::string s = collapse(stmt);
         if (s.empty()) return;
         // EXPORT(float, speed, 250) / EXPORT_SCENE(nextLevel): a variable of the script
-        static const std::regex exportVar(R"(^EXPORT(?:_STEP)?\s*\(\s*([^,]+?)\s*,\s*([A-Za-z_]\w*))");
+        static const std::regex exportVar(R"(^(?:EXPORT(?:_STEP)?|INPUT)\s*\(\s*([^,]+?)\s*,\s*([A-Za-z_]\w*))");
         static const std::regex exportPath(R"(^EXPORT_(?:SCENE|TEXTURE)\s*\(\s*([A-Za-z_]\w*))");
         std::smatch m;
         if (!inFunction() && (std::regex_search(s, m, exportVar) || std::regex_search(s, m, exportPath))) {

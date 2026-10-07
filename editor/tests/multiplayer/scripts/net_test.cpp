@@ -7,6 +7,7 @@
 //
 // Each one prints "CHECK <name> OK" for everything that worked, and
 // "SERVER PASSED" / "CLIENT PASSED" once all of its checks have.
+#include <cmath>
 #include <set>
 #include <string>
 #include <vector>
@@ -30,7 +31,8 @@ public:
             getNode("Players")->addChild(std::move(ball));
         } else {
             leaves = hasArg("--expect-leave");  // stays long enough to see the other client go
-            expected = {"connected", "rpc_roundtrip", "own_player_spawned", "server_sync", "interpolated", "other_player_spawned",
+            expected = {"connected", "rpc_roundtrip", "own_player_spawned", "server_sync", "interpolated", "prediction", "server_authoritative",
+                        "lag_compensation", "other_player_spawned",
                         "client_sync_relayed", "script_var_sync", "rpc_broadcast_relayed", "peer_connected"};
             if (leaves) {
                 expected.push_back("peer_disconnected");
@@ -64,7 +66,7 @@ public:
     }
     void connectedToServer() override {
         check("connected");
-        rpcId(1, "ping", 21, std::string("hi"), Vector2{1, 2}, 1.5f);
+        rpcId(1, "ping", 21, std::string("hi"), raylib::Vector2{1, 2}, 1.5f);  // (raylib-cpp's Vector2, like body->position)
     }
     void connectionFailed() override { print("FAILED to connect"); }
 
@@ -80,6 +82,22 @@ public:
     void pong(int value) {
         if (value == 42 && rpcSender() == 1) check("rpc_roundtrip");
     }
+    // Server: is the ball where the client saw it, after rewinding?
+    RPC(shootAt);
+    void shootAt(float seenX) {
+        auto* ball = dynamic_cast<Node2D*>(getNode("Players/Ball"));
+        if (!server || !ball) return;
+        float without = std::abs(ball->position.x - seenX), with = 1e9f;
+        lagCompensated([&] { with = std::abs(ball->position.x - seenX); });
+        rpcId(rpcSender(), "shotResult", without, with);
+    }
+    RPC(shotResult);
+    void shotResult(float without, float with) {
+        print("shot missed by " + std::to_string(without) + " px without lag compensation, " + std::to_string(with) +
+              " px with");
+        if (with < 2 && without > 5) check("lag_compensation");
+    }
+
     RPC(hello);
     void hello(int from) {
         if (!server && from == rpcSender() && from == other) check("rpc_broadcast_relayed");
@@ -89,7 +107,7 @@ public:
     void process(float delta) override {
         Node* players = getNode("Players");
         if (server) {
-            if (auto* ball = dynamic_cast<Node2D*>(players->getNode("Ball"))) ball->position.x += 30 * delta;
+            if (auto* ball = dynamic_cast<Node2D*>(players->getNode("Ball"))) ball->position.x += 120 * delta;
             for (auto& c : players->children()) {
                 auto* p = dynamic_cast<Node2D*>(c.get());
                 if (!p || p->name == "Ball") continue;
@@ -102,6 +120,21 @@ public:
             }
         } else if (multiplayer().isConnected()) {
             int me = multiplayer().uniqueId();
+            ++connectedFrames;
+            auto* mine = dynamic_cast<Node2D*>(players->getNode("Player" + std::to_string(me)));
+            // Prediction: our player moves at once, and the server's answers agree with it
+            if (mine && connectedFrames == 150) {
+                print("prediction error " + std::to_string(multiplayer().predictionError()) + " px, at x " +
+                      std::to_string(mine->position.x));
+                if (mine->position.x > 30 && multiplayer().predictionError() < 0.5f) check("prediction");
+            }
+            // The server decides: moving our own player by hand (cheating) is undone
+            if (mine && connectedFrames == 160) mine->position.x = 5000;
+            if (mine && connectedFrames == 220 && mine->position.x < 4000) check("server_authoritative");
+            // Lag compensation: "shoot" at the ball where we see it (in the past)
+            if (connectedFrames >= 100 && connectedFrames <= 400 && connectedFrames % 30 == 0)
+                if (auto* ball = dynamic_cast<Node2D*>(players->getNode("Ball")))
+                    rpcId(1, "shootAt", ball->position.x);
             if (Node* mine = players->getNode("Player" + std::to_string(me)); mine && mine->isMultiplayerAuthority())
                 check("own_player_spawned");
             if (auto* ball = dynamic_cast<Node2D*>(players->getNode("Ball")); ball && ball->position.x > 10) {
@@ -149,6 +182,7 @@ private:
 
     bool server = false, leaves = false, otherLeft = false, done = false;
     int other = 0;
+    int connectedFrames = 0;
     int ballFrames = 0, ballMoves = 0, ballBackwards = 0;
     float lastBallX = 0;
     std::set<std::string> passed;

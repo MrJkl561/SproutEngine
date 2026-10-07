@@ -17,6 +17,8 @@ if [ -z "$editor" ]; then
 fi
 project="$ROOT/editor/tests/multiplayer"
 port="${SPROUT_TEST_PORT:-7790}"
+# e.g. SPROUT_TEST_LAG="--lag 120 --jitter 20 --loss 5" to test over a slow network
+lag="${SPROUT_TEST_LAG:-}"
 logs="$(mktemp -d)"
 
 # Build the test's scripts first, so the three programs don't all try to at once
@@ -25,17 +27,17 @@ logs="$(mktemp -d)"
 "$editor" --project "$project" --play --server --frames 900 -- --port "$port" > "$logs/server.txt" 2>&1 &
 server=$!
 sleep 1
-"$editor" --project "$project" --play --headless --frames 780 -- --port "$port" --expect-leave > "$logs/client1.txt" 2>&1 &
+"$editor" --project "$project" --play --headless --frames 780 -- --port "$port" --expect-leave $lag > "$logs/client1.txt" 2>&1 &
 client1=$!
 sleep 1
-"$editor" --project "$project" --play --headless --frames 360 -- --port "$port" > "$logs/client2.txt" 2>&1 &
+"$editor" --project "$project" --play --headless --frames 360 -- --port "$port" $lag > "$logs/client2.txt" 2>&1 &
 client2=$!
 wait $server $client1 $client2
 
 ok=1
 for who in server client1 client2; do
     echo "--- $who"
-    grep -E "CHECK|PASSED|FAILED|Couldn.t|rror|ball moved" "$logs/$who.txt"
+    grep -E "CHECK|PASSED|FAILED|Couldn.t|rror|ball moved|prediction error|shot missed" "$logs/$who.txt"
 done
 grep -q "SERVER PASSED" "$logs/server.txt" || ok=0
 grep -q "CLIENT PASSED" "$logs/client1.txt" || ok=0

@@ -349,13 +349,20 @@ version:
   players move smoothly.
 - **`MultiplayerSpawner`** copies the scenes the server adds below its
   `spawn_path` to every client, including ones that join later.
+- **Prediction:** mark what a player controls with `INPUT(float, moveX, 0);`,
+  read the keyboard in `gatherInput()` and move in `simulate(delta)`. The
+  player's own game moves at once; the server makes the real move from the
+  inputs and the player's game replays on top of its answer.
+- **Lag compensation:** on the server, in an RPC from a client,
+  `lagCompensated([&] { ... })` runs a hit check with everyone moved back to
+  where that client saw them.
 - **RPCs:** `RPC(jump);` next to `void jump(float height)` lets other games call
   it: `rpc("jump", 300.0f)` (everyone else) or `rpcId(1, "jump", 300.0f)` (the
   server).
 - **Run Instances:** the window button next to **Stop** sets how many copies
   Play starts (up to 4), each with its own command line (`--host`,
-  `--join 127.0.0.1`, `--server`). The extra copies open in windows of their
-  own and print to the Output panel.
+  `--join 127.0.0.1`, `--server`, `--lag 150` for a slow network). The extra
+  copies open in windows of their own and print to the Output panel.
 - **Dedicated server:** any exported desktop game started with `--server` runs
   without a window and just hosts. In the editor:
   `sprout_editor --project "My Game" --play --server`.
