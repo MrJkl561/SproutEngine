@@ -51,6 +51,7 @@ void SceneTree::readyRecursive(Node* node) {
     // Children are ready before their parent, like in Godot.
     for (size_t i = 0; i < node->children().size(); ++i) readyRecursive(node->children()[i].get());
     if (node->script) node->script->ready();
+    node->emitSignal("ready");
 }
 
 void SceneTree::start() {
@@ -96,6 +97,14 @@ void SceneTree::process(float delta) {
         auto& kids = n->children();
         for (size_t i = 0; i < kids.size();) {
             if (kids[i]->isQueuedForDeletion()) {
+                // Signals first: "tree_exiting", and Area2Ds see it go out
+                std::vector<Node*> leaving;
+                forEachNode(kids[i].get(), [&](Node* x) { leaving.push_back(x); });
+                for (Node* x : leaving) x->emitSignal("tree_exiting");
+                forEachNode(root_.get(), [&](Node* x) {
+                    if (auto* area = dynamic_cast<Area2D*>(x); area && !area->isQueuedForDeletion())
+                        area->nodesLeaving(leaving);
+                });
                 kids[i]->detach();  // the returned unique_ptr frees it
             } else {
                 sweep(kids[i].get());

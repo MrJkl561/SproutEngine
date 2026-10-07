@@ -14,6 +14,10 @@
 //   CharacterBody2D   - a thing moved by code that collides with static bodies
 //   MultiplayerSynchronizer - keeps properties the same on every player's game
 //   MultiplayerSpawner      - copies the scenes the server adds to every player's game
+//   Timer             - counts down and sends its "timeout" signal
+//
+// Nodes send signals when things happen (see signals.hpp): every node sends
+// "ready" and "tree_exiting"; Area2D "body_entered"..., Timer "timeout"...
 #pragma once
 
 #include <raylib-cpp.hpp>
@@ -22,6 +26,8 @@
 #include <memory>
 #include <string>
 #include <vector>
+
+#include "signals.hpp"
 
 namespace s2d {
 
@@ -122,6 +128,18 @@ public:
 
     SceneTree* tree();  // nullptr while not in a scene tree
 
+    // Signals (see signals.hpp; scripts usually use Script::connect / emitSignal)
+    // The signals this kind of node sends by itself (Area2D: body_entered...)
+    virtual void getSignals(std::vector<SignalInfo>& out) const;
+    std::vector<SignalInfo> signalList() const;  // those, plus the ones its script declares
+    bool hasSignal(const std::string& name) const;
+    // Sends a signal: calls everything connected to it, in the order they connected.
+    template <class... A> void emitSignal(const std::string& name, A&&... args);
+    void emitSignalArgs(const std::string& name, const SignalArgs& args);
+    bool isSignalConnected(const std::string& name) const { return hub_ && hub_->connected(name); }
+    std::shared_ptr<SignalHub> signalHub();  // (the connections; made when first needed)
+    std::weak_ptr<void> lifetime() const { return life_; }  // expires when the node is freed
+
     // Multiplayer (see multiplayer.hpp): the peer whose copy of this node is the
     // real one. 1 (the server) unless set. Not saved in scene files.
     void setMultiplayerAuthority(int peerId, bool recursive = true);
@@ -130,6 +148,8 @@ public:
 
 private:
     friend class SceneTree;
+    std::shared_ptr<SignalHub> hub_;
+    std::shared_ptr<char> life_ = std::make_shared<char>();
     int authority_ = 1;
     Node* parent_ = nullptr;
     std::vector<std::unique_ptr<Node>> children_;
@@ -198,6 +218,7 @@ public:
 
     const char* typeName() const override { return "AnimatedSprite2D"; }
     void getProperties(std::vector<Property>& out) override;
+    void getSignals(std::vector<SignalInfo>& out) const override;  // animation_finished, animation_looped, frame_changed
     void update(float delta) override;
 
     // Plays an animation from its first frame (or keeps playing it, if it's the
@@ -282,6 +303,19 @@ public:
     const char* typeName() const override { return "Area2D"; }
     std::vector<Node2D*> getOverlappingBodies();  // StaticBody2D and CharacterBody2D nodes
     std::vector<Node2D*> getOverlappingAreas();
+
+    // Signals: body_entered(Node* body), body_exited(Node* body),
+    // area_entered(Node* area), area_exited(Node* area)
+    void getSignals(std::vector<SignalInfo>& out) const override;
+    void update(float delta) override;  // (checks what came in and went out)
+    void nodesLeaving(const std::vector<Node*>& leaving);  // (they're being freed: they went out)
+
+private:
+    struct Inside {
+        Node* node;
+        std::weak_ptr<void> life;
+    };
+    std::vector<Inside> bodiesIn_, areasIn_;
 };
 
 class StaticBody2D : public CollisionObject2D {
@@ -350,6 +384,31 @@ public:
 
     const char* typeName() const override { return "MultiplayerSpawner"; }
     void getProperties(std::vector<Property>& out) override;
+    void getSignals(std::vector<SignalInfo>& out) const override;  // spawned(Node*), despawned(Node*) (on clients)
+};
+
+// Counts down wait_time seconds, then sends "timeout". Again and again, or
+// once (one_shot). Starts by itself with autostart, or when a script calls start().
+//   connect(getNode("Timer"), "timeout", [this] { spawnEnemy(); });
+class Timer : public Node {
+public:
+    float waitTime = 1.0f;
+    bool oneShot = false;
+    bool autostart = false;
+
+    const char* typeName() const override { return "Timer"; }
+    void getProperties(std::vector<Property>& out) override;
+    void getSignals(std::vector<SignalInfo>& out) const override;  // timeout
+    void update(float delta) override;
+
+    void start(float seconds = -1);  // -1: wait_time
+    void stop();
+    bool isStopped() const { return !running_; }
+    float timeLeft() const { return running_ ? left_ : 0; }
+
+private:
+    bool running_ = false, started_ = false;
+    float left_ = 0;
 };
 
 // ---------------------------------------------------------------------------
@@ -366,6 +425,10 @@ GizmoColors& gizmoColors();
 // Making nodes by type name (used by the "Add Node" menu and scene files).
 const std::vector<std::string>& nodeTypeNames();
 std::unique_ptr<Node> createNode(const std::string& typeName);
+
+template <class... A> void Node::emitSignal(const std::string& name, A&&... args) {
+    emitSignalArgs(name, SignalArgs{detail::toVariant(std::forward<A>(args))...});
+}
 
 // Draws a rectangle given in a node's own space, rotated and scaled with it.
 void drawLocalRect(const Node2D& node, Rectangle local, Color fill, Color outline, float lineWidth);

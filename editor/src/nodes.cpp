@@ -38,6 +38,39 @@ void Node::setMultiplayerAuthority(int peerId, bool recursive) {
 
 bool Node::isMultiplayerAuthority() const { return authority_ == multiplayer().uniqueId(); }
 
+// ---------------------------------------------------------------------------
+// Signals
+// ---------------------------------------------------------------------------
+void Node::getSignals(std::vector<SignalInfo>& out) const {
+    out.push_back({"ready", ""});         // after the node's script's ready() (children first)
+    out.push_back({"tree_exiting", ""});  // the node is about to be freed
+}
+
+std::vector<SignalInfo> Node::signalList() const {
+    std::vector<SignalInfo> out;
+    getSignals(out);
+    if (script)
+        for (const SignalInfo& s : script->signals()) out.push_back(s);
+    return out;
+}
+
+bool Node::hasSignal(const std::string& name) const {
+    for (const SignalInfo& s : signalList())
+        if (s.name == name) return true;
+    return false;
+}
+
+void Node::emitSignalArgs(const std::string& name, const SignalArgs& args) {
+    if (!hub_) return;  // nobody has ever connected
+    auto hub = hub_;     // (kept even if a listener frees this node)
+    hub->emit(name, args);
+}
+
+std::shared_ptr<SignalHub> Node::signalHub() {
+    if (!hub_) hub_ = std::make_shared<SignalHub>();
+    return hub_;
+}
+
 Node* Node::addChild(std::unique_ptr<Node> child, int index) {
     if (!child) return nullptr;
     child->parent_ = this;
@@ -336,6 +369,13 @@ void AnimatedSprite2D::stop() {
     playing_ = false;
 }
 
+void AnimatedSprite2D::getSignals(std::vector<SignalInfo>& out) const {
+    Sprite2D::getSignals(out);
+    out.push_back({"animation_finished", ""});  // a non-looping animation reached its last frame
+    out.push_back({"animation_looped", ""});    // a looping animation started over
+    out.push_back({"frame_changed", ""});
+}
+
 void AnimatedSprite2D::update(float delta) {
     if (!started_) {
         started_ = true;
@@ -347,19 +387,26 @@ void AnimatedSprite2D::update(float delta) {
     if (list.empty()) return;
     time_ += delta * speedScale;
     float perFrame = 1.0f / a->fps;
+    int before = frame;
+    bool looped = false, finished = false;
     while (time_ >= perFrame) {
         time_ -= perFrame;
         if (index_ + 1 < list.size()) {
             ++index_;
         } else if (a->loop) {
             index_ = 0;
+            looped = true;
         } else {
             playing_ = false;
             finished_ = true;
+            finished = true;
             break;
         }
     }
     frame = list[std::min(index_, list.size() - 1)];
+    if (frame != before) emitSignal("frame_changed");
+    if (looped) emitSignal("animation_looped");
+    if (finished) emitSignal("animation_finished");
 }
 
 int AnimatedSprite2D::shownFrame(const DrawOptions& options) const {
@@ -496,6 +543,59 @@ std::vector<Node2D*> overlapping(CollisionObject2D& self, Pred pred) {
 
 }  // namespace
 
+void Area2D::getSignals(std::vector<SignalInfo>& out) const {
+    CollisionObject2D::getSignals(out);
+    out.push_back({"body_entered", "Node* body"});  // a StaticBody2D or CharacterBody2D came in
+    out.push_back({"body_exited", "Node* body"});
+    out.push_back({"area_entered", "Node* area"});  // another Area2D came in
+    out.push_back({"area_exited", "Node* area"});
+}
+
+void Area2D::update(float) {
+    auto track = [this](std::vector<Inside>& in, const std::vector<Node2D*>& now, const char* entered,
+                        const char* exited) {
+        // Gone out (or freed: then there's nothing to tell, see nodesLeaving)
+        std::vector<Inside> still;
+        for (const Inside& i : in) {
+            if (i.life.expired()) continue;
+            if (std::find(now.begin(), now.end(), i.node) != now.end()) still.push_back(i);
+            else emitSignal(exited, i.node);
+        }
+        // Come in
+        for (Node2D* n : now) {
+            bool known = std::any_of(still.begin(), still.end(), [n](const Inside& i) { return i.node == n; });
+            if (known) continue;
+            still.push_back({n, n->lifetime()});
+            emitSignal(entered, n);
+        }
+        in = std::move(still);
+    };
+    if (!isSignalConnected("body_entered") && !isSignalConnected("body_exited") && !isSignalConnected("area_entered") &&
+        !isSignalConnected("area_exited")) {
+        bodiesIn_.clear();  // nobody's listening: don't keep track
+        areasIn_.clear();
+        return;
+    }
+    track(bodiesIn_, getOverlappingBodies(), "body_entered", "body_exited");
+    track(areasIn_, getOverlappingAreas(), "area_entered", "area_exited");
+}
+
+void Area2D::nodesLeaving(const std::vector<Node*>& leaving) {
+    auto drop = [&](std::vector<Inside>& in, const char* exited) {
+        for (auto it = in.begin(); it != in.end();) {
+            if (std::find(leaving.begin(), leaving.end(), it->node) != leaving.end() && !it->life.expired()) {
+                Node* n = it->node;
+                it = in.erase(it);
+                emitSignal(exited, n);
+            } else {
+                ++it;
+            }
+        }
+    };
+    drop(bodiesIn_, "body_exited");
+    drop(areasIn_, "area_exited");
+}
+
 std::vector<Node2D*> Area2D::getOverlappingBodies() {
     return overlapping(*this, [](CollisionObject2D* o) {
         return dynamic_cast<StaticBody2D*>(o) || dynamic_cast<CharacterBody2D*>(o);
@@ -579,6 +679,50 @@ void MultiplayerSpawner::getProperties(std::vector<Property>& out) {
     out.push_back({"spawn_path", PropKind::String, &spawnPath});
 }
 
+void MultiplayerSpawner::getSignals(std::vector<SignalInfo>& out) const {
+    Node::getSignals(out);
+    out.push_back({"spawned", "Node* node"});    // a copy of something the server spawned arrived (clients)
+    out.push_back({"despawned", "Node* node"});  // the server freed it (clients; it's freed after this)
+}
+
+// ---------------------------------------------------------------------------
+// Timer
+// ---------------------------------------------------------------------------
+void Timer::getProperties(std::vector<Property>& out) {
+    Node::getProperties(out);
+    out.push_back({"Timer", PropKind::Section});
+    out.push_back({"wait_time", PropKind::Float, &waitTime, 0.01f});
+    out.push_back({"one_shot", PropKind::Bool, &oneShot});
+    out.push_back({"autostart", PropKind::Bool, &autostart});
+}
+
+void Timer::getSignals(std::vector<SignalInfo>& out) const {
+    Node::getSignals(out);
+    out.push_back({"timeout", ""});
+}
+
+void Timer::start(float seconds) {
+    if (seconds > 0) waitTime = seconds;
+    left_ = std::max(0.001f, waitTime);
+    running_ = true;
+    started_ = true;
+}
+
+void Timer::stop() { running_ = false; }
+
+void Timer::update(float delta) {
+    if (!started_) {
+        started_ = true;
+        if (autostart) start();
+    }
+    if (!running_) return;
+    left_ -= delta;
+    if (left_ > 0) return;
+    if (oneShot) running_ = false;
+    else left_ = std::max(left_ + std::max(0.001f, waitTime), 0.0f);  // keeps the beat, even if a frame was late
+    emitSignal("timeout");
+}
+
 // ---------------------------------------------------------------------------
 // Node factory
 // ---------------------------------------------------------------------------
@@ -599,6 +743,7 @@ const std::vector<std::pair<std::string, std::function<std::unique_ptr<Node>()>>
         {"CharacterBody2D", [] { return std::make_unique<CharacterBody2D>(); }},
         {"MultiplayerSynchronizer", [] { return std::make_unique<MultiplayerSynchronizer>(); }},
         {"MultiplayerSpawner", [] { return std::make_unique<MultiplayerSpawner>(); }},
+        {"Timer", [] { return std::make_unique<Timer>(); }},
     };
     return list;
 }

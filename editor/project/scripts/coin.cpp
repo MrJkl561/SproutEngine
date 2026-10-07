@@ -2,25 +2,29 @@
 // the node called "Player" touches it, the coin disappears and the Label
 // called "Score" counts up. The count is kept in tree()->values, so it carries
 // on from level to level.
+//
+// It listens to the Area2D's "body_entered" signal instead of checking every
+// frame: the area calls onBodyEntered when something comes in.
 #include "script.hpp"
 
 using namespace s2d;
 
 class Coin : public Script {
 public:
-    void ready() override { showScore(); }  // a new level: show the count so far
+    SIGNAL(collected);  // sent when the player picks it up (for anyone who wants to know)
 
-    void process(float) override {
-        auto* area = self<Area2D>();
-        if (!area) return;
-        for (Node2D* body : area->getOverlappingBodies()) {
-            if (body->name != "Player") continue;
-            tree()->values["coins"] += 1;
-            showScore();
-            print("Picked up " + node()->name);
-            area->queueFree();
-            return;
-        }
+    void ready() override {
+        showScore();  // a new level: show the count so far
+        connect(node(), "body_entered", &Coin::onBodyEntered);
+    }
+
+    void onBodyEntered(Node* body) {
+        if (body->name != "Player" || node()->isQueuedForDeletion()) return;
+        tree()->values["coins"] += 1;
+        showScore();
+        print("Picked up " + node()->name);
+        emitSignal("collected");
+        node()->queueFree();
     }
 
 private:

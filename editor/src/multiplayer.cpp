@@ -498,12 +498,15 @@ struct Multiplayer::Impl {
                 auto node = nodeFromJson(n);
                 if (!node) return;
                 node->setMultiplayerAuthority(msg.value("auth", 1));
-                parent->addChild(std::move(node));
+                Node* added = parent->addChild(std::move(node));
+                if (Node* spawner = root->getNode(msg.value("p", ""))) spawner->emitSignal("spawned", added);
             } else if (t == "despawn") {
                 Node* parent = spawnParent(root, msg.value("p", ""));
                 std::string name = msg.value("name", "");
-                if (Node* n = parent && !name.empty() ? parent->getNode(name) : nullptr; n && n != parent)
+                if (Node* n = parent && !name.empty() ? parent->getNode(name) : nullptr; n && n != parent) {
+                    if (Node* spawner = root->getNode(msg.value("p", ""))) spawner->emitSignal("despawned", n);
                     n->queueFree();
+                }
             }
             return;
         }

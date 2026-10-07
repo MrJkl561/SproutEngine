@@ -1,0 +1,6 @@
+{
+  "name": "Signals Test",
+  "main_scene": "scenes/main.scene.json",
+  "width": 320,
+  "height": 180
+}

@@ -1980,6 +1980,23 @@ void Editor::drawInspector(Rectangle r) {
     y += 34;
     scriptVariableRows(x, y, w);
 
+    // Signals it can send (like Godot's Node dock): connect to them in a script
+    {
+        std::vector<SignalInfo> signals = selected_->signalList();
+        if (inspectorScript_ && inspectorScriptNode_ == selected_)
+            for (const SignalInfo& s : inspectorScript_->signals()) signals.push_back(s);
+        Property signalSection{"Signals", PropKind::Section};
+        propertyRow(signalSection, x, y, w);
+        for (const SignalInfo& s : signals) {
+            GuiDrawIcon(ICON_LINK_NET, static_cast<int>(x), static_cast<int>(y + 2), 1, kAccent);
+            drawText(s.name, x + 22, y + 3, kText);
+            if (!s.args.empty()) drawText("(" + s.args + ")", x + 22 + textWidth(s.name) + 6, y + 3, kDim);
+            y += 22;
+        }
+        drawText("In a script: connect(node, \"name\", ...)", x, y + 2, kDim);
+        y += 26;
+    }
+
     // Scene: instancing (like Godot's "instance" and "Save Branch as Scene")
     if (selected_->parent()) {
         Property sceneSection{"Scene", PropKind::Section};

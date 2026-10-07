@@ -177,6 +177,7 @@ folder:
 | Build and open the editor | `scripts\run-editor.bat` | `scripts/run-editor.sh` |
 | Run the unit tests | `scripts\test.bat` | `scripts/test.sh` |
 | Test the editor's multiplayer | `scripts\test-multiplayer.bat` | `scripts/test-multiplayer.sh` |
+| Test the editor's signals | `scripts\test-signals.bat` | `scripts/test-signals.sh` |
 | Export a game | `scripts\export.bat windows,web [project] [folder]` | `scripts/export.sh linux,web [project] [folder]` |
 | Set up web exports (once) | `scripts\setup-web.bat [emsdk folder]` | `scripts/setup-web.sh [emsdk folder]` |
 
@@ -267,11 +268,14 @@ you'll make a character that runs and jumps, in about 15 minutes.
 
 - **Godot-style nodes**: `Node2D`, `Sprite2D`, `AnimatedSprite2D`, `ColorRect`,
   `Label`, `Camera2D`, `StaticBody2D`, `CharacterBody2D` (with
-  `moveAndSlide()`), `Area2D` and `CollisionShape2D`.
+  `moveAndSlide()`), `Area2D`, `CollisionShape2D` and `Timer`.
 - **A live viewport**: drag, rotate, snap, zoom and pan; drop pictures in
   from your desktop.
 - **C++ scripts on nodes** with `ready()` and `process(delta)`, which **hot
   reload** while the game runs.
+- **Signals** like Godot's: `connect(getNode("Area2D"), "body_entered",
+  &Coin::onBody)`, your own with `SIGNAL(died)` and `emitSignal("died")`, and
+  a `Timer` node.
 - **`EXPORT(float, speed, 250);`** puts a script variable in the Inspector, so
   every node can have its own value.
 - **A built-in script editor** with autocomplete, and **errors as you type**

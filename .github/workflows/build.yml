@@ -59,6 +59,14 @@ jobs:
           fi
           rm editor/project/scripts/broken_check.cpp
 
+      # Signals: every way of connecting and sending them (no window)
+      - name: Test signals
+        shell: bash
+        run: |
+          exe=build/bin/sprout_editor/sprout_editor
+          if [ -f "$exe.exe" ]; then exe="$exe.exe"; fi
+          SPROUT_EDITOR="$PWD/$exe" scripts/test-signals.sh
+
       # Multiplayer for real: a dedicated server and two clients (separate
       # programs, no windows) connect, call RPCs, sync nodes, spawn and leave.
       - name: Test multiplayer

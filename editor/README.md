@@ -44,7 +44,7 @@ be opened by the engine or the other way round. See
 - [Animation](#animation)
 - [Multiplayer](#multiplayer): hosting, joining, synced nodes, RPCs, dedicated servers
 - [Nodes](#nodes): what each node type is for
-- [C++ scripts](#c-scripts): the script editor, script variables (`EXPORT`), hot reloading
+- [C++ scripts](#c-scripts): the script editor, script variables (`EXPORT`), signals, hot reloading
 - [Customizing the editor](#customizing-the-editor): panel sizes and themes
 - [Files](#files): where everything is in `editor/`
 - [Not there yet](#not-there-yet)
@@ -384,7 +384,8 @@ other libraries. Web exports can't use it (browsers have no UDP).
 | `CollisionShape2D` | A rectangle shape for the physics nodes below |
 | `StaticBody2D` | Solid, unmoving things: floors, walls, platforms |
 | `CharacterBody2D` | Moved by a script with `velocity` and `moveAndSlide()`; slides along static bodies, `isOnFloor()` |
-| `Area2D` | Detects overlaps: `getOverlappingBodies()`, `getOverlappingAreas()` |
+| `Area2D` | Detects overlaps: `getOverlappingBodies()`, `getOverlappingAreas()`, and the signals `body_entered`, `body_exited`, `area_entered`, `area_exited` |
+| `Timer` | Counts down `wait_time` seconds and sends `timeout` (again and again, or once with `one_shot`); `autostart`, `start()`, `stop()`, `timeLeft()` |
 | `MultiplayerSynchronizer` | Keeps properties (`position`, ...) the same in every player's game ([Multiplayer](#multiplayer)) |
 | `MultiplayerSpawner` | Copies the scenes the server adds below a node to every player's game ([Multiplayer](#multiplayer)) |
 
@@ -433,6 +434,8 @@ and it's compiled in the background, ready for Play.
 | `changeScene("scenes/level2.scene.json")`, `reloadScene()` | Switch scenes ([more](#changing-scenes-while-the-game-runs)) |
 | `tree()->values["coins"]` | Numbers that last from one scene to the next |
 | `print("hello")` | Writes to the Output panel |
+| `connect(node, "body_entered", &Coin::onBody)` | Calls a function when a node sends a signal ([more](#signals)) |
+| `SIGNAL(died);`, `emitSignal("died")` | Declares and sends a signal of your own ([more](#signals)) |
 | `EXPORT(float, speed, 200);` | A variable shown in the inspector ([more](#script-variables-shown-in-the-inspector)) |
 
 Scripts can also call any [raylib](https://www.raylib.com/cheatsheet/cheatsheet.html)
@@ -601,6 +604,81 @@ The included scripts are `player_controller.cpp` (platformer movement),
 `coin.cpp` (collectibles with a score that carries across levels),
 `level_exit.cpp` (a door to the next level) and `spinner.cpp`.
 
+### Signals
+
+Signals work like Godot's: a node announces that something happened, and
+every script that **connected** to it gets a call. The node doesn't need to
+know who's listening. Connect in `ready()`:
+
+```cpp
+class Coin : public Script {
+public:
+    void ready() override {
+        // One of this script's functions...
+        connect(node(), "body_entered", &Coin::onBodyEntered);
+        // ...or a lambda
+        connect(getNode("Timer"), "timeout", [this] { blink(); });
+    }
+
+    void onBodyEntered(Node* body) {
+        if (body->name == "Player") node()->queueFree();
+    }
+};
+```
+
+**Signals nodes send by themselves** (the Inspector lists a node's signals
+under *Signals*):
+
+| Node | Signals |
+|---|---|
+| every node | `ready` (after its script's `ready()`), `tree_exiting` (it's about to be freed) |
+| `Area2D` | `body_entered(Node* body)`, `body_exited(Node* body)`, `area_entered(Node* area)`, `area_exited(Node* area)` |
+| `Timer` | `timeout` |
+| `AnimatedSprite2D` | `animation_finished`, `animation_looped`, `frame_changed` |
+| `MultiplayerSpawner` | `spawned(Node* node)`, `despawned(Node* node)` (on clients) |
+
+**Signals of your own.** Declare them in the script with `SIGNAL` (the types
+of the values they send, if any), and send them with `emitSignal`. Other
+scripts connect to the node the script is on:
+
+```cpp
+class Player : public Script {
+public:
+    SIGNAL(died);
+    SIGNAL(health_changed, int);
+
+    void hurt(int damage) {
+        health -= damage;
+        emitSignal("health_changed", health);
+        if (health <= 0) emitSignal("died");
+    }
+};
+
+// In the HUD's script
+connect(findNode("Player"), "health_changed", [this](int hp) { setHearts(hp); });
+connect(findNode("Player"), "died", &Hud::showGameOver);
+```
+
+Things to know:
+
+- **The function's parameters** are what the signal sends: `Node*` (or any
+  node type, like `CharacterBody2D*`: you get `nullptr` if it isn't one),
+  `int`, `float`, `bool`, `std::string`, `Vector2`, `Color`. It may take
+  **fewer** than the signal sends (`[this] { ... }` for `body_entered` is fine),
+  but not more.
+- **Once:** `connect(node, "timeout", fn, true)` calls it only the first time.
+- **Disconnecting:** `connect` returns an id: `disconnect(id)`. Or
+  `disconnect(node, "timeout")` (or just `disconnect(node)`) undoes this
+  script's connections to that node.
+- **No dangling calls:** a connection goes away by itself when the script
+  that made it does (its node is freed, the scene changes, or the script is
+  hot reloaded: `ready()` connects again). A freed node sends nothing more.
+- **Typos are caught:** connecting to a signal a node doesn't have prints a
+  warning with the node's real signals, e.g. `'Tick' (Timer) has no signal
+  'timout'. Its signals: ready, tree_exiting, timeout`.
+- Signals are called right away, in the order things connected. They're
+  for this game only: to tell other players, use an [RPC](#multiplayer).
+
 ### Hot reloading
 
 Scripts reload while the editor runs. Save a script and, about a second later,
@@ -697,6 +775,7 @@ editor/
 │   ├── nodes.*           <- the node types
 │   ├── scene_tree.*      <- runs a scene: scripts, process, queueFree, drawing
 │   ├── script.hpp        <- the Script base class, EXPORT, RPC and REGISTER_SCRIPT
+│   ├── signals.*         <- signals: connections, sending, the values they carry
 │   ├── multiplayer.*     <- hosting, joining, RPCs, synchronizers and spawners
 │   ├── net_transport.*   <- the network connection under it (ENet)
 │   ├── game_runner.*     <- runs a project as a game (exports, Run Instances, --server)
@@ -717,6 +796,7 @@ editor/
 ├── player/               <- the game runtime that exports are built from
 ├── templates/            <- New Project templates (multiplayer/)
 ├── tests/multiplayer/    <- the multiplayer test (scripts/test-multiplayer.sh)
+├── tests/signals/        <- the signals test (scripts/test-signals.sh)
 ├── scripts_module/       <- builds a project's scripts into the hot reload library
 └── project/              <- the demo project
     ├── project.json      <- game name, main scene, window size, export settings

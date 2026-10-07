@@ -18,8 +18,10 @@
 //     REGISTER_SCRIPT(Spinner)
 #pragma once
 
+#include <algorithm>
 #include <functional>
 #include <map>
+#include <set>
 #include <memory>
 #include <string>
 #include <type_traits>
@@ -69,6 +71,39 @@ public:
     std::vector<Property> list;
 };
 
+void print(const std::string& message);
+class Script;
+
+namespace detail {
+template <class C, class R, class... A>
+std::function<void(const SignalArgs&)> bindMethod(Script* self, R (C::*method)(A...), const std::string& signal);
+
+// Calls fn with the first values of args, converted to the types A... it takes
+// (a function may take fewer values than the signal sends, like in Godot's
+// unbind, but not more).
+template <class... A, class F, size_t... I>
+void callWithArgs(F& fn, const SignalArgs& args, std::index_sequence<I...>) {
+    fn(fromVariant<std::decay_t<A>>(args[I])...);
+}
+template <class... A, class F> void callSignal(const std::string& signal, F& fn, const SignalArgs& args) {
+    if (args.size() < sizeof...(A)) {
+        print("Signal '" + signal + "' sends " + std::to_string(args.size()) + " value(s), but the function connected to it wants " +
+              std::to_string(sizeof...(A)));
+        return;
+    }
+    callWithArgs<A...>(fn, args, std::index_sequence_for<A...>{});
+}
+// What a lambda or function takes
+template <class F> struct callableArgs : callableArgs<decltype(&F::operator())> {};
+template <class R, class... A> struct callableArgs<R (*)(A...)> {
+    template <class F> static std::function<void(const SignalArgs&)> wrap(F fn, std::string signal) {
+        return [fn, signal](const SignalArgs& args) mutable { callSignal<A...>(signal, fn, args); };
+    }
+};
+template <class C, class R, class... A> struct callableArgs<R (C::*)(A...) const> : callableArgs<R (*)(A...)> {};
+template <class C, class R, class... A> struct callableArgs<R (C::*)(A...)> : callableArgs<R (*)(A...)> {};
+}  // namespace detail
+
 namespace detail {
 // An RPC argument as sent: doubles become floats, other whole numbers ints.
 template <class T> NetValue toNet(T&& v) {
@@ -87,7 +122,11 @@ template <class T> NetValue toNet(T&& v) {
 
 class Script {
 public:
-    virtual ~Script() = default;
+    virtual ~Script() {
+        // Undo this script's signal connections (their code may be about to unload)
+        for (auto& [hub, id] : connections_)
+            if (auto h = hub.lock()) h->remove(id);
+    }
 
     virtual void ready() {}
     virtual void process(float /*delta*/) {}
@@ -111,6 +150,75 @@ public:
     virtual void simulate(float /*delta*/) {}
     bool isPredicted() const { return !inputs_.empty(); }
     std::vector<Property>& inputs() { return inputs_; }  // (used by INPUT and the multiplayer code)
+
+    // --- Signals (see signals.hpp) ------------------------------------------
+    // Calls fn whenever `emitter` sends `signal`. fn is one of this script's
+    // functions or a lambda, taking the values the signal sends (or fewer):
+    //   connect(getNode("Area2D"), "body_entered", &Coin::onBodyEntered);  // void onBodyEntered(Node* body)
+    //   connect(getNode("Timer"), "timeout", [this] { fire(); });
+    //   connect(getNode("Hurtbox"), "area_entered", [this](Area2D* area) { ... });  // any node type
+    // oneShot: only the first time. Returns an id for disconnect(). The
+    // connection goes by itself when this script does.
+    template <class F>
+    std::size_t connect(Node* emitter, const std::string& signal, F fn, bool oneShot = false) {
+        std::function<void(const SignalArgs&)> call;
+        if constexpr (std::is_member_function_pointer_v<F>) call = detail::bindMethod(this, fn, signal);
+        else call = detail::callableArgs<F>::wrap(std::move(fn), signal);
+        return connectCall(emitter, signal, std::move(call), oneShot);
+    }
+    // Undoes this script's connections to `emitter`: to that signal, or (no name) to all of them.
+    void disconnect(Node* emitter, const std::string& signal = "") {
+        if (!emitter) return;
+        auto hub = emitter->signalHub();
+        for (auto it = connections_.begin(); it != connections_.end();) {
+            auto h = it->first.lock();
+            bool match = h == hub && std::any_of(hub->connections.begin(), hub->connections.end(), [&](auto& c) {
+                             return c.id == it->second && (signal.empty() || c.signal == signal);
+                         });
+            if (match) {
+                hub->remove(it->second);
+                it = connections_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+    void disconnect(std::size_t id) {
+        for (auto it = connections_.begin(); it != connections_.end(); ++it)
+            if (it->second == id) {
+                if (auto h = it->first.lock()) h->remove(id);
+                connections_.erase(it);
+                return;
+            }
+    }
+    // Sends one of this script's signals (declared with SIGNAL) from its node.
+    template <class... A> void emitSignal(const std::string& signal, A&&... args) {
+        if (!node_) return;
+        if (!node_->hasSignal(signal) && warned_.insert(signal).second)
+            print("emitSignal: '" + signal + "' isn't a signal of '" + node_->name + "'. Declare it with SIGNAL(" + signal +
+                  ") in the script.");
+        node_->emitSignal(signal, std::forward<A>(args)...);
+    }
+    // (Used by connect and SIGNAL.)
+    std::size_t connectCall(Node* emitter, const std::string& signal, std::function<void(const SignalArgs&)> call,
+                            bool oneShot) {
+        if (!emitter) {
+            print("connect('" + signal + "'): the node is missing (nullptr). Check the getNode() path.");
+            return 0;
+        }
+        if (!emitter->hasSignal(signal)) {
+            std::string list;
+            for (const SignalInfo& s : emitter->signalList()) list += (list.empty() ? "" : ", ") + s.name;
+            print("connect: '" + emitter->name + "' (" + emitter->typeName() + ") has no signal '" + signal +
+                  "'. Its signals: " + list);
+        }
+        auto hub = emitter->signalHub();
+        std::size_t id = hub->add(signal, std::move(call), alive_, true, oneShot);
+        connections_.push_back({hub, id});
+        return id;
+    }
+    const std::vector<SignalInfo>& signals() const { return signals_; }
+    void declareSignal(SignalInfo info) { signals_.push_back(std::move(info)); }
 
     // Lag compensation, on the server inside an RPC from a client: runs fn
     // with every synced node moved back to where that client saw it when it
@@ -180,7 +288,23 @@ private:
     std::vector<std::function<void(Exports&)>> autoExports_;
     std::map<std::string, std::function<void(const NetArgs&)>> rpcs_;
     std::vector<Property> inputs_;
+    // Signals
+    std::shared_ptr<char> alive_ = std::make_shared<char>();  // connections check it's still here
+    std::vector<std::pair<std::weak_ptr<SignalHub>, std::size_t>> connections_;
+    std::vector<SignalInfo> signals_;
+    std::set<std::string> warned_;
 };
+
+namespace detail {
+// One of a script's own functions, as a signal's callback
+template <class C, class R, class... A>
+std::function<void(const SignalArgs&)> bindMethod(Script* self, R (C::*method)(A...), const std::string& signal) {
+    C* object = dynamic_cast<C*>(self);
+    if (!object) return {};
+    auto call = [object, method](auto&&... values) { (object->*method)(std::forward<decltype(values)>(values)...); };
+    return [call, signal](const SignalArgs& args) mutable { callSignal<A...>(signal, call, args); };
+}
+}  // namespace detail
 
 // Makes a new copy of a scene file, to add with addChild(), e.g.
 //   node()->addChild(instantiate("scenes/coin.scene.json"));
@@ -382,3 +506,22 @@ public:
     static_assert(::s2d::detail::inputType<Type>, "INPUT works with float, int, bool and Vector2"); \
     Type name{__VA_ARGS__};                                                                      \
     ::s2d::detail::InputField<Type> s2dInput_##name { this, #name, name }
+
+// ---------------------------------------------------------------------------
+// SIGNAL: declares a signal this script can send (like Godot's `signal`):
+//
+//     SIGNAL(died);
+//     SIGNAL(health_changed, int);       // the types of the values it sends
+//
+//     emitSignal("health_changed", health);                // send it
+//     connect(getNode("Player"), "health_changed", &Hud::onHealthChanged);  // elsewhere: listen
+namespace s2d::detail {
+class SignalField {
+public:
+    SignalField(Script* script, const char* name, const char* args) { script->declareSignal({name, args}); }
+    SignalField(const SignalField&) = delete;
+    SignalField& operator=(const SignalField&) = delete;
+};
+}  // namespace s2d::detail
+
+#define SIGNAL(name, ...) ::s2d::detail::SignalField s2dSignal_##name { this, #name, #__VA_ARGS__ }
