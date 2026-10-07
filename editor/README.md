@@ -1,13 +1,22 @@
 # Sprout Editor
 
-A small, Godot-style 2D editor built on [raylib](https://www.raylib.com),
-[raylib-cpp](https://github.com/RobLoach/raylib-cpp) and
-[raygui](https://github.com/raysan5/raygui). It's the bare minimum of an
-engine editor: a scene tree of nodes, a live viewport, an inspector, and C++
-scripts attached to nodes.
+The Sprout Editor is a small, visual 2D game editor in the style of
+[Godot](https://godotengine.org). You build each scene by placing **nodes**
+(sprites, rectangles, cameras, physics bodies...) with the mouse, attach **C++
+scripts** to them, and press **Play**. Scripts reload while the game runs, and
+the **Export** button turns your project into a game for Windows, Linux, macOS
+or the web.
 
-It's separate from the code-only Sprout engine in `engine/`: it has its own
-small node system (in `editor/src/`), modelled on Godot's.
+> **New here?** Start with the tutorial
+> **[Your first game in the editor](../docs/editor/getting-started.md)** (about
+> 15 minutes). This page is the manual: come back to it when you want to know
+> more about something.
+
+**Editor or Engine?** The editor is separate from the code-only Sprout engine
+in [`engine/`](../engine/). It has its own small node system (in
+`editor/src/`, namespace `s2d`), modelled on Godot's, and editor projects can't
+be opened by the engine or the other way round. See
+[Engine or Editor?](../README.md#engine-or-editor) for which to use.
 
 ```
 +--------------------------------------------------------------+
@@ -24,9 +33,31 @@ small node system (in `editor/src/`), modelled on Godot's.
 +------------+------------------------------------+------------+
 ```
 
+**Contents**
+
+- [Build and run](#build-and-run)
+- [Projects](#projects)
+- [Using it](#using-it): the docks, the viewport, the toolbar and shortcuts
+- [Scenes inside scenes](#scenes-inside-scenes)
+- [Exporting your game](#exporting-your-game)
+- [Changing scenes while the game runs](#changing-scenes-while-the-game-runs)
+- [Animation](#animation)
+- [Nodes](#nodes): what each node type is for
+- [C++ scripts](#c-scripts): the script editor, script variables (`EXPORT`), hot reloading
+- [Customizing the editor](#customizing-the-editor): panel sizes and themes
+- [Files](#files): where everything is in `editor/`
+- [Not there yet](#not-there-yet)
+
 ## Build and run
 
-From the top of the repository (the editor is built with everything else):
+The editor is built along with everything else. The easiest way is the build
+script, which builds it and opens it:
+
+| Windows | macOS / Linux |
+|---|---|
+| `scripts\run-editor.bat` | `scripts/run-editor.sh` |
+
+Or with CMake, from the top of the repository:
 
 ```bash
 cmake -S . -B build
@@ -35,11 +66,14 @@ cmake --build build
 ```
 
 Or build only the editor: `cmake -S editor -B build-editor && cmake --build build-editor`.
+(Need a compiler, CMake and Git first? See
+[Installing and building](../docs/01-installing.md).)
 
-It opens `editor/project/` and its scene `scenes/main.scene.json`: a tiny
+The first time, it opens the demo project in `editor/project/`: a tiny
 platformer. Press **Play** (F5), run with the arrow keys, jump with Space and
 collect the coins, then walk into the door to reach level 2. Press **Stop** (F8
-or Esc) to go back to editing.
+or Esc) to go back to editing. Its scripts (in `editor/project/scripts/`) are
+good examples to read.
 
 ## Projects
 
@@ -330,7 +364,29 @@ REGISTER_SCRIPT(Spinner)
 
 To add one: select a node, press **New** under *Script* in the inspector and
 type a class name. The editor writes `scripts/<name>.cpp` (in the project) from a
-template and attaches it. Then open the file in your code editor.
+template and attaches it, then opens it in the Script tab. Save it (Ctrl+S)
+and it's compiled in the background, ready for Play.
+
+**What a script can use** (see `editor/src/script.hpp` for the details):
+
+| | |
+|---|---|
+| `ready()` | Runs once, when the game starts (after the inspector values are set) |
+| `process(delta)` | Runs every frame; `delta` is the seconds since the last one |
+| `node()` | The node this script is attached to |
+| `self<CharacterBody2D>()` | The same node as a particular type (`nullptr` if it isn't one) |
+| `getNode("Sprite2D")`, `getNode("../Door")` | Another node, by path from this one |
+| `findNode<Label>("Score")` | A node by name, anywhere in the scene |
+| `node()->queueFree()` | Removes a node at the end of the frame |
+| `instantiate("scenes/coin.scene.json")` | A new copy of a scene, to add with `node()->addChild(...)` |
+| `changeScene("scenes/level2.scene.json")`, `reloadScene()` | Switch scenes ([more](#changing-scenes-while-the-game-runs)) |
+| `tree()->values["coins"]` | Numbers that last from one scene to the next |
+| `print("hello")` | Writes to the Output panel |
+| `EXPORT(float, speed, 200);` | A variable shown in the inspector ([more](#script-variables-shown-in-the-inspector)) |
+
+Scripts can also call any [raylib](https://www.raylib.com/cheatsheet/cheatsheet.html)
+function: `IsKeyDown(KEY_LEFT)`, `IsKeyPressed(KEY_SPACE)`, `GetMousePosition()`,
+`PlaySound(...)` and so on.
 
 ### Editing scripts (the Script tab)
 

@@ -5,7 +5,29 @@ never made a game before. You only need to know a little C++: what a variable
 is, what an `if` does, and roughly what a function is. Every other idea is
 explained the first time it shows up.
 
-## The learning path
+## Engine or Editor?
+
+Sprout has two separate parts, and you make games differently with each:
+
+- The **Sprout Engine** (`engine/`) is code-only: a game is a C++ file in
+  `games/` with a `Scene` that has `update()` and `draw()`. Most of these pages
+  are about the engine.
+- The **Sprout Editor** (`editor/`) is visual, like a small Godot: you place
+  nodes in a scene with the mouse, attach C++ scripts to them and press Play.
+  It has its own node system and its own docs, below.
+
+A game made with one can't be opened by the other. Not sure which to pick? See
+[Engine or Editor?](../README.md#engine-or-editor) in the main README.
+
+## Learning the Editor
+
+| | Page | What you'll learn |
+|---|---|---|
+| 1 | [Installing and building](01-installing.md) | Installing the tools and building Sprout (the same for both parts) |
+| 2 | [Your first game in the editor](editor/getting-started.md) | A step-by-step tutorial: projects, nodes, a script, Play, Export |
+| 3 | [The Sprout Editor manual](../editor/README.md) | Everything else: every dock and shortcut, nodes, the script API, scenes inside scenes, animation, exporting, themes |
+
+## Learning the Engine
 
 Work through the pages in order. Each one builds on the ones before it.
 
@@ -47,7 +69,7 @@ Work through the pages in order. Each one builds on the ones before it.
 | [Using Sprout in your own project](using-sprout-in-your-own-project.md) | Your game in its own repository, CMake options, and using raylib-cpp directly |
 | [Contributing](../CONTRIBUTING.md) | You want to improve the engine itself |
 
-## Learn from the examples
+## Learn from the engine examples
 
 The `examples/` folder has ten complete, well-commented games. They match the
 pages above nicely:
