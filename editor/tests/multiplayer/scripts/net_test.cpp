@@ -30,7 +30,7 @@ public:
             getNode("Players")->addChild(std::move(ball));
         } else {
             leaves = hasArg("--expect-leave");  // stays long enough to see the other client go
-            expected = {"connected", "rpc_roundtrip", "own_player_spawned", "server_sync", "other_player_spawned",
+            expected = {"connected", "rpc_roundtrip", "own_player_spawned", "server_sync", "interpolated", "other_player_spawned",
                         "client_sync_relayed", "script_var_sync", "rpc_broadcast_relayed", "peer_connected"};
             if (leaves) {
                 expected.push_back("peer_disconnected");
@@ -104,8 +104,22 @@ public:
             int me = multiplayer().uniqueId();
             if (Node* mine = players->getNode("Player" + std::to_string(me)); mine && mine->isMultiplayerAuthority())
                 check("own_player_spawned");
-            if (auto* ball = dynamic_cast<Node2D*>(players->getNode("Ball")); ball && ball->position.x > 10)
+            if (auto* ball = dynamic_cast<Node2D*>(players->getNode("Ball")); ball && ball->position.x > 10) {
                 check("server_sync");
+                // The server sends the ball 20 times a second, but interpolation
+                // should move it a little every frame, and never backwards.
+                if (ballFrames < 120) {
+                    float x = ball->position.x;
+                    if (ballFrames > 0 && x != lastBallX) ++ballMoves;
+                    if (ballFrames > 0 && x < lastBallX - 0.001f) ++ballBackwards;
+                    lastBallX = x;
+                    if (++ballFrames == 120) {
+                        print("ball moved on " + std::to_string(ballMoves) + " of 119 frames, backwards on " +
+                              std::to_string(ballBackwards));
+                        if (ballMoves >= 100 && ballBackwards == 0) check("interpolated");
+                    }
+                }
+            }
             if (other) {
                 auto* theirs = dynamic_cast<Node2D*>(players->getNode("Player" + std::to_string(other)));
                 if (theirs) {
@@ -135,6 +149,8 @@ private:
 
     bool server = false, leaves = false, otherLeft = false, done = false;
     int other = 0;
+    int ballFrames = 0, ballMoves = 0, ballBackwards = 0;
+    float lastBallX = 0;
     std::set<std::string> passed;
     std::vector<std::string> expected;
 };

@@ -569,6 +569,8 @@ void MultiplayerSynchronizer::getProperties(std::vector<Property>& out) {
     out.push_back({"root_path", PropKind::String, &rootPath});
     out.push_back({"properties", PropKind::String, &properties});
     out.push_back({"interval", PropKind::Float, &interval, 0.01f});
+    out.push_back({"interpolate", PropKind::Bool, &interpolate});
+    out.push_back({"interpolation_delay", PropKind::Float, &interpolationDelay, 0.01f});
 }
 
 void MultiplayerSpawner::getProperties(std::vector<Property>& out) {

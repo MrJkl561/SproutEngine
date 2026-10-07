@@ -315,11 +315,17 @@ private:
 //   - a property of the root node ("position"), or of a node below it
 //     ("Sprite2D:flip_h"), or a script variable (":health" on the root,
 //     "Gun:ammo" also works for a script on Gun)
+// With interpolate on, numbers, positions and colors glide between updates
+// instead of jumping; other values change when their update is reached.
 class MultiplayerSynchronizer : public Node {
 public:
     std::string rootPath = "..";        // the node whose properties are kept in sync
     std::string properties = "position";
     float interval = 0;                 // seconds between updates (0 = every frame)
+    // Smooth movement: the other games show the node a moment in the past
+    // (interpolation_delay), blending between the updates around that time.
+    bool interpolate = true;
+    float interpolationDelay = 0.1f;
 
     const char* typeName() const override { return "MultiplayerSynchronizer"; }
     void getProperties(std::vector<Property>& out) override;

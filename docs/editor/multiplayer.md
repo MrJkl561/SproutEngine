@@ -154,14 +154,42 @@ The names are the ones the Inspector shows. Its other fields:
 
 - **root_path**: the node whose properties are synced, from the
   synchronizer. `..` (its parent) unless you change it.
-- **interval**: seconds between updates. `0` = every frame (60 a second),
-  smoothest. `0.05` = 20 a second, less network traffic.
+- **interval**: seconds between updates. `0` = every frame (60 a second).
+  `0.05` = 20 a second: much less network traffic, and with interpolation it
+  still looks smooth.
+- **interpolate** (on unless you turn it off): other games glide the node
+  between updates instead of jumping. See below.
+- **interpolation_delay**: how far in the past (seconds) other games show the
+  node, `0.1` unless you change it. See below.
 
 The node's **authority** sends its values; everyone else takes them. Values
 that haven't changed aren't sent again (except once a second, in case one got
 lost). Updates are sent the fast way: if one is lost, the next one replaces
 it. The server checks that updates from a client really come from that
 node's authority, so a client can't move other people's players.
+
+### Smooth movement (interpolation)
+
+Updates arrive a few times a second, and never exactly on time. Shown as they
+come, other players would jump and stutter. So each game shows other players'
+nodes **a moment in the past** (the **interpolation_delay**, 0.1 seconds),
+where it already has the updates from just before and just after, and blends
+between them every frame. The result moves smoothly even at 20 updates a
+second, or when some arrive late.
+
+- **Numbers, positions and colors** are blended (`position`, `velocity`,
+  `rotation`, `modulate`, a `float` script variable...).
+- **Everything else** (`flip_h`, text, `int` and `bool` values) changes
+  when the moment of its update is reached, in step with the movement.
+- Your **own** nodes (the ones you're the authority of) are never delayed:
+  they move the instant you press a key.
+- **Bigger delay** = smoother on bad connections, but others are shown a bit
+  further behind. **Smaller** = more up to date, but late updates show as
+  stutter. 0.1 is right for most games; try 0.15 to 0.2 over the internet.
+- If a node stands still, nothing is sent; when it moves again it picks up
+  smoothly from where it stopped.
+- Turn **interpolate** off for things that must show the latest value right
+  away, or that jump on purpose all the time.
 
 ## MultiplayerSpawner: add things to everyone's game
 
@@ -322,9 +350,9 @@ the library Godot uses too. It's downloaded with the editor's other libraries.
 
 - **Not in web games.** Browsers can't use UDP. In a web export, `host()`
   and `join()` return `false` and the game plays alone.
-- **No smoothing or prediction.** Other players' nodes jump to each update.
-  At 60 updates a second on a home network that looks smooth; over the
-  internet you may see some jitter.
+- **No prediction.** Other players are shown 0.1 seconds in the past
+  (interpolation), which hides jitter but means you see them slightly
+  behind. There's no lag compensation for things like shooting at them.
 - **RPCs can be called by anyone.** Check `rpcSender()` and
   `multiplayer().isServer()` where it matters.
 - **Scene changes aren't synced.** If the server calls `changeScene()`, tell

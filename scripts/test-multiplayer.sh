@@ -35,7 +35,7 @@ wait $server $client1 $client2
 ok=1
 for who in server client1 client2; do
     echo "--- $who"
-    grep -E "CHECK|PASSED|FAILED|Couldn't|rror" "$logs/$who.txt"
+    grep -E "CHECK|PASSED|FAILED|Couldn.t|rror|ball moved" "$logs/$who.txt"
 done
 grep -q "SERVER PASSED" "$logs/server.txt" || ok=0
 grep -q "CLIENT PASSED" "$logs/client1.txt" || ok=0

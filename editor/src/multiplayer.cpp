@@ -3,7 +3,10 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <chrono>
+#include <cmath>
 #include <cstdint>
+#include <deque>
 #include <map>
 #include <set>
 
@@ -100,6 +103,35 @@ std::vector<Property> syncedProperties(const MultiplayerSynchronizer& sync, Node
     return out;
 }
 
+// Seconds on this computer's steady clock (synchronizer updates carry it)
+double now() {
+    return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+// The synced values a fraction f of the way from a to b: numbers, positions
+// and colors are blended; anything else keeps a's value until b is reached.
+json blend(const std::vector<Property>& props, const json& a, const json& b, double f) {
+    json out = a;
+    for (const Property& p : props) {
+        if (!a.contains(p.name) || !b.contains(p.name)) continue;
+        const json &x = a[p.name], &y = b[p.name];
+        auto mix = [&](double u, double v) { return u + (v - u) * f; };
+        if (p.kind == PropKind::Float && x.is_number() && y.is_number()) {
+            out[p.name] = mix(x.get<double>(), y.get<double>());
+        } else if ((p.kind == PropKind::Vec2 || p.kind == PropKind::Color) && x.is_array() && y.is_array() &&
+                   x.size() == y.size()) {
+            json v = json::array();
+            for (size_t i = 0; i < x.size(); ++i) {
+                double m = mix(x[i].get<double>(), y[i].get<double>());
+                if (p.kind == PropKind::Color) v.push_back(static_cast<int>(std::lround(m)));
+                else v.push_back(m);
+            }
+            out[p.name] = v;
+        }
+    }
+    return out;
+}
+
 }  // namespace
 
 const std::vector<std::string>& commandLineArgs() { return argList(); }
@@ -146,6 +178,20 @@ struct Multiplayer::Impl {
     std::map<std::string, Spawned> spawners;  // by the spawner's path
     Node* spawnRoot = nullptr;                 // the scene they belong to
 
+    // Interpolation: the latest updates of each synchronizer this game shows
+    // (but doesn't own), timed by the clock of the game that sent them.
+    struct Snapshot {
+        double time;
+        json values;
+    };
+    struct Buffer {
+        std::string path;  // to notice when the node is gone
+        int sender = 0;
+        std::deque<Snapshot> snaps;
+    };
+    std::map<MultiplayerSynchronizer*, Buffer> buffers;
+    std::map<int, double> clockOffset;  // per sender: our clock minus theirs, at the quickest delivery
+
     void reset() {
         mode = Mode::Off;
         accepted = false;
@@ -155,6 +201,8 @@ struct Multiplayer::Impl {
         clients.clear();
         spawners.clear();
         spawnRoot = nullptr;
+        buffers.clear();
+        clockOffset.clear();
         transport.close();
     }
 
@@ -179,12 +227,63 @@ struct Multiplayer::Impl {
         sender = before;
     }
 
-    void applySync(Node* root, const std::string& path, const json& values) {
+    // An update from `origin` (the game that owns the node) for a synchronizer
+    void receiveSync(Node* root, const json& msg, int origin) {
+        std::string path = msg.value("p", "");
         auto* sync = root ? dynamic_cast<MultiplayerSynchronizer*>(root->getNode(path)) : nullptr;
-        if (!sync) return;
-        Node* target = sync->getNode(sync->rootPath);
+        Node* target = sync ? sync->getNode(sync->rootPath) : nullptr;
         if (!target || target->isMultiplayerAuthority()) return;
-        applyPropertyList(syncedProperties(*sync, target), values);
+        json values = msg.value("v", json::object());
+        if (!sync->interpolate || !msg.contains("ts")) {
+            buffers.erase(sync);
+            applyPropertyList(syncedProperties(*sync, target), values);
+            return;
+        }
+        // How far behind their clock ours is. The quickest delivery is the
+        // truest, so it only goes down... except very slowly, for clock drift.
+        double ts = msg["ts"].get<double>();
+        double offset = now() - ts;
+        auto it = clockOffset.find(origin);
+        if (it == clockOffset.end() || offset < it->second) clockOffset[origin] = offset;
+        else it->second += (offset - it->second) * 0.001;
+
+        Buffer& b = buffers[sync];
+        if (b.path != path) b = Buffer{path, origin, {}};
+        b.sender = origin;
+        if (!b.snaps.empty()) {
+            if (ts <= b.snaps.back().time) return;  // older than what we have (arrived out of order)
+            // Unchanged values aren't sent: after a pause, it stood still until just before this one
+            double step = std::max(static_cast<double>(sync->interval), 1.0 / 60.0);
+            if (ts - b.snaps.back().time > step * 3 + 0.05) b.snaps.push_back({ts - step, b.snaps.back().values});
+        }
+        b.snaps.push_back({ts, std::move(values)});
+        while (b.snaps.size() > 64) b.snaps.pop_front();
+    }
+
+    // Every frame: shows each interpolated node where it was interpolationDelay ago.
+    void interpolateAll(Node* root) {
+        double t = now();
+        for (auto it = buffers.begin(); it != buffers.end();) {
+            MultiplayerSynchronizer* sync = it->first;
+            Buffer& b = it->second;
+            // Gone (freed, or another scene), or ours now
+            Node* target = root && root->getNode(b.path) == sync ? sync->getNode(sync->rootPath) : nullptr;
+            if (!target || target->isMultiplayerAuthority() || !sync->interpolate || b.snaps.empty()) {
+                it = buffers.erase(it);
+                continue;
+            }
+            double show = t - clockOffset[b.sender] - std::max(0.0f, sync->interpolationDelay);
+            while (b.snaps.size() >= 2 && b.snaps[1].time <= show) b.snaps.pop_front();
+            auto props = syncedProperties(*sync, target);
+            if (b.snaps.size() == 1 || show <= b.snaps[0].time) {
+                applyPropertyList(props, b.snaps[0].values);  // waiting for the next update: stay put
+            } else {
+                const Snapshot &from = b.snaps[0], &to = b.snaps[1];
+                double f = std::clamp((show - from.time) / (to.time - from.time), 0.0, 1.0);
+                applyPropertyList(props, blend(props, from.values, to.values, f));
+            }
+            ++it;
+        }
     }
 
     static Node* spawnParent(Node* root, const std::string& spawnerPath) {
@@ -216,7 +315,7 @@ struct Multiplayer::Impl {
             } else if (t == "rpc") {
                 runRpc(root, msg.value("p", ""), msg.value("m", ""), msg.value("a", json::array()), origin);
             } else if (t == "sync") {
-                applySync(root, msg.value("p", ""), msg.value("v", json::object()));
+                receiveSync(root, msg, origin);
             } else if (t == "spawn") {
                 Node* parent = spawnParent(root, msg.value("p", ""));
                 const json& n = msg["n"];
@@ -254,8 +353,8 @@ struct Multiplayer::Impl {
             auto* sync = root ? dynamic_cast<MultiplayerSynchronizer*>(root->getNode(msg.value("p", ""))) : nullptr;
             Node* target = sync ? sync->getNode(sync->rootPath) : nullptr;
             if (!target || target->multiplayerAuthority() != from) return;
-            applyPropertyList(syncedProperties(*sync, target), msg.value("v", json::object()));
-            json out = msg;
+            receiveSync(root, msg, from);
+            json out = msg;  // (keeps the sender's clock, "ts", for the others' interpolation)
             out["from"] = from;
             broadcast(out, false, from);
         }
@@ -319,7 +418,7 @@ struct Multiplayer::Impl {
         if (text == sync.lastSent && sync.sinceSent < 1.0) return;
         sync.sinceSent = 0;
         sync.lastSent = text;
-        json msg = {{"t", "sync"}, {"p", pathBetween(root, &sync)}, {"v", values}};
+        json msg = {{"t", "sync"}, {"p", pathBetween(root, &sync)}, {"v", values}, {"ts", now()}};
         if (mode == Mode::Server) broadcast(msg, false);
         else send(1, msg, false);
     }
@@ -451,6 +550,7 @@ void Multiplayer::poll(SceneTree& tree) {
         dispatchEvents(m, tree);
     }
     dispatchEvents(m, tree);
+    m.interpolateAll(tree.root());  // other players' nodes, smoothly, before scripts look at them
 }
 
 void Multiplayer::flush(SceneTree& tree) {

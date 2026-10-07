@@ -344,7 +344,9 @@ version:
 - **Authority:** each node belongs to one peer (`setMultiplayerAuthority(id)`,
   `isMultiplayerAuthority()`); only that game moves it.
 - **`MultiplayerSynchronizer`** keeps the properties you list the same
-  everywhere: `position, velocity, Sprite:flip_h, :health`.
+  everywhere: `position, velocity, Sprite:flip_h, :health`. Other games
+  **interpolate** them (0.1 s behind, blending between updates), so other
+  players move smoothly.
 - **`MultiplayerSpawner`** copies the scenes the server adds below its
   `spawn_path` to every client, including ones that join later.
 - **RPCs:** `RPC(jump);` next to `void jump(float height)` lets other games call
