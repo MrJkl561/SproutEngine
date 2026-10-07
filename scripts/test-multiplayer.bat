@@ -1,8 +1,9 @@
 @echo off
 rem Tests the editor's multiplayer for real: starts a dedicated server and two
 rem clients (separate programs, no windows) on this PC, and checks that they
-rem connect, call each other's RPCs, keep nodes in sync, spawn players and see
-rem each other leave. Uses editor\tests\multiplayer.
+rem connect, call each other's RPCs, keep nodes in sync (interpolated), spawn
+rem players, predict movement, compensate for lag and see each other leave.
+rem Uses editor\tests\multiplayer.
 rem
 rem   scripts\test-multiplayer.bat            Release
 rem   scripts\test-multiplayer.bat debug      Debug

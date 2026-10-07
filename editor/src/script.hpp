@@ -2,9 +2,9 @@
 // ready() once when the game starts and process(delta) every frame, just like
 // _ready() and _process() in Godot.
 //
-// Put your scripts in the editor/scripts/ folder (or press "New" under Script
-// in the inspector). The editor compiles and reloads them every time you save
-// one, even while the game is running; they show up in the inspector's
+// Put your scripts in the project's scripts/ folder (or press "New" under
+// Script in the inspector). The editor compiles and reloads them every time you
+// save one, even while the game is running; they show up in the inspector's
 // script menu:
 //
 //     #include "script.hpp"

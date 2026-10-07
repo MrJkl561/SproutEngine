@@ -202,7 +202,7 @@ cmake --build build
    your code. If anything ever gets really confused, you can delete the `build`
    folder and run these commands again.
 2. `cmake --build build` **builds** (compiles) everything: the engine, the
-   examples and your games.
+   examples, your games and the Sprout Editor.
 
 **The first time takes a few minutes**, because CMake downloads raylib and the
 other libraries, and then compiles raylib. You'll see a lot of text scroll by.
@@ -239,6 +239,29 @@ from.
 All the examples are in `build/bin/` too: `01_hello_world`,
 `02_shapes_and_colors`, `03_moving_around`, `04_pong` and more. Try them all,
 and read their code in the `examples/` folder.
+
+### Run the editor
+
+The [Sprout Editor](../editor/README.md) (the visual, Godot-style part of
+Sprout) is built along with everything else:
+
+| Windows | macOS / Linux |
+|---|---|
+| `build\bin\sprout_editor\sprout_editor.exe` | `./build/bin/sprout_editor/sprout_editor` |
+
+Its first build also downloads clangd (for checking scripts as you type), so
+it takes a little longer. To learn it, follow
+[Your first game in the editor](editor/getting-started.md).
+
+### Build scripts
+
+The `scripts/` folder has ready-made scripts that run these commands for you,
+for example `scripts\run-editor.bat` (Windows) or `scripts/run-editor.sh`
+(macOS, Linux) builds the editor and opens it, and `scripts\build.bat` /
+`scripts/build.sh` builds everything. The
+[main README](../README.md#build-scripts) lists them all. They use their own
+build folders (`build-x64`, `build-release`...), so the programs end up there
+instead of in `build/`.
 
 ---
 

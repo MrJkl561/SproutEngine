@@ -12,8 +12,9 @@ Sprout comes in **two parts**. Pick whichever suits the way you like to work:
 | **Your games live in** | `games/<name>/main.cpp` in this repository | Project folders anywhere (`~/SproutProjects/<name>/` by default) |
 | **Good for** | Learning how games work from the ground up; games that are mostly code | Levels you want to *see* and drag around; tweaking values without recompiling |
 | **Change code while it runs** | No, rebuild and restart | Yes, scripts hot reload while the game runs |
-| **Exports to** | Windows, macOS, Linux (whatever you build on) | Windows (x64 and ARM64), Linux, macOS and the **web**, from an Export button |
-| **Multiplayer** | No | Yes: host/join, synced nodes, RPCs, dedicated servers |
+| **Runs on** | Windows, macOS, Linux (build it on each one) | Windows, macOS, Linux; it **exports** games for Windows (x64 and ARM64), Linux, macOS and the **web** with an Export button |
+| **Multiplayer** | No | Yes: host/join, synced nodes, RPCs, prediction, dedicated servers |
+| **Events** | Check things in `update()` | Godot-style **signals**, connected in the Inspector or in code |
 | **Start here** | [Your first game](docs/02-your-first-game.md) | [Your first game in the editor](docs/editor/getting-started.md) |
 
 Both are built from this repository with one command, and both use
@@ -105,18 +106,18 @@ REGISTER_SCRIPT(Hero)
 ```
 
 ```
-+--------------------------------------------------------------+
-| Projects New Open Save Save As Export   Play  Play Scene  Stop|
-+------------+------------------------------------+------------+
-| Scene      |                                    | Inspector  |
-| (node tree)|        2D viewport                 | (the       |
-|            |  click, drag, rotate, zoom, pan    |  selected  |
-|------------|                                    |  node's    |
-| FileSystem +------------------------------------+  fields +  |
-| assets,    |  Output                            |  script)   |
-| scenes,    |                                    |            |
-| scripts    |                                    |            |
-+------------+------------------------------------+------------+
++------------------------------------------------------------------------+
+| Projects New Open Save Save As Export  Play Play Scene Stop [x2]  gear |
++------------+--------------------------------------------+--------------+
+| Scene      |  2D | Script                               | Inspector    |
+| (node tree)|                                            | (the selected|
+|            |  2D viewport: click, drag, rotate, zoom    |  node's      |
+|------------|  or the Script tab: the script editor      |  fields,     |
+| FileSystem +--------------------------------------------+  its script, |
+| assets,    |  Output | Animation                        |  signals)    |
+| scenes,    |                                            |              |
+| scripts    |                                            |              |
++------------+--------------------------------------------+--------------+
 ```
 
 ---
@@ -183,7 +184,8 @@ folder:
 
 They build into `build-x64\` or `build-arm64\` on Windows (for this PC's own CPU;
 add `x64` or `arm64` to choose) and `build-release/` or `build-debug/` on
-macOS and Linux.
+macOS and Linux, so the programs are in `<that folder>/bin/...` instead of
+`build/bin/...`.
 
 **ARM64:** Sprout builds and runs on ARM64 as well as x86-64: Windows on ARM,
 ARM64 Linux (e.g. a Raspberry Pi 5) and Apple Silicon Macs. The editor's
@@ -199,7 +201,8 @@ Each engine game is a folder in `games/` with a `main.cpp`.
    `games/space_cats`.
 2. Build again (`cmake -S . -B build` then `cmake --build build`, or
    `scripts/build.sh`). Sprout finds the new folder automatically.
-3. Run `build/bin/space_cats/space_cats`, and start changing `main.cpp`!
+3. Run `build/bin/space_cats/space_cats` (`build\bin\space_cats\space_cats.exe`
+   on Windows), and start changing `main.cpp`!
 
 Put pictures and sounds in an `assets` folder next to your `main.cpp`
 (`games/space_cats/assets/`). It's copied next to your game every time you
@@ -312,7 +315,7 @@ The **[documentation](docs/README.md)** is written for beginners.
 2. [Your first game in the editor](docs/editor/getting-started.md), a step-by-step tutorial
 3. [Multiplayer in the editor](docs/editor/multiplayer.md): playing together over a network
 4. The [Sprout Editor manual](editor/README.md): every dock, node, shortcut,
-   the script API, scenes inside scenes, animation, exporting and themes
+   the script API, signals, scenes inside scenes, animation, exporting and themes
 
 ### Learning the Engine
 
@@ -372,19 +375,20 @@ Cpp-Game-engine-/
 │   ├── src/            <- the editor and its node system
 │   ├── player/         <- the game runtime that exported games are built from
 │   ├── templates/      <- New Project templates (Multiplayer)
+│   ├── tests/          <- the editor's tests (multiplayer, signals)
 │   └── project/        <- the editor's demo project
 ├── docs/               <- the documentation (docs/editor/ for the editor)
-├── scripts/            <- build, run-editor, test, export, setup-web and test-multiplayer scripts
+├── scripts/            <- build, run-editor, test, export, setup-web, test-signals and test-multiplayer scripts
 ├── tests/              <- the engine's unit tests
-├── cmake/              <- build helpers (downloads libraries, sprout_add_game)
+├── cmake/              <- build helpers (downloads libraries, sprout_add_game, ENet for the editor)
 └── CMakeLists.txt      <- the main build file (you normally don't need to touch it)
 ```
 
 Editor projects don't live in here: they're folders of their own, in
 `SproutProjects` in your home folder unless you pick somewhere else.
 
-After building, every game is in `build/bin/<game name>/`, next to a copy of its
-`assets` folder.
+After building, every engine game is in `build/bin/<game name>/`, next to a copy
+of its `assets` folder, and the editor is `build/bin/sprout_editor/sprout_editor`.
 
 ---
 
@@ -396,9 +400,9 @@ downloads them automatically; you don't need to install them.
 | Library | Used for | License |
 |---|---|---|
 | [raylib](https://github.com/raysan5/raylib) 6.0 by Ramon Santamaria | Window, drawing, input, audio | zlib/libpng |
-| [raylib-cpp](https://github.com/RobLoach/raylib-cpp) 6.0.3 by Rob Loach | The C++ wrapper for raylib that Sprout's engine code uses | zlib/libpng |
-| [raygui](https://github.com/raysan5/raygui) 5.0 by Ramon Santamaria | Buttons, sliders and other in-game UI | zlib/libpng |
-| [nlohmann/json](https://github.com/nlohmann/json) 3.12 by Niels Lohmann | Save files and JSON data | MIT |
+| [raylib-cpp](https://github.com/RobLoach/raylib-cpp) 6.0.3 by Rob Loach | The C++ wrapper for raylib that the engine and the editor are written with | zlib/libpng |
+| [raygui](https://github.com/raysan5/raygui) 5.0 by Ramon Santamaria | The engine's in-game menus, and the editor's whole interface | zlib/libpng |
+| [nlohmann/json](https://github.com/nlohmann/json) 3.12 by Niels Lohmann | Save files and JSON data; the editor's scenes, projects and network messages | MIT |
 | [doctest](https://github.com/doctest/doctest) 2.4 | The engine's unit tests (only when tests are turned on) | MIT |
 | [ENet](https://github.com/lsalzman/enet) 1.3 by Lee Salzman | The editor's multiplayer (UDP networking) | MIT |
 | [clangd](https://clangd.llvm.org/) 21 (LLVM) | The editor's live script errors and colors (a ready-made download) | Apache 2.0 with LLVM exception |
@@ -420,5 +424,5 @@ permissive) licenses.
 ## Contributing
 
 Found a bug, or want to make Sprout better? Read
-[CONTRIBUTING.md](CONTRIBUTING.md) for how the engine is organised, how to run
-the tests and the house style.
+[CONTRIBUTING.md](CONTRIBUTING.md) for how the engine and the editor are
+organised, how to run the tests and the house style.

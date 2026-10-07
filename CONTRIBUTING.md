@@ -1,8 +1,9 @@
 # Contributing to Sprout
 
 Thanks for wanting to make Sprout better! This guide is for people working on
-the **engine itself**. If you just want to make games, start with the
-[documentation](docs/README.md) instead.
+**Sprout itself**: the engine and the editor. If you just want to make games,
+start with the [documentation](docs/README.md) instead. The editor has a
+section of its own: [Working on the editor](#working-on-the-editor).
 
 Sprout's one big goal: **a 15-year-old who has never made a game, and knows only
 a little C++, can understand it and build a game with it.** Every change is
@@ -14,9 +15,10 @@ needs a very good reason.
 ## How the repository is organised
 
 ```
-CMakeLists.txt              top-level build: options, then engine/, examples/, games/, tests/
+CMakeLists.txt              top-level build: options, then engine/, examples/, games/, tests/, editor/
 cmake/
   SproutDependencies.cmake  downloads raylib, raylib-cpp, raygui, nlohmann/json (FetchContent)
+  SproutEnet.cmake          downloads ENet (the editor's multiplayer)
   SproutGame.cmake          sprout_add_game() and sprout_add_games_in()
 engine/
   CMakeLists.txt            the `sprout` static library (alias sprout::sprout)
@@ -31,7 +33,9 @@ engine/
 examples/                   example games 01-10, each a folder with main.cpp (+ assets/)
 games/                      user games; every sub-folder with a .cpp becomes a game
 tests/                      doctest unit tests (built with -DSPROUT_BUILD_TESTS=ON)
-docs/                       the beginner documentation
+editor/                     the Sprout Editor (separate from the engine; see below)
+scripts/                    build, run-editor, test, export, setup-web, test-signals, test-multiplayer
+docs/                       the beginner documentation (docs/editor/ for the editor)
 .github/workflows/build.yml CI: builds and tests on Windows, macOS and Linux
 ```
 
@@ -176,6 +180,64 @@ Match the code around you. In short:
   English for beginners: short sentences, explain jargon the first time, small
   examples, "Try it!" challenges. Complete programs in the docs must compile
   (with `-Wall -Wextra`, without warnings) and run.
+
+## Working on the editor
+
+The editor (`editor/`, namespace `s2d`) doesn't use the engine: it has its own
+nodes, scenes and scripts, and links raylib-cpp, raygui, nlohmann/json and
+ENet directly. Its manual, [editor/README.md](editor/README.md), lists every
+source file under *Files*.
+
+```
+editor/
+  src/              the editor, its node system, scripts, signals, multiplayer...
+  player/           the game runtime exports are built from (lists its sources by hand!)
+  scripts_module/   builds a project's scripts into the hot reload library
+  templates/        New Project templates (each with a template.json)
+  tests/            test projects: multiplayer/, signals/
+  project/          the demo project
+  theme/            the editor's themes
+```
+
+Things worth knowing:
+
+- **`<windows.h>` and `raylib.h` can't be in the same file** (both define
+  names like `DrawText` and `Rectangle`). Code that needs Windows or a library
+  that includes it (ENet) goes in a file of its own: `platform.cpp`,
+  `net_transport.cpp`, `console.cpp`.
+- **Exports build `editor/player/` with an explicit list of files.** A new
+  `.cpp` that games need at run time (nodes, scenes, scripts, signals,
+  multiplayer...) must be added to `editor/player/CMakeLists.txt` too, or
+  exports fail to link. Check with an export (below).
+- **Scripts are a separate library** loaded by the editor (hot reloading).
+  Whatever they call must be defined in the editor's `.cpp` files, not
+  `inline` in a header with its own static state (a script library would get a
+  copy of its own). Anything stored in a script's objects (connections,
+  callbacks) must be gone before the library unloads: see how `Script`'s
+  destructor removes its signal connections.
+- `script.hpp` and the headers it includes are what script writers read, and
+  what autocomplete shows: keep their comments beginner-friendly, like the
+  engine's headers.
+
+Building and checking the editor (all without opening a window):
+
+```bash
+cmake -S . -B build && cmake --build build --target sprout_editor --parallel
+build/bin/sprout_editor/sprout_editor --check-scripts       # the demo's scripts build and load
+scripts/test-signals.sh                                     # every kind of signal connection
+scripts/test-multiplayer.sh                                 # a server and two clients, for real
+SPROUT_TEST_LAG="--lag 120 --jitter 20 --loss 5" scripts/test-multiplayer.sh   # ...over a bad network
+build/bin/sprout_editor/sprout_editor --export linux        # (or windows/macos): exports still build
+build/bin/sprout_editor/sprout_editor --project editor/project --play --headless --frames 300
+```
+
+`--play` runs a project as a game without the editor (`--headless`: no
+window). `SPROUT_TEST_FRAMES=120` makes the editor itself quit after 120 frames,
+and with it `SPROUT_EDITOR_SCREENSHOT=out.png` saves the last frame (use `xvfb-run` on
+Linux without a display). CI runs all of the above on every OS (see
+`.github/workflows/build.yml`). When you change what the editor can do, update
+[editor/README.md](editor/README.md) and, for multiplayer,
+[docs/editor/multiplayer.md](docs/editor/multiplayer.md).
 
 ## License
 

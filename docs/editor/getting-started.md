@@ -28,7 +28,8 @@ scripts in it.
 1. Open the editor. (The first time, it opens a demo project: a small
    platformer. Press **Play** to try it, then **Stop**.)
 2. Press **Projects** at the left of the toolbar.
-3. Press **New Project...**, type the name `Jumpy` and press **Create**.
+3. Press **New Project...**, type the name `Jumpy`, leave **Start from** on
+   **Empty**, and press **Create**.
 
 The editor makes a `Jumpy` folder in `SproutProjects` in your home folder
 (press **Browse...** first to put it somewhere else) and opens it. You'll see:
@@ -216,11 +217,15 @@ Ideas to try with what you know:
   smaller and move it up.
 - Make the view follow the player: in the Scene dock, drag `Camera2D` onto
   `Player`, then set the camera's **position** to `0`, `0`.
-- Add an `Area2D` coin that disappears when the player touches it
-  (`getOverlappingBodies()`).
+- Add a coin that disappears when the player touches it: an `Area2D` with a
+  `Sprite2D` (`coin.png`) and a `CollisionShape2D` inside. Give the Area2D a
+  script, then in the Inspector under **Signals** press **Connect...** next to
+  `body_entered` and **Connect**: the editor writes the function for you. Fill
+  it in with `if (body->name == "Player") node()->queueFree();`. See
+  [Signals](../../editor/README.md#signals).
 - Open the demo project (**Projects** → **Open Folder...** → the `editor/project`
-  folder inside the Sprout folder) and read its scripts: coins, a moving box, a door to level 2, and an animated
-  player.
+  folder inside the Sprout folder) and read its scripts: coins, a door to
+  level 2, a spinning icon, and an animated player.
 
 Want to play it with friends? See **[Multiplayer in the editor](multiplayer.md)**,
 or make a new project from the **Multiplayer** template.
@@ -229,9 +234,10 @@ Everything the editor can do is in the **[Sprout Editor manual](../../editor/REA
 
 - [Using the editor](../../editor/README.md#using-it): every dock, shortcut and button
 - [Nodes](../../editor/README.md#nodes): what each node type is for
-- [C++ scripts](../../editor/README.md#c-scripts): the script API, `EXPORT`, hot reloading
+- [C++ scripts](../../editor/README.md#c-scripts): the script API, `EXPORT`, signals, hot reloading
 - [Scenes inside scenes](../../editor/README.md#scenes-inside-scenes)
 - [Changing scenes while the game runs](../../editor/README.md#changing-scenes-while-the-game-runs)
 - [Animation](../../editor/README.md#animation)
 - [Exporting your game](../../editor/README.md#exporting-your-game)
+- [Multiplayer](multiplayer.md): playing together over a network
 - [Customizing the editor](../../editor/README.md#customizing-the-editor): themes and layout

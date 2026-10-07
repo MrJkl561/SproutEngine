@@ -64,10 +64,12 @@ are short and full of comments. They're the best place to start reading.
 - The **server** decides who's playing: when someone joins, it adds a `Player`
   for them below `Players`. The **MultiplayerSpawner** copies that player into
   every client's game, with the same name.
-- Each player has a **multiplayer authority**: the peer whose copy is the real
-  one. Only that game reads the keyboard and moves it.
-- Each player's **MultiplayerSynchronizer** sends its position from that game
-  to all the others.
+- Each player has a **multiplayer authority**: the peer it belongs to. Only
+  that game reads the keyboard for it.
+- In the template, players use [prediction](#prediction-no-waiting-for-the-server):
+  the player's own game moves at once and sends its keys to the server, the
+  server makes the real move, and each player's **MultiplayerSynchronizer**
+  sends the server's result to all the others.
 - Everything goes through the server. Clients never talk to each other
   directly; the server passes messages on.
 
@@ -169,7 +171,9 @@ The names are the ones the Inspector shows. Its other fields:
 - **interpolation_delay**: how far in the past (seconds) other games show the
   node, `0.1` unless you change it. See below.
 
-The node's **authority** sends its values; everyone else takes them. Values
+The node's **authority** sends its values; everyone else takes them (for a
+[predicted](#prediction-no-waiting-for-the-server) node, the server sends them
+instead). Values
 that haven't changed aren't sent again (except once a second, in case one got
 lost). Updates are sent the fast way: if one is lost, the next one replaces
 it. The server checks that updates from a client really come from that
@@ -221,6 +225,9 @@ everything that was spawned before they came.
 - Only the **server** spawns. Things a client adds there stay in that game.
 - Give each spawned node its own name. If two have the same name, the
   spawner adds a number to the second one.
+- On clients the spawner sends the [signals](../../editor/README.md#signals)
+  `spawned(Node* node)` when a copy arrives and `despawned(Node* node)` just
+  before one goes, to connect to like any other signal.
 
 ## RPCs: call a function on other players' games
 
@@ -253,8 +260,10 @@ rpcId(3, "wave");                     // only on peer 3
 - `rpc()` doesn't run it here. To run it here too, call the function
   yourself as well (the template does `rpc("wave"); wave();`).
 - Arguments can be `bool`, `int`, `float`, `std::string`, `Vector2` and
-  `Color`, up to as many as you like. They arrive in order, and every RPC
-  arrives (they're never lost).
+  `Color` (raylib-cpp's too, like `body->position`), up to as many as you
+  like. They arrive in order, and every RPC arrives (they're never lost).
+- RPCs are for other games. Within one game, use
+  [signals](../../editor/README.md#signals).
 - Inside the function, `rpcSender()` is the id of the peer that called it.
 - **Any peer can call any RPC.** For things only the server should decide
   (damage, scores, who won), check who's asking:
@@ -438,7 +447,7 @@ player of its own. `isHeadless()` is `true` too, and pictures aren't loaded.
 - From the command line, without exporting:
   `sprout_editor --project "My Game" --play --server` (everything after
   `--play` goes to the game; put the game's own arguments after `--`, e.g.
-  `--play --server -- --port 9000`).
+  `--play --server -- --lag 100`).
 - On a Linux server with no desktop, the game still needs the small X11
   library to start: `sudo apt install libx11-6`.
 
@@ -475,6 +484,7 @@ the library Godot uses too. It's downloaded with the editor's other libraries.
 | `set_multiplayer_authority(id)` / `is_multiplayer_authority()` | `setMultiplayerAuthority(id)` / `isMultiplayerAuthority()` |
 | `MultiplayerSynchronizer` (replication config) | `MultiplayerSynchronizer` (`properties` field) |
 | `MultiplayerSpawner` (spawn path + auto spawn list) | `MultiplayerSpawner` (`spawn_path`) |
+| `MultiplayerSpawner.spawned` / `despawned` signals | the same signals, `spawned` / `despawned` |
 | Debug → Customize Run Instances | the window button next to Stop |
 | (addons like netfox) rollback / prediction | `INPUT`, `gatherInput()`, `simulate()` |
 | `--headless` dedicated server export | any desktop export, started with `--server` |

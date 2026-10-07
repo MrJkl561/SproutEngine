@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Tests the editor's multiplayer for real: starts a dedicated server and two
 # clients (separate programs, no windows) on this computer, and checks that
-# they connect, call each other's RPCs, keep nodes in sync, spawn players
-# and see each other leave. Uses editor/tests/multiplayer.
+# they connect, call each other's RPCs, keep nodes in sync (interpolated),
+# spawn players, predict movement, compensate for lag and see each other
+# leave. Uses editor/tests/multiplayer.
+#   SPROUT_TEST_LAG="--lag 120 --jitter 20 --loss 5" runs it over a slow network.
 #
 #   scripts/test-multiplayer.sh [debug|release]   build the editor, then test
 #   SPROUT_EDITOR=path/to/sprout_editor scripts/test-multiplayer.sh   test that editor

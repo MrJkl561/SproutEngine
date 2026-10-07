@@ -17,7 +17,10 @@ them.
 
 Jump to: [Installing and building](#installing-and-building) ·
 [Compile errors](#compile-errors) · [Link errors](#link-errors) ·
-[When the game runs](#when-the-game-runs)
+[When the game runs](#when-the-game-runs) · [The Sprout Editor](#the-sprout-editor)
+
+Most of this page is about the code-only Sprout Engine. Problems with the
+visual [Sprout Editor](../editor/README.md) are in their own section at the end.
 
 ---
 
@@ -425,3 +428,74 @@ Give `useFont` a bigger quality number than your biggest text size:
 Still stuck? Read the comment at the top of the matching header file in
 `engine/include/sprout/`: each one explains how its part of Sprout works, with
 examples. And compare your code with the examples in `examples/`.
+
+---
+
+## The Sprout Editor
+
+### "Scripts: build failed" in the toolbar
+
+A script has a mistake. The compiler's messages are in the **Output** panel:
+click one to jump to the line. Scripts open in the Script tab show mistakes as
+you type, with a wavy underline. The last version that worked keeps running
+until you fix it and save.
+
+### My script doesn't show up in Attach (or "Script 'X' ... isn't loaded")
+
+Every script needs `REGISTER_SCRIPT(ClassName)` after the class, and must
+compile. Check the toolbar's script status and the Output panel. If you renamed
+the class, attach the new name to the node again.
+
+### VS Code (or another code editor) says "cannot open source file script.hpp"
+
+Open the project in the Sprout Editor once: it writes the files code editors
+need (`compile_commands.json`, `.vscode/...`). Then open the project **folder**
+in your code editor and reload its window. See
+[Using another code editor](../editor/README.md#using-another-code-editor-vs-code-visual-studio).
+
+### A signal never calls my function
+
+- **Connected in a script:** look in the Output panel for
+  `connect: 'X' (Type) has no signal 'y'`: a misspelled signal name. It lists
+  the node's real signals. Also check that `getNode(...)` found the node
+  (`the node is missing (nullptr)`).
+- **Connected in the Inspector:** a message starting with
+  `Signal connection ...` says what's wrong: the target node was renamed or
+  deleted, has no script, or its script has no `CALLABLE(name)` for the
+  function. The editor writes `CALLABLE` when it adds the function; if you
+  renamed the function, rename it in `CALLABLE(...)` too.
+- The function takes more values than the signal sends (`Signal 'x' sends 1
+  value(s), but the function connected to it wants 2`).
+
+See [Signals](../editor/README.md#signals).
+
+### Web export: "Needs Emscripten" or not ready
+
+Get emsdk (`git clone https://github.com/emscripten-core/emsdk.git`), pick its
+folder in the Export window with **Choose...**, and press **Set Up** once. On
+Windows that needs Python, and web builds need Ninja. Details:
+[Exporting your game](../editor/README.md#exporting-your-game).
+
+### Multiplayer: "Couldn't host on port 7777 (is another game using it?)"
+
+Another program (often another copy of your game) is already hosting on that
+port. Close it, or use another port.
+
+### Multiplayer: "Couldn't connect to the server."
+
+- Is the server running, on the same port?
+- Same computer: join `127.0.0.1`. Another computer: use the host's IP address
+  (`ipconfig` on Windows, `ip addr` on Linux), not `127.0.0.1`.
+- Windows' firewall asks the first time a game hosts: allow it on private
+  networks. Over the internet, the host's router must forward the port (UDP).
+
+See [Playing over a network](editor/multiplayer.md#playing-over-a-network).
+
+### A dedicated server on Linux: "error while loading shared libraries: libX11.so.6"
+
+The game needs the small X11 library even without a window:
+`sudo apt install libx11-6`.
+
+### The extra Run Instances windows still run my old code
+
+They keep the scripts they started with. Press **Stop** and **Play** again.

@@ -19,18 +19,18 @@ be opened by the engine or the other way round. See
 [Engine or Editor?](../README.md#engine-or-editor) for which to use.
 
 ```
-+--------------------------------------------------------------+
-| Projects New Open Save Save As Export   Play  Play Scene  Stop|
-+------------+------------------------------------+------------+
-| Scene      |                                    | Inspector  |
-| (node tree)|        2D viewport                 | (the       |
-|            |  click, drag, rotate, zoom, pan    |  selected  |
-|------------|                                    |  node's    |
-| FileSystem +------------------------------------+  fields +  |
-| assets,    |  Output                            |  script)   |
-| scenes,    |                                    |            |
-| scripts    |                                    |            |
-+------------+------------------------------------+------------+
++------------------------------------------------------------------------+
+| Projects New Open Save Save As Export  Play Play Scene Stop [x2]  gear |
++------------+--------------------------------------------+--------------+
+| Scene      |  2D | Script                               | Inspector    |
+| (node tree)|                                            | (the selected|
+|            |  2D viewport: click, drag, rotate, zoom    |  node's      |
+|------------|  or the Script tab: the script editor      |  fields,     |
+| FileSystem +--------------------------------------------+  its script, |
+| assets,    |  Output | Animation                        |  signals)    |
+| scenes,    |                                            |              |
+| scripts    |                                            |              |
++------------+--------------------------------------------+--------------+
 ```
 
 **Contents**
@@ -138,18 +138,25 @@ window (800 x 450).
 - Drag a picture into the viewport to make a `Sprite2D` there. Click a picture
   to give it to the selected `Sprite2D`.
 - Drop picture files from your desktop onto the window to import them into
-  `project/assets/`.
+  the project's `assets/` folder.
 - Click a scene to open it. Click (or drag onto a node) a script to attach it.
 
 **Inspector (right)** - the selected node's fields.
 - Drag left/right on a number to change it, or click it to type a value.
-- **Attach** picks a loaded script, **New** writes a new script file,
-  **Detach** removes the script.
+- **Attach** picks a loaded script, **New** writes a new script file, **Edit**
+  opens it, **Detach** removes the script. Its `EXPORT` variables show under
+  **Script Variables**.
+- **Signals** lists what the node can announce, with **Connect...** to make a
+  script's function get the call ([Signals](#signals)).
 
 **Toolbar** - New / Open / Save (Ctrl+S) / Save As, Export, Undo (Ctrl+Z) / Redo
 (Ctrl+Y or Ctrl+Shift+Z). **Play** (F5) starts the game from its main scene (set
 in the Export window), **Play Scene** (F6) plays the scene you're editing, and
-**Stop** (F8, Esc) goes back to editing.
+**Stop** (F8, Esc) goes back to editing. The **window button** next to Stop sets
+how many copies of the game Play starts, for multiplayer
+([Run Instances](#multiplayer)). Next to it, the scripts' build status, with a
+button to rebuild them. The **gear button** has **Code Editor...**, **Run
+Instances...** and **Reset Panel Layout**.
 
 **UI size** - the editor follows your display scaling (for example 150% on
 many Windows laptops), and the window opens sized to fit your screen. Change it
@@ -211,9 +218,10 @@ play, without the editor:
 
 | Platform | What you get | What this computer needs |
 |---|---|---|
-| Linux | `linux/<Game>` + `project/` | Linux |
-| Windows | `windows/<Game>.exe` + `project/` | Windows, or [MinGW-w64](https://www.mingw-w64.org/) on Linux/macOS (`sudo apt install mingw-w64`, `brew install mingw-w64`) |
-| macOS | `macos/<Game>.app` | a Mac (Apple's compiler and SDK only run on macOS) |
+| Linux | `linux/<Game>` + `project/` | Linux (it's built for this PC's CPU: x86-64 or ARM64) |
+| Windows | `windows/<Game>.exe` + `project/` (x64: runs on every Windows PC, ARM64 ones through emulation) | Windows, or [MinGW-w64](https://www.mingw-w64.org/) on Linux/macOS (`sudo apt install mingw-w64`, `brew install mingw-w64`) |
+| Windows ARM64 | `windows-arm64/<Game>.exe` + `project/` (native for Windows on ARM) | Windows with Visual Studio's "MSVC ARM64/ARM64EC build tools" |
+| macOS | `macos/<Game>.app` (universal: Apple Silicon and Intel) | a Mac (Apple's compiler and SDK only run on macOS) |
 | Web | `web/index.html` + `.js`, `.wasm`, `.data` | [Emscripten](https://emscripten.org/docs/getting_started/downloads.html) (emsdk) |
 
 The Export window shows which platforms are ready on this computer, and what to
@@ -225,7 +233,7 @@ install for the others (then press **Recheck**). It also sets:
 - **Export to:** the folder to export to (default: the project's `exports/`). Each platform
   gets its own folder in it.
 
-These are saved in `project/project.json`. Exporting saves the open scene first.
+These are saved in the project's `project.json`. Exporting saves the open scene first.
 
 How it works: the game runtime in `editor/player/` (nodes, scenes and your
 scripts, without the editor) is built with CMake for each platform, then
@@ -342,7 +350,7 @@ version:
   `peerConnected(id)`, `peerDisconnected(id)`, `connectedToServer()`,
   `connectionFailed()` and `serverDisconnected()`.
 - **Authority:** each node belongs to one peer (`setMultiplayerAuthority(id)`,
-  `isMultiplayerAuthority()`); only that game moves it.
+  `isMultiplayerAuthority()`); only that game controls it.
 - **`MultiplayerSynchronizer`** keeps the properties you list the same
   everywhere: `position, velocity, Sprite:flip_h, :health`. Other games
   **interpolate** them (0.1 s behind, blending between updates), so other
@@ -364,7 +372,7 @@ version:
   `--join 127.0.0.1`, `--server`, `--lag 150` for a slow network). The extra
   copies open in windows of their own and print to the Output panel.
 - **Dedicated server:** any exported desktop game started with `--server` runs
-  without a window and just hosts. In the editor:
+  without a window and just hosts. Without exporting:
   `sprout_editor --project "My Game" --play --server`.
 
 It uses [ENet](https://github.com/lsalzman/enet) (UDP), downloaded with the
@@ -415,9 +423,11 @@ REGISTER_SCRIPT(Spinner)
 ```
 
 To add one: select a node, press **New** under *Script* in the inspector and
-type a class name. The editor writes `scripts/<name>.cpp` (in the project) from a
-template and attaches it, then opens it in the Script tab. Save it (Ctrl+S)
-and it's compiled in the background, ready for Play.
+type a class name. The editor writes the file in the project's `scripts/`
+folder, named after the class in snake_case (`PlayerController` is
+`player_controller.cpp`), from a template, attaches it and opens it (in the
+Script tab, or [your code editor](#using-another-code-editor-vs-code-visual-studio)).
+Save it (Ctrl+S) and it's compiled in the background, ready for Play.
 
 **What a script can use** (see `editor/src/script.hpp` for the details):
 
@@ -428,16 +438,20 @@ and it's compiled in the background, ready for Play.
 | `node()` | The node this script is attached to |
 | `self<CharacterBody2D>()` | The same node as a particular type (`nullptr` if it isn't one) |
 | `getNode("Sprite2D")`, `getNode("../Door")` | Another node, by path from this one |
-| `findNode<Label>("Score")` | A node by name, anywhere in the scene |
+| `findNode("Score")`, `findNode<Label>("Score")` | A node by name, anywhere in the scene |
 | `node()->queueFree()` | Removes a node at the end of the frame |
-| `instantiate("scenes/coin.scene.json")` | A new copy of a scene, to add with `node()->addChild(...)` |
-| `changeScene("scenes/level2.scene.json")`, `reloadScene()` | Switch scenes ([more](#changing-scenes-while-the-game-runs)) |
+| `node()->addChild(createNode("Sprite2D"))` | Makes a new node while playing |
+| `node()->addChild(instantiate("scenes/coin.scene.json"))` | Makes a new copy of a scene while playing |
+| `changeScene("scenes/level2.scene.json")`, `reloadScene()` | Switch scenes at the end of the frame ([more](#changing-scenes-while-the-game-runs)) |
+| `tree()->currentScene()` | The path of the scene that's running |
 | `tree()->values["coins"]` | Numbers that last from one scene to the next |
 | `print("hello")` | Writes to the Output panel |
 | `connect(node, "body_entered", &Coin::onBody)` | Calls a function when a node sends a signal ([more](#signals)) |
 | `CALLABLE(onBody);` | Lets signals connected in the editor call that function ([more](#signals)) |
 | `SIGNAL(died);`, `emitSignal("died")` | Declares and sends a signal of your own ([more](#signals)) |
 | `EXPORT(float, speed, 200);` | A variable shown in the inspector ([more](#script-variables-shown-in-the-inspector)) |
+| `multiplayer()`, `RPC(name);`, `rpc(...)`, `INPUT(...)` | Networking ([Multiplayer](#multiplayer)) |
+| `hasArg("--host")`, `argValue("--join")` | The game's command line |
 
 Scripts can also call any [raylib](https://www.raylib.com/cheatsheet/cheatsheet.html)
 function: `IsKeyDown(KEY_LEFT)`, `IsKeyPressed(KEY_SPACE)`, `GetMousePosition()`,
@@ -470,8 +484,8 @@ making a **New** script (it opens straight away). Each open file gets a tab.
   MB, into the build folder). Where there's no ready-made clangd (Linux on
   ARM64) one already on the computer is used, or else the compiler checks the
   script (errors only). Turn the download off with `-DSPROUT_EDITOR_CLANGD=OFF`.
-  `sprout_editor --check-file scripts/player.cpp` checks one script from the
-  command line.
+  `sprout_editor --project "My Game" --check-file "My Game/scripts/player.cpp"`
+  checks one script from the command line.
 - **Compile errors** from saving are also listed in the Output panel; clicking
   one jumps to it
 - **Scene files** can be edited as JSON. A file that isn't valid JSON, or isn't
@@ -486,8 +500,8 @@ The colors and font are in the theme file (`t.code...`, see
 
 ### Using another code editor (VS Code, Visual Studio...)
 
-For heavier coding (autocomplete, debugging) you can open files in your own
-editor instead: **gear button** on the toolbar -> **Code Editor...** lists the
+For heavier coding (debugging, refactoring, big files) you can open files in
+your own editor instead: **gear button** on the toolbar -> **Code Editor...** lists the
 editors found on your computer (VS Code, Visual Studio, CLion, Sublime Text, Zed,
 Notepad++, Xcode, Kate...), the system default, or a command of your own, where
 `{file}` is the file and `{project}` the project folder, e.g.
@@ -580,30 +594,13 @@ like any other property. In the demo, each door's `next_scene` picks where it
 leads, and the player's `speed`, `jump_speed` and `gravity` can be tuned per
 level.
 
-What a script can use:
-
-| | |
-|---|---|
-| `node()` | the node it's attached to |
-| `self<T>()` | the node as a type, e.g. `self<CharacterBody2D>()` (nullptr if it isn't one) |
-| `getNode("Child")`, `getNode("../Sibling")` | nodes by path |
-| `findNode("Score")`, `findNode<Label>("Score")` | a node by name anywhere in the scene |
-| `node()->queueFree()` | remove the node at the end of the frame |
-| `node()->addChild(createNode("Sprite2D"))` | make new nodes while playing |
-| `node()->addChild(instantiate("scenes/coin.scene.json"))` | make a copy of a scene while playing |
-| `changeScene("scenes/level2.scene.json")` | switch to another scene (at the end of this frame) |
-| `reloadScene()` | start the current scene again (e.g. when the player dies) |
-| `tree()->currentScene()` | the path of the scene that's running |
-| `tree()->values["coins"]` | numbers kept across scene changes (score, lives...) |
-| `print("text")` | write to the Output panel |
-| everything in raylib | input (`IsKeyDown(KEY_SPACE)`), sound, drawing, ... |
-
 Tip: to set a whole vector, write `me->position = Vector2{100, 200};`
 (raylib-cpp needs the type name there).
 
-The included scripts are `player_controller.cpp` (platformer movement),
-`coin.cpp` (collectibles with a score that carries across levels),
-`level_exit.cpp` (a door to the next level) and `spinner.cpp`.
+The demo's scripts are `player_controller.cpp` (platformer movement and
+animations), `coin.cpp` (collectibles with a score that carries across levels,
+using the Area2D's `body_entered` signal), `level_exit.cpp` (a door to the next
+level, also with `body_entered`) and `spinner.cpp`.
 
 ### Signals
 
@@ -722,6 +719,10 @@ and it works while the game is playing too:
 - If the game is playing, every script is made again from the new code and
   its `ready()` runs again. Nodes keep their positions and other properties,
   but the script objects are new, so their member variables start over.
+  Signal connections are made again too (the ones made in the editor, and the
+  ones `ready()` makes).
+- Extra windows started by [Run Instances](#multiplayer) keep the scripts they
+  started with: Stop and Play again to see the change there.
 - The button next to the status rebuilds and reloads by hand.
 
 How it works: the project's scripts are built into a separate library,
@@ -799,15 +800,16 @@ theme that only sets what differs from the defaults.
 ```
 editor/
 ├── src/
-│   ├── main.cpp          <- opens the window and runs the editor
+│   ├── main.cpp          <- opens the window and runs the editor; the command-line tools
 │   ├── editor.*          <- the editor's panels, viewport, undo, dialogs
 │   ├── nodes.*           <- the node types
 │   ├── scene_tree.*      <- runs a scene: scripts, process, queueFree, drawing
-│   ├── script.hpp        <- the Script base class, EXPORT, RPC and REGISTER_SCRIPT
+│   ├── script.hpp        <- the Script base class, EXPORT, SIGNAL, CALLABLE, RPC, INPUT, REGISTER_SCRIPT
 │   ├── signals.*         <- signals: connections, sending, the values they carry
 │   ├── multiplayer.*     <- hosting, joining, RPCs, synchronizers and spawners
 │   ├── net_transport.*   <- the network connection under it (ENet)
 │   ├── game_runner.*     <- runs a project as a game (exports, Run Instances, --server)
+│   ├── console.*         <- Windows: a dedicated server prints to the console it was started from
 │   ├── hot_reload.*      <- watches, rebuilds and reloads the scripts library
 │   ├── export.*          <- the Export window's work: build + package per platform
 │   ├── project.*         <- project.json (game name, main scene, window size)
@@ -820,6 +822,8 @@ editor/
 │   ├── text_editor.*     <- the Script tab's text editor
 │   ├── autocomplete.*    <- its suggestions (reads the engine and raylib headers)
 │   ├── script_checker.*  <- live error checking and coloring (clangd)
+│   ├── platform.*        <- operating system calls: libraries, programs, folder windows
+│   ├── ui_scale.*        <- the editor's UI size (display scaling)
 │   └── raygui_*          <- raygui and its widget styles
 ├── theme/                <- theme files (default_theme.cpp, light_theme.cpp) and their pictures
 ├── player/               <- the game runtime that exports are built from
@@ -835,7 +839,8 @@ editor/
 ```
 
 Scenes are plain JSON (`{"type": "Sprite2D", "name": ..., "properties": {...},
-"children": [...]}`), so they're easy to read and to diff.
+"children": [...]}`, plus `"script"`, `"script_vars"` and `"connections"` when a
+node has them), so they're easy to read and to diff.
 
 ## Not there yet
 
