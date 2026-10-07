@@ -102,11 +102,41 @@ std::string projectName(const fs::path& dir) {
     return dir.filename().string();
 }
 
-bool createProject(const fs::path& dir, const std::string& name, std::string& error) {
+bool createProject(const fs::path& dir, const std::string& name, std::string& error, const fs::path& templateDir) {
     std::error_code ec;
     if (fs::exists(dir, ec) && !fs::is_empty(dir, ec)) {
         error = dir.string() + " already exists and isn't empty.";
         return false;
+    }
+    if (!templateDir.empty()) {
+        // A copy of the template, without what belongs to its own computer or builds
+        fs::create_directories(dir, ec);
+        for (fs::recursive_directory_iterator it(templateDir, ec), end; !ec && it != end; it.increment(ec)) {
+            fs::path rel = fs::relative(it->path(), templateDir, ec);
+            std::string top = rel.begin()->string();
+            if (top == "exports" || top == ".vscode" || top == ".cache" || top == "compile_commands.json" ||
+                top == "CppProperties.json" || top == "template.json") {
+                if (it->is_directory()) it.disable_recursion_pending();
+                continue;
+            }
+            if (it->is_directory()) fs::create_directories(dir / rel, ec);
+            else fs::copy_file(it->path(), dir / rel, fs::copy_options::overwrite_existing, ec);
+            if (ec) break;
+        }
+        if (ec) {
+            error = "couldn't copy the template: " + ec.message();
+            return false;
+        }
+        for (const char* sub : {"scenes", "assets", "scripts"}) fs::create_directories(dir / sub, ec);
+        ProjectSettings settings = ProjectSettings::load(dir);
+        settings.name = name.empty() ? dir.filename().string() : name;
+        settings.exportDir.clear();
+        if (!settings.save(dir)) {
+            error = "can't write " + (dir / "project.json").string();
+            return false;
+        }
+        if (!fs::exists(dir / ".gitignore")) std::ofstream(dir / ".gitignore") << "# Games exported from the editor\nexports/\n";
+        return true;
     }
     for (const char* sub : {"scenes", "assets", "scripts"}) fs::create_directories(dir / sub, ec);
     if (ec) {
@@ -129,6 +159,32 @@ bool createProject(const fs::path& dir, const std::string& name, std::string& er
         << json{{"format", "sprout-editor-scene"}, {"version", 1}, {"root", root}}.dump(2) << '\n';
     std::ofstream(dir / ".gitignore") << "# Games exported from the editor\nexports/\n";
     return true;
+}
+
+std::vector<ProjectTemplate> projectTemplates(const fs::path& editorDir) {
+    std::vector<ProjectTemplate> out = {
+        {"Empty", "A scene with a camera, and nothing else.", {}},
+        {"2D Platformer", "The demo game: a player with animations, coins, a box and two levels.", editorDir / "project"},
+    };
+    std::error_code ec;
+    std::vector<fs::path> folders;
+    for (fs::directory_iterator it(editorDir / "templates", ec), end; !ec && it != end; it.increment(ec))
+        if (it->is_directory()) folders.push_back(it->path());
+    std::sort(folders.begin(), folders.end());
+    for (const fs::path& f : folders) {
+        ProjectTemplate t{f.filename().string(), "", f};
+        try {
+            std::ifstream in(f / "template.json");
+            if (in) {
+                json j = json::parse(in);
+                t.name = j.value("name", t.name);
+                t.description = j.value("description", "");
+            }
+        } catch (const json::exception&) {
+        }
+        out.push_back(t);
+    }
+    return out;
 }
 
 fs::path defaultProjectsFolder() { return home() / "SproutProjects"; }

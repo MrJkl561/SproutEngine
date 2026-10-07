@@ -222,6 +222,9 @@ Ideas to try with what you know:
   folder inside the Sprout folder) and read its scripts: coins, a moving box, a door to level 2, and an animated
   player.
 
+Want to play it with friends? See **[Multiplayer in the editor](multiplayer.md)**,
+or make a new project from the **Multiplayer** template.
+
 Everything the editor can do is in the **[Sprout Editor manual](../../editor/README.md)**:
 
 - [Using the editor](../../editor/README.md#using-it): every dock, shortcut and button

@@ -22,6 +22,11 @@ ProjectSettings ProjectSettings::load(const std::filesystem::path& projectDir) {
         s.exportDir = j.value("export_dir", s.exportDir);
         if (j.contains("export_targets") && j["export_targets"].is_array())
             s.exportTargets = j["export_targets"].get<std::vector<std::string>>();
+        if (j.contains("run_instances") && j["run_instances"].is_object()) {
+            const json& r = j["run_instances"];
+            s.runInstances = std::clamp(r.value("count", 1), 1, kMaxInstances);
+            if (r.contains("args") && r["args"].is_array()) s.instanceArgs = r["args"].get<std::vector<std::string>>();
+        }
     } catch (const json::exception&) {
         // A broken file gives the defaults.
     }
@@ -36,6 +41,8 @@ bool ProjectSettings::save(const std::filesystem::path& projectDir) const {
     j["height"] = height;
     if (!exportDir.empty()) j["export_dir"] = exportDir;
     j["export_targets"] = exportTargets;
+    bool anyArgs = std::any_of(instanceArgs.begin(), instanceArgs.end(), [](auto& a) { return !a.empty(); });
+    if (runInstances > 1 || anyArgs) j["run_instances"] = {{"count", runInstances}, {"args", instanceArgs}};
     std::ofstream out(projectDir / "project.json");
     if (!out) return false;
     out << j.dump(2) << '\n';

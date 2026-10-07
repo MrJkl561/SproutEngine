@@ -1,0 +1,13 @@
+{
+  "format": "sprout-editor-scene",
+  "version": 1,
+  "root": {
+    "type": "Node2D",
+    "name": "Ball",
+    "properties": {},
+    "children": [
+      {"type": "MultiplayerSynchronizer", "name": "MultiplayerSynchronizer",
+       "properties": {"properties": "position", "interval": 0.05}, "children": []}
+    ]
+  }
+}

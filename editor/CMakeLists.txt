@@ -21,6 +21,8 @@ if(NOT TARGET raylib)
     include("${CMAKE_CURRENT_SOURCE_DIR}/../cmake/SproutDependencies.cmake")
     set(SPROUT_OUTPUT_DIR "${CMAKE_BINARY_DIR}/bin" CACHE PATH "Where programs are placed")
 endif()
+# ENet, for multiplayer (MultiplayerSynchronizer, RPCs...)
+include("${CMAKE_CURRENT_SOURCE_DIR}/../cmake/SproutEnet.cmake")
 
 file(GLOB SPROUT_EDITOR_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
@@ -131,7 +133,7 @@ target_include_directories(sprout_editor PRIVATE
     "${raygui_SOURCE_DIR}/src"   # raygui.h
     "${raygui_SOURCE_DIR}"       # styles/dark/style_dark.h
     "${raylib_SOURCE_DIR}/src/external/glfw/include")  # GLFW, to read the display scale
-target_link_libraries(sprout_editor PRIVATE raylib_cpp nlohmann_json::nlohmann_json)
+target_link_libraries(sprout_editor PRIVATE raylib_cpp nlohmann_json::nlohmann_json sprout_enet)
 
 # The editor opens the project folder and writes new scripts straight into the
 # source tree, so "New Script" just works.

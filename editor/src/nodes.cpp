@@ -6,6 +6,7 @@
 #include <map>
 
 #include "assets.hpp"
+#include "multiplayer.hpp"
 #include "scene_tree.hpp"
 #include "script.hpp"
 
@@ -28,6 +29,14 @@ Node::Node() = default;
 Node::~Node() = default;
 
 void Node::getProperties(std::vector<Property>&) {}
+
+void Node::setMultiplayerAuthority(int peerId, bool recursive) {
+    authority_ = peerId;
+    if (recursive)
+        for (auto& c : children_) c->setMultiplayerAuthority(peerId, true);
+}
+
+bool Node::isMultiplayerAuthority() const { return authority_ == multiplayer().uniqueId(); }
 
 Node* Node::addChild(std::unique_ptr<Node> child, int index) {
     if (!child) return nullptr;
@@ -552,6 +561,23 @@ GizmoColors& gizmoColors() {
 }
 
 // ---------------------------------------------------------------------------
+// Multiplayer nodes
+// ---------------------------------------------------------------------------
+void MultiplayerSynchronizer::getProperties(std::vector<Property>& out) {
+    Node::getProperties(out);
+    out.push_back({"MultiplayerSynchronizer", PropKind::Section});
+    out.push_back({"root_path", PropKind::String, &rootPath});
+    out.push_back({"properties", PropKind::String, &properties});
+    out.push_back({"interval", PropKind::Float, &interval, 0.01f});
+}
+
+void MultiplayerSpawner::getProperties(std::vector<Property>& out) {
+    Node::getProperties(out);
+    out.push_back({"MultiplayerSpawner", PropKind::Section});
+    out.push_back({"spawn_path", PropKind::String, &spawnPath});
+}
+
+// ---------------------------------------------------------------------------
 // Node factory
 // ---------------------------------------------------------------------------
 namespace {
@@ -569,6 +595,8 @@ const std::vector<std::pair<std::string, std::function<std::unique_ptr<Node>()>>
         {"Area2D", [] { return std::make_unique<Area2D>(); }},
         {"StaticBody2D", [] { return std::make_unique<StaticBody2D>(); }},
         {"CharacterBody2D", [] { return std::make_unique<CharacterBody2D>(); }},
+        {"MultiplayerSynchronizer", [] { return std::make_unique<MultiplayerSynchronizer>(); }},
+        {"MultiplayerSpawner", [] { return std::make_unique<MultiplayerSpawner>(); }},
     };
     return list;
 }

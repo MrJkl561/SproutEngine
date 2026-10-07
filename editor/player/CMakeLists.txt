@@ -24,12 +24,19 @@ set(SPROUT_GAME_PROJECT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../project" CACHE PATH 
 set(SPROUT_GAME_SCRIPTS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../project/scripts" CACHE PATH "The C++ scripts folder")
 
 include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/SproutDependencies.cmake")
+if(NOT EMSCRIPTEN)
+    include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/SproutEnet.cmake")  # multiplayer (not on the web)
+endif()
 
 set(EDITOR_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../src")
 file(GLOB GAME_SCRIPTS CONFIGURE_DEPENDS "${SPROUT_GAME_SCRIPTS_DIR}/*.cpp")
 
 add_executable(game
     main.cpp
+    "${EDITOR_SRC}/game_runner.cpp"
+    "${EDITOR_SRC}/console.cpp"
+    "${EDITOR_SRC}/multiplayer.cpp"
+    "${EDITOR_SRC}/net_transport.cpp"
     "${EDITOR_SRC}/assets.cpp"
     "${EDITOR_SRC}/nodes.cpp"
     "${EDITOR_SRC}/project.cpp"
@@ -38,6 +45,9 @@ add_executable(game
     ${GAME_SCRIPTS})
 target_include_directories(game PRIVATE "${EDITOR_SRC}")
 target_link_libraries(game PRIVATE raylib raylib_cpp nlohmann_json::nlohmann_json)
+if(TARGET sprout_enet)
+    target_link_libraries(game PRIVATE sprout_enet)
+endif()
 set_target_properties(game PROPERTIES OUTPUT_NAME "${SPROUT_GAME_NAME}")
 
 # Everything ends up in out/, for every build type.

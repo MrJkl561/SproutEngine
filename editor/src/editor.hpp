@@ -19,15 +19,19 @@
 #include <future>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "code_editor.hpp"
 #include "export.hpp"
 #include "hot_reload.hpp"
 #include "nodes.hpp"
+#include "platform.hpp"
 #include "project.hpp"
+#include "projects.hpp"
 #include "scene_tree.hpp"
 #include "script_checker.hpp"
 #include "text_editor.hpp"
@@ -147,7 +151,7 @@ private:
                         std::function<void(const std::string&)> onOk);
     bool isTyping() const {
         return !activeField_.empty() || dialog_.open || confirm_.open || export_.open || projects_.open ||
-               folderPick_.valid() || sheet_.open || codeEditorDialog_.open ||
+               folderPick_.valid() || sheet_.open || codeEditorDialog_.open || instancesDialog_.open ||
                (mainView_ == MainView::Script && (codeFocused_ || find_.findEdit || find_.withEdit));
     }
 
@@ -171,8 +175,15 @@ private:
     void setDiagnostics(TextDocument& doc) const;  // the last build's messages for its file
     bool dialogOpen() const {
         return dialog_.open || confirm_.open || export_.open || projects_.open || folderPick_.valid() || sheet_.open ||
-               codeEditorDialog_.open;
+               codeEditorDialog_.open || instancesDialog_.open;
     }
+
+    // --- Run Instances (several copies of the game, for multiplayer) ---------
+    void openRunInstancesDialog();
+    void drawRunInstancesDialog();
+    void startInstances(const std::string& scene);  // the extra windows, for Play
+    void stopInstances();
+    void pumpInstances();  // their output, into the Output panel
     // Asks about the scene and any open files with unsaved changes, then goes on.
     void confirmUnsavedAll(std::function<void()> then);
     void confirmUnsavedDocuments(std::function<void()> then);
@@ -329,6 +340,8 @@ private:
         char path[512] = {};
         bool nameEdit = false, locationEdit = false, pathEdit = false;
         std::string error;
+        std::vector<projects::ProjectTemplate> templates;  // what New Project can start from
+        int templateIndex = 0;
     } projects_;
 
     // The Animation panel (like Godot's SpriteFrames panel)
@@ -379,6 +392,25 @@ private:
         char command[512] = {};
         bool commandEdit = false;
     } codeEditorDialog_;
+
+    struct RunInstancesDialog {
+        bool open = false;
+        int count = 1;
+        char args[ProjectSettings::kMaxInstances][256] = {};
+        int editing = -1;  // the text box being typed in
+    } instancesDialog_;
+    // Copies of the game running in windows of their own (sprout_editor --play)
+    struct InstanceOutput {
+        std::mutex mutex;
+        std::vector<std::string> lines;
+    };
+    struct RunningInstance {
+        int number = 0;
+        std::unique_ptr<platform::ChildProcess> process;
+        std::thread reader;
+    };
+    std::vector<RunningInstance> instances_;
+    std::shared_ptr<InstanceOutput> instanceOutput_ = std::make_shared<InstanceOutput>();
 
     struct ConfirmDialog {
         bool open = false;

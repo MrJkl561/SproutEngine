@@ -27,8 +27,18 @@ void forget(const std::filesystem::path& project);
 bool isProject(const std::filesystem::path& dir);  // has a project.json (or a scenes/ folder)
 std::string projectName(const std::filesystem::path& dir);  // from project.json, else the folder name
 
-// Makes a new, empty project (with one scene) in dir, which must not exist or be empty.
-bool createProject(const std::filesystem::path& dir, const std::string& name, std::string& error);
+// Makes a new project in dir, which must not exist or be empty: an empty one
+// (with one scene), or a copy of a template folder.
+bool createProject(const std::filesystem::path& dir, const std::string& name, std::string& error,
+                   const std::filesystem::path& templateDir = {});
+
+// What New Project can start from: "Empty", the demo platformer, and every
+// folder in editor/templates/ (named and described by its template.json).
+struct ProjectTemplate {
+    std::string name, description;
+    std::filesystem::path folder;  // "" = an empty project
+};
+std::vector<ProjectTemplate> projectTemplates(const std::filesystem::path& editorDir);
 
 std::filesystem::path defaultProjectsFolder();  // ~/SproutProjects
 // The editor's settings folder for this user (recent projects, panel layout).

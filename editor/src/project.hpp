@@ -18,6 +18,14 @@ struct ProjectSettings {
     std::string exportDir;                 // where exports go ("" = editor/exports)
     std::vector<std::string> exportTargets;  // the platforms ticked in the Export window
 
+    // Run Instances (like Godot's): Play starts this many copies of the game,
+    // the first in the editor and the rest in windows of their own, each with
+    // its own command line (commandLineArgs() in scripts), e.g. "--host" and
+    // "--join 127.0.0.1". "--server" makes one a dedicated server (no window).
+    static constexpr int kMaxInstances = 4;
+    int runInstances = 1;
+    std::vector<std::string> instanceArgs;  // one line per instance (may be shorter)
+
     static ProjectSettings load(const std::filesystem::path& projectDir);  // defaults if there's no file
     bool save(const std::filesystem::path& projectDir) const;
 };

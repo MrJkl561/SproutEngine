@@ -886,7 +886,7 @@ void CompletionIndex::merge(const Symbols& s) {
 void CompletionIndex::load() {
     loaded_ = true;
     std::error_code ec;
-    for (const char* name : {"script.hpp", "nodes.hpp", "scene_tree.hpp"})
+    for (const char* name : {"script.hpp", "nodes.hpp", "scene_tree.hpp", "multiplayer.hpp"})
         if (fs::exists(engineSrc_ / name, ec)) parse(readFile(engineSrc_ / name), Engine, false, base_);
     for (const char* dir : {"raylib-src/src", "raylib_cpp-src/include", "raylib-cpp-src/include"})
         for (const char* name : {"raylib.h", "raymath.h", "Vector2.hpp", "Color.hpp", "Rectangle.hpp"})

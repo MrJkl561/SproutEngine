@@ -1,0 +1,4 @@
+{
+  "name": "Multiplayer",
+  "description": "Players run and jump together over the network: hosting, joining, a spawner and synchronizers. Play opens two windows."
+}

@@ -13,6 +13,7 @@ Sprout comes in **two parts**. Pick whichever suits the way you like to work:
 | **Good for** | Learning how games work from the ground up; games that are mostly code | Levels you want to *see* and drag around; tweaking values without recompiling |
 | **Change code while it runs** | No, rebuild and restart | Yes, scripts hot reload while the game runs |
 | **Exports to** | Windows, macOS, Linux (whatever you build on) | Windows (x64 and ARM64), Linux, macOS and the **web**, from an Export button |
+| **Multiplayer** | No | Yes: host/join, synced nodes, RPCs, dedicated servers |
 | **Start here** | [Your first game](docs/02-your-first-game.md) | [Your first game in the editor](docs/editor/getting-started.md) |
 
 Both are built from this repository with one command, and both use
@@ -175,6 +176,7 @@ folder:
 | A Debug build | `scripts\build.bat debug` | `scripts/build.sh debug` |
 | Build and open the editor | `scripts\run-editor.bat` | `scripts/run-editor.sh` |
 | Run the unit tests | `scripts\test.bat` | `scripts/test.sh` |
+| Test the editor's multiplayer | `scripts\test-multiplayer.bat` | `scripts/test-multiplayer.sh` |
 | Export a game | `scripts\export.bat windows,web [project] [folder]` | `scripts/export.sh linux,web [project] [folder]` |
 | Set up web exports (once) | `scripts\setup-web.bat [emsdk folder]` | `scripts/setup-web.sh [emsdk folder]` |
 
@@ -280,6 +282,10 @@ you'll make a character that runs and jumps, in about 15 minutes.
 - **Sprite sheet animation** with named animations.
 - **Export** to Windows (x64 and ARM64), Linux, macOS (universal) and the
   **web**, with one button.
+- **Multiplayer** like Godot's: host or join a game, `MultiplayerSynchronizer`
+  and `MultiplayerSpawner` nodes, `RPC`s, **Run Instances** to test several
+  copies at once, and dedicated servers (`--server`). Start from the
+  **Multiplayer** project template.
 - **Several projects**, a Project Manager, undo/redo, and editable themes and
   panel sizes.
 
@@ -296,7 +302,8 @@ The **[documentation](docs/README.md)** is written for beginners.
 1. [Installing and building](docs/01-installing.md), if you don't have a C++
    compiler, CMake and Git yet (the same for both parts)
 2. [Your first game in the editor](docs/editor/getting-started.md), a step-by-step tutorial
-3. The [Sprout Editor manual](editor/README.md): every dock, node, shortcut,
+3. [Multiplayer in the editor](docs/editor/multiplayer.md): playing together over a network
+4. The [Sprout Editor manual](editor/README.md): every dock, node, shortcut,
    the script API, scenes inside scenes, animation, exporting and themes
 
 ### Learning the Engine
@@ -356,9 +363,10 @@ Cpp-Game-engine-/
 ├── editor/             <- THE EDITOR (see editor/README.md)
 │   ├── src/            <- the editor and its node system
 │   ├── player/         <- the game runtime that exported games are built from
+│   ├── templates/      <- New Project templates (Multiplayer)
 │   └── project/        <- the editor's demo project
 ├── docs/               <- the documentation (docs/editor/ for the editor)
-├── scripts/            <- build, run-editor, test, export and setup-web scripts
+├── scripts/            <- build, run-editor, test, export, setup-web and test-multiplayer scripts
 ├── tests/              <- the engine's unit tests
 ├── cmake/              <- build helpers (downloads libraries, sprout_add_game)
 └── CMakeLists.txt      <- the main build file (you normally don't need to touch it)
@@ -384,6 +392,7 @@ downloads them automatically; you don't need to install them.
 | [raygui](https://github.com/raysan5/raygui) 5.0 by Ramon Santamaria | Buttons, sliders and other in-game UI | zlib/libpng |
 | [nlohmann/json](https://github.com/nlohmann/json) 3.12 by Niels Lohmann | Save files and JSON data | MIT |
 | [doctest](https://github.com/doctest/doctest) 2.4 | The engine's unit tests (only when tests are turned on) | MIT |
+| [ENet](https://github.com/lsalzman/enet) 1.3 by Lee Salzman | The editor's multiplayer (UDP networking) | MIT |
 | [clangd](https://clangd.llvm.org/) 21 (LLVM) | The editor's live script errors and colors (a ready-made download) | Apache 2.0 with LLVM exception |
 
 Web exports from the editor also need [Emscripten](https://emscripten.org),

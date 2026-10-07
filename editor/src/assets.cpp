@@ -1,5 +1,7 @@
 #include "assets.hpp"
 
+#include "multiplayer.hpp"
+
 namespace s2d {
 
 std::filesystem::path Assets::projectDir_;
@@ -9,7 +11,7 @@ void Assets::setProjectDir(const std::filesystem::path& dir) { projectDir_ = dir
 const std::filesystem::path& Assets::projectDir() { return projectDir_; }
 
 raylib::Texture* Assets::texture(const std::string& path) {
-    if (path.empty()) return nullptr;
+    if (path.empty() || isHeadless()) return nullptr;  // a dedicated server has no window to draw in
     auto it = textures_.find(path);
     if (it == textures_.end()) {
         std::unique_ptr<raylib::Texture> tex;

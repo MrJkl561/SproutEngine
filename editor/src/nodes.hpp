@@ -12,6 +12,8 @@
 //   Area2D            - detects when bodies or other areas overlap it
 //   StaticBody2D      - a solid thing that doesn't move (walls, floors)
 //   CharacterBody2D   - a thing moved by code that collides with static bodies
+//   MultiplayerSynchronizer - keeps properties the same on every player's game
+//   MultiplayerSpawner      - copies the scenes the server adds to every player's game
 #pragma once
 
 #include <raylib-cpp.hpp>
@@ -82,6 +84,7 @@ public:
     std::string sceneFile;
     bool inInstance = false;       // part of an instanced scene (not its root): edit it in its own file
     bool instanceMissing = false;  // sceneFile couldn't be loaded; this is a stand-in
+    bool addedWhilePlaying = false;  // added by a script (not loaded with the scene): MultiplayerSpawner copies these
 
     Node();
     virtual ~Node();
@@ -119,8 +122,15 @@ public:
 
     SceneTree* tree();  // nullptr while not in a scene tree
 
+    // Multiplayer (see multiplayer.hpp): the peer whose copy of this node is the
+    // real one. 1 (the server) unless set. Not saved in scene files.
+    void setMultiplayerAuthority(int peerId, bool recursive = true);
+    int multiplayerAuthority() const { return authority_; }
+    bool isMultiplayerAuthority() const;  // this game is the authority (always true when not networked)
+
 private:
     friend class SceneTree;
+    int authority_ = 1;
     Node* parent_ = nullptr;
     std::vector<std::unique_ptr<Node>> children_;
     SceneTree* tree_ = nullptr;  // only set on the root node
@@ -294,6 +304,40 @@ public:
 
 private:
     bool onFloor_ = false, onWall_ = false, onCeiling_ = false;
+};
+
+// ---------------------------------------------------------------------------
+// Multiplayer nodes (they do their work through multiplayer.cpp)
+
+// Keeps properties of a node the same on every peer: the node's multiplayer
+// authority sends them, everyone else takes them. Put it inside the node.
+//   properties: "position, velocity, Sprite2D:flip_h, :health"
+//   - a property of the root node ("position"), or of a node below it
+//     ("Sprite2D:flip_h"), or a script variable (":health" on the root,
+//     "Gun:ammo" also works for a script on Gun)
+class MultiplayerSynchronizer : public Node {
+public:
+    std::string rootPath = "..";        // the node whose properties are kept in sync
+    std::string properties = "position";
+    float interval = 0;                 // seconds between updates (0 = every frame)
+
+    const char* typeName() const override { return "MultiplayerSynchronizer"; }
+    void getProperties(std::vector<Property>& out) override;
+
+    double sinceSent = 1e9;             // (used by multiplayer.cpp)
+    std::string lastSent;
+};
+
+// When the server adds a scene (made with instantiate()) below spawnPath, every
+// client gets a copy too, with the same name and multiplayer authority; when
+// the server frees it, it goes everywhere. Players who join later get a copy of
+// everything spawned so far. Nodes already in the scene file aren't copied.
+class MultiplayerSpawner : public Node {
+public:
+    std::string spawnPath = "..";       // the node the spawned scenes go into
+
+    const char* typeName() const override { return "MultiplayerSpawner"; }
+    void getProperties(std::vector<Property>& out) override;
 };
 
 // ---------------------------------------------------------------------------

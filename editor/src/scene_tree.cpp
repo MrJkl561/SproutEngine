@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "assets.hpp"
+#include "multiplayer.hpp"
 #include "scene_io.hpp"
 #include "script.hpp"
 
@@ -71,12 +72,15 @@ void SceneTree::restartScripts() {
 
 void SceneTree::nodeAdded(Node* node) {
     if (!playing_) return;
+    node->addedWhilePlaying = true;
     attachScripts(node);
     readyRecursive(node);
 }
 
 void SceneTree::process(float delta) {
     delta_ = delta;
+    if (!root_) return;
+    multiplayer().poll(*this);  // messages from other players, and their events
     if (!root_) return;
 
     // Collect first, so nodes added during this frame start next frame.
@@ -99,6 +103,7 @@ void SceneTree::process(float delta) {
         }
     };
     sweep(root_.get());
+    multiplayer().flush(*this);  // synchronizers and spawners send what changed
 
     if (!pendingScene_.empty()) switchScene();
 }

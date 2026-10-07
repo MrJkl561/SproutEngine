@@ -42,6 +42,7 @@ be opened by the engine or the other way round. See
 - [Exporting your game](#exporting-your-game)
 - [Changing scenes while the game runs](#changing-scenes-while-the-game-runs)
 - [Animation](#animation)
+- [Multiplayer](#multiplayer): hosting, joining, synced nodes, RPCs, dedicated servers
 - [Nodes](#nodes): what each node type is for
 - [C++ scripts](#c-scripts): the script editor, script variables (`EXPORT`), hot reloading
 - [Customizing the editor](#customizing-the-editor): panel sizes and themes
@@ -91,9 +92,12 @@ My Game/
 Press **Projects** at the left of the toolbar to open the Project Manager:
 
 - **Recent projects:** click one, then **Open** (or click it a second time).
-- **New Project...** makes a new project (with a first scene and the folders
-  above) in `SproutProjects` in your home folder, or wherever you choose with
-  **Browse...**.
+- **New Project...** makes a new project in `SproutProjects` in your home
+  folder, or wherever you choose with **Browse...**. **Start from** picks what's
+  in it: **Empty** (a first scene with a camera), **2D Platformer** (a copy of
+  the demo game) or **Multiplayer** (players running and jumping together over
+  the network). Templates are the folders in `editor/templates/`; add your own
+  there, with a `template.json` giving its name and description.
 - **Open Folder...** opens any project folder, picked in your system's own
   folder window.
 - **Remove from List** only forgets it in the list; the files stay.
@@ -231,6 +235,9 @@ Nothing is downloaded: it reuses the libraries the editor was built with.
 
 - **Windows:** the `.exe` needs nothing installed. Zip the `windows/` folder to
   share it.
+- **Dedicated servers:** every Windows, Linux and macOS export can also run as
+  a multiplayer server with no window: start it with `--server` (see
+  [Multiplayer](#multiplayer)). Web exports can't use multiplayer.
 - **Web:** browsers won't open the game straight from the disk. Serve the folder
   (`python -m http.server` in it, then open http://localhost:8000) or upload
   it to a site like itch.io as an HTML game.
@@ -321,6 +328,39 @@ choosing the animation.
 A plain Sprite2D can show one frame of a sheet too (`hframes`, `vframes`,
 `frame`), e.g. to pick a tile or change `frame` from a script.
 
+## Multiplayer
+
+Games can be played together over a network, like in Godot: one copy of the
+game hosts and the others join it. The full guide is
+**[Multiplayer in the Sprout Editor](../docs/editor/multiplayer.md)**; the short
+version:
+
+- **Start from the template:** Projects → New Project... → *Start from*
+  **Multiplayer**, then press Play.
+- **Host / join** from a script: `multiplayer().host(7777)`,
+  `multiplayer().join("192.168.1.20", 7777)`. Scripts hear about it in
+  `peerConnected(id)`, `peerDisconnected(id)`, `connectedToServer()`,
+  `connectionFailed()` and `serverDisconnected()`.
+- **Authority:** each node belongs to one peer (`setMultiplayerAuthority(id)`,
+  `isMultiplayerAuthority()`); only that game moves it.
+- **`MultiplayerSynchronizer`** keeps the properties you list the same
+  everywhere: `position, velocity, Sprite:flip_h, :health`.
+- **`MultiplayerSpawner`** copies the scenes the server adds below its
+  `spawn_path` to every client, including ones that join later.
+- **RPCs:** `RPC(jump);` next to `void jump(float height)` lets other games call
+  it: `rpc("jump", 300.0f)` (everyone else) or `rpcId(1, "jump", 300.0f)` (the
+  server).
+- **Run Instances:** the window button next to **Stop** sets how many copies
+  Play starts (up to 4), each with its own command line (`--host`,
+  `--join 127.0.0.1`, `--server`). The extra copies open in windows of their
+  own and print to the Output panel.
+- **Dedicated server:** any exported desktop game started with `--server` runs
+  without a window and just hosts. In the editor:
+  `sprout_editor --project "My Game" --play --server`.
+
+It uses [ENet](https://github.com/lsalzman/enet) (UDP), downloaded with the
+other libraries. Web exports can't use it (browsers have no UDP).
+
 ## Nodes
 
 | Node | What it's for |
@@ -336,6 +376,8 @@ A plain Sprite2D can show one frame of a sheet too (`hframes`, `vframes`,
 | `StaticBody2D` | Solid, unmoving things: floors, walls, platforms |
 | `CharacterBody2D` | Moved by a script with `velocity` and `moveAndSlide()`; slides along static bodies, `isOnFloor()` |
 | `Area2D` | Detects overlaps: `getOverlappingBodies()`, `getOverlappingAreas()` |
+| `MultiplayerSynchronizer` | Keeps properties (`position`, ...) the same in every player's game ([Multiplayer](#multiplayer)) |
+| `MultiplayerSpawner` | Copies the scenes the server adds below a node to every player's game ([Multiplayer](#multiplayer)) |
 
 Physics is simple arcade physics: shapes are axis-aligned rectangles (rotation
 is ignored for collisions).
@@ -645,7 +687,10 @@ editor/
 │   ├── editor.*          <- the editor's panels, viewport, undo, dialogs
 │   ├── nodes.*           <- the node types
 │   ├── scene_tree.*      <- runs a scene: scripts, process, queueFree, drawing
-│   ├── script.hpp        <- the Script base class and REGISTER_SCRIPT
+│   ├── script.hpp        <- the Script base class, EXPORT, RPC and REGISTER_SCRIPT
+│   ├── multiplayer.*     <- hosting, joining, RPCs, synchronizers and spawners
+│   ├── net_transport.*   <- the network connection under it (ENet)
+│   ├── game_runner.*     <- runs a project as a game (exports, Run Instances, --server)
 │   ├── hot_reload.*      <- watches, rebuilds and reloads the scripts library
 │   ├── export.*          <- the Export window's work: build + package per platform
 │   ├── project.*         <- project.json (game name, main scene, window size)
@@ -661,6 +706,8 @@ editor/
 │   └── raygui_*          <- raygui and its widget styles
 ├── theme/                <- theme files (default_theme.cpp, light_theme.cpp) and their pictures
 ├── player/               <- the game runtime that exports are built from
+├── templates/            <- New Project templates (multiplayer/)
+├── tests/multiplayer/    <- the multiplayer test (scripts/test-multiplayer.sh)
 ├── scripts_module/       <- builds a project's scripts into the hot reload library
 └── project/              <- the demo project
     ├── project.json      <- game name, main scene, window size, export settings

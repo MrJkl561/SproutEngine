@@ -582,6 +582,7 @@ bool Exporter::exportOne(State& s, const ExportTarget& t, const std::string& pro
     configure += " -DFETCHCONTENT_SOURCE_DIR_RAYLIB_CPP=" + quote(deps / "raylib_cpp-src");
     configure += " -DFETCHCONTENT_SOURCE_DIR_RAYGUI=" + quote(deps / "raygui-src");
     configure += " -DFETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON=" + quote(deps / "nlohmann_json-src");
+    configure += " -DFETCHCONTENT_SOURCE_DIR_ENET=" + quote(deps / "enet-src");
     if (t.id == "windows" && host != "windows")
         configure += " -DCMAKE_TOOLCHAIN_FILE=" + quote(s.paths.editorDir / "player" / "mingw-w64.cmake");
     if (t.id == "web") configure += " -DPLATFORM=Web";

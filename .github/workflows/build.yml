@@ -59,6 +59,15 @@ jobs:
           fi
           rm editor/project/scripts/broken_check.cpp
 
+      # Multiplayer for real: a dedicated server and two clients (separate
+      # programs, no windows) connect, call RPCs, sync nodes, spawn and leave.
+      - name: Test multiplayer
+        shell: bash
+        run: |
+          exe=build/bin/sprout_editor/sprout_editor
+          if [ -f "$exe.exe" ]; then exe="$exe.exe"; fi
+          SPROUT_EDITOR="$PWD/$exe" scripts/test-multiplayer.sh
+
       # Exports the editor's demo game for this runner's own platform, the way
       # the editor's Export window does, and plays the Linux one for 2 seconds.
       - name: Export the editor's demo game

@@ -19,11 +19,14 @@
 #pragma once
 
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
+#include "multiplayer.hpp"
 #include "nodes.hpp"
 #include "scene_tree.hpp"
 
@@ -66,6 +69,18 @@ public:
     std::vector<Property> list;
 };
 
+namespace detail {
+// An RPC argument as sent: doubles become floats, other whole numbers ints.
+template <class T> NetValue toNet(T&& v) {
+    using D = std::decay_t<T>;
+    if constexpr (std::is_same_v<D, bool>) return NetValue(v);
+    else if constexpr (std::is_floating_point_v<D>) return NetValue(static_cast<float>(v));
+    else if constexpr (std::is_integral_v<D> || std::is_enum_v<D>) return NetValue(static_cast<int>(v));
+    else if constexpr (std::is_convertible_v<D, std::string>) return NetValue(std::string(v));
+    else return NetValue(std::forward<T>(v));
+}
+}  // namespace detail
+
 class Script {
 public:
     virtual ~Script() = default;
@@ -81,6 +96,37 @@ public:
     }
     // (Used by EXPORT.)
     void addAutoExport(std::function<void(Exports&)> add) { autoExports_.push_back(std::move(add)); }
+
+    // Multiplayer events (see multiplayer.hpp), sent to every script:
+    virtual void peerConnected(int /*id*/) {}     // a peer joined (the server sees clients; clients see each other)
+    virtual void peerDisconnected(int /*id*/) {}  // a peer left
+    virtual void connectedToServer() {}           // join() worked: this client now has its uniqueId()
+    virtual void connectionFailed() {}            // join() didn't find a server
+    virtual void serverDisconnected() {}          // the server stopped or went away
+
+    // Calls a function marked RPC(name) in this script on every other peer's
+    // copy of this node, e.g. rpc("jump", 300.0f). Arguments: bool, int,
+    // float, std::string, Vector2, Color.
+    template <class... A> void rpc(const std::string& method, A&&... args) const {
+        multiplayer().sendRpc(node_, method, NetArgs{detail::toNet(std::forward<A>(args))...}, 0);
+    }
+    // The same on one peer only (1 = the server). Your own id runs it here.
+    template <class... A> void rpcId(int peer, const std::string& method, A&&... args) const {
+        multiplayer().sendRpc(node_, method, NetArgs{detail::toNet(std::forward<A>(args))...}, peer);
+    }
+    // Inside an RPC: the peer that called it.
+    int rpcSender() const { return multiplayer().remoteSenderId(); }
+    // This game is the node's multiplayer authority (true when not networked).
+    bool isMultiplayerAuthority() const { return node_ && node_->isMultiplayerAuthority(); }
+
+    // (Used by RPC and the multiplayer code.)
+    void addRpc(const std::string& name, std::function<void(const NetArgs&)> fn) { rpcs_[name] = std::move(fn); }
+    bool callRpc(const std::string& name, const NetArgs& args) {
+        auto it = rpcs_.find(name);
+        if (it == rpcs_.end()) return false;
+        it->second(args);
+        return true;
+    }
 
     // The node this script is attached to.
     Node* node() const { return node_; }
@@ -110,6 +156,7 @@ private:
     friend class SceneTree;
     Node* node_ = nullptr;
     std::vector<std::function<void(Exports&)>> autoExports_;
+    std::map<std::string, std::function<void(const NetArgs&)>> rpcs_;
 };
 
 // Makes a new copy of a scene file, to add with addChild(), e.g.
@@ -222,3 +269,62 @@ public:
 #define REGISTER_SCRIPT(ClassName)                                            \
     static const bool s2dRegistered_##ClassName = ::s2d::ScriptRegistry::add( \
         #ClassName, [] { return std::unique_ptr<::s2d::Script>(new ClassName()); });
+
+// ---------------------------------------------------------------------------
+// RPC: lets other peers call one of this script's functions (like Godot's
+// @rpc). Put it in your script class, next to the function:
+//
+//     RPC(takeDamage);
+//     void takeDamage(int amount, Vector2 from) { ... }
+//
+//     rpc("takeDamage", 10, Vector2{1, 0});        // runs on every other peer
+//     rpcId(1, "takeDamage", 10, Vector2{1, 0});   // only on the server
+//
+// Any peer may call it; check rpcSender() if only some should. Arguments can be
+// bool, int, float, std::string, Vector2 and Color.
+namespace s2d::detail {
+template <class T> T fromNet(const NetValue& v) {
+    if (auto* p = std::get_if<T>(&v)) return *p;
+    // Numbers turn into each other (rpc("f", 3) for a float works)
+    if constexpr (std::is_same_v<T, float>) {
+        if (auto* i = std::get_if<int>(&v)) return static_cast<float>(*i);
+    } else if constexpr (std::is_same_v<T, int>) {
+        if (auto* f = std::get_if<float>(&v)) return static_cast<int>(*f);
+    } else if constexpr (std::is_same_v<T, raylib::Vector2>) {
+        if (auto* p = std::get_if<Vector2>(&v)) return *p;
+    } else if constexpr (std::is_same_v<T, raylib::Color>) {
+        if (auto* p = std::get_if<Color>(&v)) return *p;
+    }
+    return T{};
+}
+template <class C, class... A, size_t... I>
+void callRpcWith(C* self, void (C::*fn)(A...), const NetArgs& args, std::index_sequence<I...>) {
+    (self->*fn)(fromNet<std::decay_t<A>>(args[I])...);
+}
+template <class C, class... A> void callRpc(C* self, void (C::*fn)(A...), const NetArgs& args, const char* name) {
+    static_assert(((exportable<std::decay_t<A>>) && ...),
+                  "RPC arguments can be bool, int, float, std::string, Vector2 and Color");
+    if (args.size() != sizeof...(A)) {
+        print(std::string("RPC ") + name + ": expected " + std::to_string(sizeof...(A)) + " arguments, got " +
+              std::to_string(args.size()));
+        return;
+    }
+    callRpcWith(self, fn, args, std::index_sequence_for<A...>{});
+}
+// Lives next to the function and registers it with the script.
+class RpcField {
+public:
+    RpcField(Script* script, const char* name, std::function<void(const NetArgs&)> fn) {
+        script->addRpc(name, std::move(fn));
+    }
+    RpcField(const RpcField&) = delete;
+    RpcField& operator=(const RpcField&) = delete;
+};
+}  // namespace s2d::detail
+
+#define RPC(name)                                                                                        \
+    ::s2d::detail::RpcField s2dRpc_##name {                                                              \
+        this, #name, [this](const ::s2d::NetArgs& rpcArgs) {                                             \
+            ::s2d::detail::callRpc(this, &std::remove_pointer_t<decltype(this)>::name, rpcArgs, #name); \
+        }                                                                                                \
+    }

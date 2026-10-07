@@ -20,6 +20,7 @@
 #include "raygui_include.hpp"
 #include "export.hpp"
 #include "ide_files.hpp"
+#include "multiplayer.hpp"
 #include "platform.hpp"
 #include "projects.hpp"
 #include "scene_io.hpp"
@@ -32,6 +33,28 @@ namespace fs = std::filesystem;
 namespace s2d {
 
 namespace {
+
+// "--join 127.0.0.1 --name \"Big Al\"" -> {"--join", "127.0.0.1", "--name", "Big Al"}
+std::vector<std::string> splitArgs(const std::string& line) {
+    std::vector<std::string> out;
+    std::string cur;
+    bool quoted = false, any = false;
+    for (char c : line) {
+        if (c == '"') {
+            quoted = !quoted;
+            any = true;
+        } else if ((c == ' ' || c == '\t') && !quoted) {
+            if (any) out.push_back(cur);
+            cur.clear();
+            any = false;
+        } else {
+            cur += c;
+            any = true;
+        }
+    }
+    if (any) out.push_back(cur);
+    return out;
+}
 
 // So VS Code, Visual Studio, CLion... find script.hpp and raylib (see
 // ide_files.hpp). Returns what went wrong, if anything.
@@ -363,6 +386,8 @@ Editor::~Editor() {
         UnloadFont(uiFont_);
     }
     if (codeFont_.texture.id != 0) UnloadFont(codeFont_);
+    stopInstances();
+    multiplayer().close();
     playTree_.reset();
     inspectorScript_.reset();
     scripts_.reset();  // after the game: scripts' code lives in the library
@@ -545,10 +570,11 @@ void Editor::frame() {
     applyUiScale();
 
     pumpExport();
+    pumpInstances();
     pumpFolderPicker();
     updateSplitters(sw, sh, kLeftW, kRightW, kOutputH, sceneH);
     bool modal = popup_.open || dialog_.open || confirm_.open || export_.open || projects_.open ||
-                 folderPick_.valid() || sheet_.open || codeEditorDialog_.open || swallowMouse_ ||
+                 folderPick_.valid() || sheet_.open || codeEditorDialog_.open || instancesDialog_.open || swallowMouse_ ||
                  splitter_ != Splitter::None;
     if (modal) GuiLock();
     {
@@ -808,7 +834,13 @@ void Editor::drawToolbar(Rectangle r) {
     if (!playing) GuiDisable();
     if (GuiButton({px + 212, y, 84, h}, GuiIconText(ICON_PLAYER_STOP, "Stop"))) stop();
     if (!playing) GuiEnable();
-    x = px + 312;
+    // Run Instances: how many copies of the game Play starts (multiplayer)
+    if (playing) GuiDisable();
+    std::string copies = settings_.runInstances > 1 ? "x" + std::to_string(settings_.runInstances) : "";
+    if (GuiButton({px + 300, y, 50, h}, GuiIconText(ICON_WINDOW, copies.empty() ? nullptr : copies.c_str())))
+        openRunInstancesDialog();
+    if (playing) GuiEnable();
+    x = px + 366;
 
     // Script hot reload status
     if (ScriptReloader::supported()) {
@@ -846,9 +878,10 @@ void Editor::drawToolbar(Rectangle r) {
     drawText("UI size", ux, y + 6, kDim);
     ux -= 42;
     if (GuiButton({ux, y, 34, h}, GuiIconText(ICON_GEAR, nullptr))) {
-        openPopup({ux, y + h + 2}, {"Code Editor...", "Reset Panel Layout"}, [this](int i) {
+        openPopup({ux, y + h + 2}, {"Code Editor...", "Run Instances...", "Reset Panel Layout"}, [this](int i) {
             if (i == 0) openCodeEditorDialog();
-            if (i == 1) {
+            if (i == 1) openRunInstancesDialog();
+            if (i == 2) {
                 resetLayout();
                 saveLayout();
             }
@@ -3131,6 +3164,7 @@ void Editor::openProjectManager() {
         if (projects_.list[i] == current) projects_.selected = static_cast<int>(i);
     std::snprintf(projects_.location, sizeof projects_.location, "%s",
                   projects::defaultProjectsFolder().string().c_str());
+    projects_.templates = projects::projectTemplates(SPROUT_EDITOR_DIR);
 }
 
 void Editor::switchProject(const fs::path& project) {
@@ -3240,6 +3274,27 @@ void Editor::drawProjectManager() {
             });
         }
         y += 40;
+        // What to start from
+        drawText("Start from", x, y + 5, kDim);
+        float tx = x + labelW;
+        auto& templates = projects_.templates;
+        for (size_t i = 0; i < templates.size(); ++i) {
+            float tw = textWidth(templates[i].name) + 24;
+            if (tx + tw > x + w) {
+                tx = x + labelW;
+                y += 32;
+            }
+            bool on = projects_.templateIndex == static_cast<int>(i);
+            if (on) GuiSetState(STATE_PRESSED);
+            if (GuiButton({tx, y, tw, 26}, templates[i].name.c_str())) projects_.templateIndex = static_cast<int>(i);
+            if (on) GuiSetState(STATE_NORMAL);
+            tx += tw + 6;
+        }
+        y += 32;
+        const projects::ProjectTemplate* chosen =
+            projects_.templateIndex < static_cast<int>(templates.size()) ? &templates[projects_.templateIndex] : nullptr;
+        if (chosen) drawText(chosen->description, x + labelW, y, kDim);
+        y += 34;
         std::string folder;
         for (char c : std::string(projects_.name)) folder += (c == '/' || c == '\\' || c == ':') ? '_' : c;
         fs::path target = fs::path(projects_.location) / folder;
@@ -3251,7 +3306,7 @@ void Editor::drawProjectManager() {
             std::string error;
             if (folder.empty()) {
                 projects_.error = "Give the project a name.";
-            } else if (projects::createProject(target, projects_.name, error)) {
+            } else if (projects::createProject(target, projects_.name, error, chosen ? chosen->folder : fs::path())) {
                 projects::remember(target);
                 switchProject(target);
             } else {
@@ -3510,6 +3565,7 @@ void Editor::requestOpenScene(const std::string& scenePath) {
 void Editor::drawModal() {
     if (sheet_.open) drawSheetDialog();
     if (codeEditorDialog_.open) drawCodeEditorDialog();
+    if (instancesDialog_.open) drawRunInstancesDialog();
     bool picking = folderPick_.valid();
     if (picking) GuiLock();  // the folder window is open: everything here waits
     if (export_.open) drawExportDialog();
@@ -3684,6 +3740,13 @@ void Editor::play(bool mainScene) {
     activeField_.clear();
     scrubField_.clear();
     viewDrag_ = ViewDrag::None;
+    // The game in the editor is instance 1 of Run Instances: its command line.
+    setCommandLineArgs(splitArgs(settings_.instanceArgs.empty() ? "" : settings_.instanceArgs[0]));
+    setHeadless(false);
+    if (settings_.runInstances > 1) {
+        if (scene == scenePath_ && dirty_) saveScene();  // the other windows load it from its file
+        startInstances(scene);
+    }
     playTree_ = std::make_unique<SceneTree>();
     playTree_->gameSize = editTree_.gameSize;
     playTree_->clearColor = editTree_.clearColor;
@@ -3700,6 +3763,8 @@ void Editor::play(bool mainScene) {
 
 void Editor::stop() {
     if (!playTree_) return;
+    multiplayer().close();  // before the scripts go: peers hear that we left
+    stopInstances();
     playTree_.reset();
     log("Stopped.", kAccent);
 }
@@ -3974,6 +4039,149 @@ void Editor::createScript(const std::string& className) {
     } else {
         log("Rebuild the editor (cmake --build build) to compile it, then press Play.", kOrange);
     }
+}
+
+// ===========================================================================
+// Run Instances: Play starts several copies of the game (like Godot's), for
+// testing multiplayer. The first runs in the editor; the others are
+// `sprout_editor --play` in windows of their own.
+// ===========================================================================
+void Editor::openRunInstancesDialog() {
+    RunInstancesDialog& d = instancesDialog_;
+    d = RunInstancesDialog{};
+    d.open = true;
+    d.count = settings_.runInstances;
+    for (int i = 0; i < ProjectSettings::kMaxInstances && i < static_cast<int>(settings_.instanceArgs.size()); ++i)
+        std::snprintf(d.args[i], sizeof d.args[i], "%s", settings_.instanceArgs[i].c_str());
+}
+
+void Editor::drawRunInstancesDialog() {
+    RunInstancesDialog& d = instancesDialog_;
+    float sw = screenW(), sh = screenH();
+    DrawRectangle(0, 0, static_cast<int>(sw), static_cast<int>(sh), Fade(BLACK, 0.5f));
+    float w = 600, h = 236 + ProjectSettings::kMaxInstances * 34;
+    Rectangle box{std::floor(sw / 2 - w / 2), std::floor(std::max(8.0f, sh / 2 - h / 2)), w, h};
+    bool cancel = GuiWindowBox(box, "Run Instances") != 0;
+    float x = box.x + 14, y = box.y + 38, iw = box.width - 28;
+
+    drawText("Play starts", x, y + 5, kText);
+    float cx = x + textWidth("Play starts") + 10;
+    if (GuiButton({cx, y, 28, 26}, "-") && d.count > 1) --d.count;
+    std::string n = std::to_string(d.count);
+    drawText(n, cx + 36 + (12 - textWidth(n)) / 2, y + 5, kAccent);
+    if (GuiButton({cx + 56, y, 28, 26}, "+") && d.count < ProjectSettings::kMaxInstances) ++d.count;
+    drawText(d.count == 1 ? "copy of the game." : "copies of the game, to test multiplayer.", cx + 94, y + 5, kText);
+    y += 40;
+
+    drawText("Each copy's command line (for its scripts):", x, y, kDim);
+    y += 24;
+    float labelW = textWidth("2  own window") + 16;
+    for (int i = 0; i < ProjectSettings::kMaxInstances; ++i) {
+        bool used = i < d.count;
+        if (!used) GuiDisable();
+        drawText(std::to_string(i + 1) + (i == 0 ? "  in the editor" : "  own window"), x, y + 6, used ? kText : kDim);
+        if (GuiTextBox({x + labelW, y, iw - labelW, 28}, d.args[i], sizeof d.args[i], d.editing == i))
+            d.editing = d.editing == i ? -1 : i;
+        if (!used) GuiEnable();
+        y += 34;
+    }
+    y += 4;
+    drawText("e.g. --host on one and --join 127.0.0.1 on the others. Scripts read them", x, y, kDim);
+    drawText("with hasArg(\"--host\") and argValue(\"--join\"). --server: no window.", x, y + 20, kDim);
+
+    bool ok = d.editing < 0 && (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER));
+    if (GuiButton({box.x + box.width - 200, box.y + box.height - 42, 90, 30}, "OK")) ok = true;
+    if (GuiButton({box.x + box.width - 104, box.y + box.height - 42, 90, 30}, "Cancel") ||
+        (d.editing < 0 && IsKeyPressed(KEY_ESCAPE)))
+        cancel = true;
+    if (cancel) {
+        d.open = false;
+        return;
+    }
+    if (!ok) return;
+    settings_.runInstances = d.count;
+    settings_.instanceArgs.clear();
+    for (int i = 0; i < ProjectSettings::kMaxInstances; ++i) settings_.instanceArgs.push_back(d.args[i]);
+    while (!settings_.instanceArgs.empty() && settings_.instanceArgs.back().empty()) settings_.instanceArgs.pop_back();
+    if (!settings_.save(projectDir_)) log("Couldn't save project.json.", kBad);
+    d.open = false;
+    log(d.count == 1 ? "Play runs one copy of the game."
+                     : "Play runs " + std::to_string(d.count) + " copies of the game (1 here, the rest in their own windows).",
+        kAccent);
+}
+
+void Editor::startInstances(const std::string& scene) {
+    stopInstances();
+    fs::path exe = fs::path(GetApplicationDirectory()) /
+#if defined(_WIN32)
+                   "sprout_editor.exe";
+#else
+                   "sprout_editor";
+#endif
+    if (!fs::exists(exe)) {
+        log("Can't start the other copies: " + exe.string() + " is missing.", kBad);
+        return;
+    }
+    if (ScriptReloader::supported() && scripts_->isBuilding())
+        log("The scripts are still compiling: the other windows use the last build.", kOrange);
+    // Side by side on the editor's screen
+    int monitor = GetCurrentMonitor();
+    Vector2 mpos = GetMonitorPosition(monitor);
+    int mw = std::max(GetMonitorWidth(monitor), 800);
+    int cols = std::max(1, mw / (settings_.width + 16));
+    for (int i = 1; i < settings_.runInstances; ++i) {
+        int j = i - 1;
+        int wx = static_cast<int>(mpos.x) + 16 + (j % cols) * (settings_.width + 16);
+        int wy = static_cast<int>(mpos.y) + 48 + (j / cols) * (settings_.height + 48);
+        std::vector<std::string> args = {exe.string(), "--project", projectDir_.string(), "--play", "--no-build",
+                                         "--instance", std::to_string(i + 1), "--scene", scene,
+                                         "--window-pos", std::to_string(wx) + "," + std::to_string(wy)};
+        std::string line = i < static_cast<int>(settings_.instanceArgs.size()) ? settings_.instanceArgs[i] : "";
+        for (const std::string& a : splitArgs(line)) args.push_back(a);
+        std::string error;
+        auto process = platform::startProcess(args, error);
+        if (!process) {
+            log("Couldn't start copy " + std::to_string(i + 1) + ": " + error, kBad);
+            continue;
+        }
+        RunningInstance r;
+        r.number = i + 1;
+        r.process = std::move(process);
+        // Its output (print()) goes to the Output panel, marked with its number
+        r.reader = std::thread([out = instanceOutput_, p = r.process.get(), tag = "[" + std::to_string(i + 1) + "] "] {
+            std::string pending;
+            char buf[1024];
+            while (size_t got = p->read(buf, sizeof buf)) {
+                pending.append(buf, got);
+                for (size_t nl; (nl = pending.find('\n')) != std::string::npos;) {
+                    std::string text = pending.substr(0, nl);
+                    if (!text.empty() && text.back() == '\r') text.pop_back();
+                    pending.erase(0, nl + 1);
+                    std::lock_guard<std::mutex> lock(out->mutex);
+                    out->lines.push_back(tag + text);
+                }
+            }
+        });
+        log("Started copy " + std::to_string(i + 1) + (line.empty() ? "" : " with: " + line), kAccent);
+        instances_.push_back(std::move(r));
+    }
+}
+
+void Editor::stopInstances() {
+    for (RunningInstance& r : instances_) r.process->terminate();  // closes its input: it quits by itself
+    for (RunningInstance& r : instances_)
+        if (r.reader.joinable()) r.reader.join();
+    instances_.clear();
+    pumpInstances();
+}
+
+void Editor::pumpInstances() {
+    std::vector<std::string> lines;
+    {
+        std::lock_guard<std::mutex> lock(instanceOutput_->mutex);
+        lines.swap(instanceOutput_->lines);
+    }
+    for (const std::string& line : lines) log(line, theme().colors.scriptPrint);
 }
 
 // ===========================================================================

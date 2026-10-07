@@ -6,6 +6,9 @@
 //                                           opening a window, then exit (used by CI)
 //   sprout_editor [--project folder] --export linux,web [output folder]
 //                                           export the game without opening a window
+//   sprout_editor [--project folder] --play [--scene file] [--server] [--frames n] [-- game arguments]
+//                                           run the game without the editor (what Run Instances
+//                                           starts for each extra window; --server: no window)
 //
 // The command-line tools use the demo project (editor/project/) unless --project says otherwise.
 #include <raylib-cpp.hpp>
@@ -24,6 +27,7 @@
 
 #include "editor.hpp"
 #include "export.hpp"
+#include "game_runner.hpp"
 #include "hot_reload.hpp"
 #include "project.hpp"
 #include "projects.hpp"
@@ -72,8 +76,30 @@ int checkScripts(const fs::path& project) {
     return 0;
 }
 
-// Exports the game from the command line, printing progress. Exit code 0 if
-// every platform worked.
+// Runs the project as a game, with its scripts (building them first if they
+// changed and this is a hot reloading build).
+int playGame(const fs::path& project, std::vector<std::string> gameArgs) {
+    s2d::ScriptReloader reloader(project / "scripts", s2d::projects::workDir(project, SPROUT_EDITOR_BUILD_DIR) / "scripts");
+    if (s2d::ScriptReloader::supported()) {
+        std::string output, error;
+        // (--no-build: the editor started us and builds the scripts itself)
+        bool mayBuild = std::find(gameArgs.begin(), gameArgs.end(), "--no-build") == gameArgs.end();
+        if (mayBuild && (!reloader.libraryExists() || reloader.libraryOutOfDate()) && !reloader.buildNow(output)) {
+            std::printf("%s\nThe scripts didn't compile.\n", output.c_str());
+            return 1;
+        }
+        if (!reloader.load(error)) {
+            std::printf("Couldn't load the scripts: %s\n", error.c_str());
+            return 1;
+        }
+    }
+    s2d::GameOptions options = s2d::gameOptionsFromArgs(gameArgs);
+    options.project = project;
+    int code = s2d::runGame(options);
+    reloader.unload();
+    return code;
+}
+
 // Checks one script the way the Script tab does while you type, and prints what
 // it finds. Exit code 0 if it has no errors.
 int checkFile(const fs::path& project, const fs::path& file) {
@@ -129,6 +155,8 @@ int checkFile(const fs::path& project, const fs::path& file) {
     return errors ? 1 : 0;
 }
 
+// Exports the game from the command line, printing progress. Exit code 0 if
+// every platform worked.
 int exportGame(const fs::path& project, const std::string& targets, const std::string& outDir) {
     s2d::ProjectSettings settings = s2d::ProjectSettings::load(project);
     s2d::Exporter exporter({SPROUT_EDITOR_DIR, project, project / "scripts",
@@ -180,11 +208,18 @@ int main(int argc, char** argv) {
     //   sprout_editor [--project folder] --check-scripts
     //   sprout_editor [--project folder] --export linux,windows,web [output folder]
     //   sprout_editor [--project folder] --check-file scripts/player.cpp   (live checking, as in the Script tab)
+    //   sprout_editor [--project folder] --play [game options and arguments]
     std::string projectArg, exportTargets, exportOut, checkFileArg;
-    bool check = false, exporting = false;
+    bool check = false, exporting = false, playing = false;
+    std::vector<std::string> gameArgs;  // for --play: its options, and everything after --
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
+        if (playing) {
+            if (a != "--") gameArgs.push_back(a);
+            continue;
+        }
         if (a == "--project" && i + 1 < argc) projectArg = argv[++i];
+        else if (a == "--play") playing = true;
         else if (a == "--check-scripts") check = true;
         else if (a == "--check-file" && i + 1 < argc) checkFileArg = argv[++i];
         else if (a == "--export" && i + 1 < argc) {
@@ -196,6 +231,7 @@ int main(int argc, char** argv) {
     // The command-line tools use the demo project unless told otherwise.
     if (!checkFileArg.empty())
         return checkFile(projectArg.empty() ? fs::path(SPROUT_EDITOR_PROJECT_DIR) : fs::path(projectArg), checkFileArg);
+    if (playing) return playGame(projectArg.empty() ? fs::path(SPROUT_EDITOR_PROJECT_DIR) : fs::path(projectArg), gameArgs);
     if (check) return checkScripts(projectArg.empty() ? fs::path(SPROUT_EDITOR_PROJECT_DIR) : fs::path(projectArg));
     if (exporting)
         return exportGame(projectArg.empty() ? fs::path(SPROUT_EDITOR_PROJECT_DIR) : fs::path(projectArg), exportTargets,
