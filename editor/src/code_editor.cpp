@@ -52,8 +52,8 @@ std::vector<Candidate> candidates() {
         }
     }
     list.push_back({"Visual Studio", "devenv", "devenv /Edit {file}"});
-    list.push_back({"CLion", "clion64", "clion64 {file}"});
-    list.push_back({"CLion", "clion", "clion {file}"});
+    list.push_back({"CLion", "clion64", "clion64 {project} {file}"});
+    list.push_back({"CLion", "clion", "clion {project} {file}"});
     list.push_back({"Sublime Text", "subl", "subl {project} {file}"});
     if (!programs.empty()) {
         fs::path subl = fs::path(programs) / "Sublime Text/subl.exe";
@@ -74,8 +74,8 @@ std::vector<Candidate> candidates() {
     list.push_back({"VS Code", "code", "code {project} {file}"});
     list.push_back({"VS Code", app("Visual Studio Code"), "open -a 'Visual Studio Code' {project} {file}"});
     list.push_back({"Xcode", app("Xcode"), "open -a Xcode {file}"});
-    list.push_back({"CLion", "clion", "clion {file}"});
-    list.push_back({"CLion", app("CLion"), "open -a CLion {file}"});
+    list.push_back({"CLion", "clion", "clion {project} {file}"});
+    list.push_back({"CLion", app("CLion"), "open -a CLion {project} {file}"});
     list.push_back({"Sublime Text", "subl", "subl {project} {file}"});
     list.push_back({"Sublime Text", app("Sublime Text"), "open -a 'Sublime Text' {project} {file}"});
     list.push_back({"Zed", "zed", "zed {project} {file}"});
@@ -84,8 +84,8 @@ std::vector<Candidate> candidates() {
 #else
     list.push_back({"VS Code", "code", "code {project} {file}"});
     list.push_back({"VSCodium", "codium", "codium {project} {file}"});
-    list.push_back({"CLion", "clion", "clion {file}"});
-    list.push_back({"CLion", "clion.sh", "clion.sh {file}"});
+    list.push_back({"CLion", "clion", "clion {project} {file}"});
+    list.push_back({"CLion", "clion.sh", "clion.sh {project} {file}"});
     list.push_back({"Sublime Text", "subl", "subl {project} {file}"});
     list.push_back({"Zed", "zed", "zed {project} {file}"});
     list.push_back({"Zed", "zeditor", "zeditor {project} {file}"});

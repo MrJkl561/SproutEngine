@@ -19,6 +19,7 @@
 #include "assets.hpp"
 #include "raygui_include.hpp"
 #include "export.hpp"
+#include "ide_files.hpp"
 #include "platform.hpp"
 #include "projects.hpp"
 #include "scene_io.hpp"
@@ -31,6 +32,16 @@ namespace fs = std::filesystem;
 namespace s2d {
 
 namespace {
+
+// So VS Code, Visual Studio, CLion... find script.hpp and raylib (see
+// ide_files.hpp). Returns what went wrong, if anything.
+std::string refreshIdeFiles(const fs::path& project) {
+    std::string error;
+    writeIdeFiles({project, fs::path(SPROUT_EDITOR_DIR) / "src", SPROUT_EDITOR_DEPS_DIR, SPROUT_EDITOR_CXX,
+                   SPROUT_EDITOR_CXX_ID, SPROUT_EDITOR_CLANGD},
+                  error);
+    return error;
+}
 
 // ---------------------------------------------------------------------------
 // Look
@@ -317,11 +328,13 @@ Editor::Editor(fs::path projectDir)
     std::error_code ec;
     fs::create_directories(projectDir_ / "scenes", ec);
     fs::create_directories(scriptsDir_, ec);
+    std::string ideProblem = refreshIdeFiles(projectDir_);
     ensureDefaultAssets();
     rescanFiles();
 
     settings_ = ProjectSettings::load(projectDir_);
     log("Sprout Editor - project '" + settings_.name + "' in " + projectDir_.string());
+    if (!ideProblem.empty()) log(ideProblem, kOrange);
     scripts_ = std::make_unique<ScriptReloader>(scriptsDir_, workDir_ / "scripts");
     if (ScriptReloader::supported()) {
         log("C++ scripts in " + scriptsDir_.string() + " reload automatically when you save them.");
@@ -3952,6 +3965,7 @@ void Editor::createScript(const std::string& className) {
         touch();
         selected_->scriptName = className;
     }
+    if (std::string problem = refreshIdeFiles(projectDir_); !problem.empty()) log(problem, kOrange);
     rescanFiles();
     log("Created " + file.string(), kGood);
     openInCodeEditor(file);

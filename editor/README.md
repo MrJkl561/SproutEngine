@@ -440,6 +440,42 @@ Notepad++, Xcode, Kate...), the system default, or a command of your own, where
 Edit button and new scripts then open there, and the right-click menu offers
 both. Files you change outside Sprout show up in the Script tab by themselves.
 
+**Autocomplete and errors in your own editor work with no setup.** Every time
+it opens a project, the Sprout Editor writes the files code editors look for
+into the project folder, so they find `script.hpp`, raylib and the C++20
+settings:
+
+| File | Used by |
+|---|---|
+| `compile_commands.json` | Every editor that uses [clangd](https://clangd.llvm.org/): VS Code with the clangd extension, Zed, Sublime Text (LSP), Kate, Neovim, Helix, Qt Creator... and CLion |
+| `.vscode/c_cpp_properties.json` | VS Code's Microsoft C/C++ extension |
+| `.vscode/settings.json` | VS Code's clangd extension: points it at the clangd that came with the Sprout Editor, so you don't need to install one |
+| `CppProperties.json` (Windows) | Visual Studio, when you open the project with **File > Open > Folder** |
+
+How to open a project so your editor picks them up:
+
+- **VS Code:** open the project *folder* (File > Open Folder, or `code "My Game"`).
+  The Code Editor setting above does this for you. Use **either** the
+  Microsoft C/C++ extension **or** the clangd extension; both work. If you
+  have both, clangd offers to turn the other one's IntelliSense off.
+- **Visual Studio:** **File > Open > Folder** and pick the project folder (not
+  a single file).
+- **CLion:** open the project folder; CLion finds `compile_commands.json` and
+  loads it as a "compilation database" project.
+- **Zed, Sublime Text, Kate, Neovim...:** open the project folder or any script;
+  their clangd finds `compile_commands.json` by itself.
+
+These files hold paths on your computer (where the editor was built), so
+they're added to the project's `.gitignore` and remade when you open the
+project, e.g. after moving the Sprout folder or on another computer. Settings
+of your own in the `.vscode` files and `CppProperties.json` are kept. If one
+of them has comments, the editor leaves it alone and says so in the Output
+panel; delete it and reopen the project to have it made again.
+
+Still seeing "cannot open source file script.hpp"? Open the project in the
+Sprout Editor once (that writes the files), then reload your editor's window
+(in VS Code: Ctrl+Shift+P, **Developer: Reload Window**).
+
 ### Script variables (shown in the inspector)
 
 Like Godot's `@export`, a script can show some of its variables in the
@@ -618,6 +654,7 @@ editor/
 │   ├── assets.*          <- texture cache
 │   ├── theme.*           <- what a theme can set (Theme)
 │   ├── code_editor.*     <- opening files in VS Code, Visual Studio...
+│   ├── ide_files.*       <- compile_commands.json, .vscode/... so other editors find the headers
 │   ├── text_editor.*     <- the Script tab's text editor
 │   ├── autocomplete.*    <- its suggestions (reads the engine and raylib headers)
 │   ├── script_checker.*  <- live error checking and coloring (clangd)
