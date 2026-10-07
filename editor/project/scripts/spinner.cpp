@@ -7,13 +7,8 @@ using namespace s2d;
 
 class Spinner : public Script {
 public:
-    float degreesPerSecond = 90;
-    float bobHeight = 6;
-
-    void exports(Exports& e) override {
-        e.add("degrees_per_second", degreesPerSecond);
-        e.add("bob_height", bobHeight, 0.1f);
-    }
+    EXPORT(float, degreesPerSecond, 90);
+    EXPORT_STEP(float, bobHeight, 6, 0.1f);
 
     void ready() override {
         if (auto* me = self<Node2D>()) startY_ = me->position.y;

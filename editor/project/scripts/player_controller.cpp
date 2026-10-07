@@ -9,16 +9,10 @@ using namespace s2d;
 
 class PlayerController : public Script {
 public:
-    float speed = 260;
-    float jumpSpeed = 520;
-    float gravity = 1400;
-
     // Shown in the inspector, so each level (or player copy) can tune them.
-    void exports(Exports& e) override {
-        e.add("speed", speed);
-        e.add("jump_speed", jumpSpeed);
-        e.add("gravity", gravity, 5);
-    }
+    EXPORT(float, speed, 260);
+    EXPORT(float, jumpSpeed, 520);
+    EXPORT_STEP(float, gravity, 1400, 5);  // dragging it in the inspector goes 5 at a time
 
     void ready() override {
         if (!self<CharacterBody2D>()) print("PlayerController needs to be on a CharacterBody2D!");

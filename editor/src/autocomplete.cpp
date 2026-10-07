@@ -644,6 +644,19 @@ struct Parser {
     void semicolon(const std::string& stmt) {
         std::string s = collapse(stmt);
         if (s.empty()) return;
+        // EXPORT(float, speed, 250) / EXPORT_SCENE(nextLevel): a variable of the script
+        static const std::regex exportVar(R"(^EXPORT(?:_STEP)?\s*\(\s*([^,]+?)\s*,\s*([A-Za-z_]\w*))");
+        static const std::regex exportPath(R"(^EXPORT_(?:SCENE|TEXTURE)\s*\(\s*([A-Za-z_]\w*))");
+        std::smatch m;
+        if (!inFunction() && (std::regex_search(s, m, exportVar) || std::regex_search(s, m, exportPath))) {
+            Completion c;
+            c.kind = Completion::Kind::Variable;
+            c.name = m.size() > 2 && m[2].matched ? m[2].str() : m[1].str();
+            c.type = m.size() > 2 && m[2].matched ? m[1].str() : "std::string";
+            c.detail = c.type + " " + c.name + "  (shown in the inspector)";
+            add(c, owner());
+            return;
+        }
         Scope& top = stack.back();
         if (top.kind == Scope::Enum) return;
         if (inFunction()) {

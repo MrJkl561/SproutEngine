@@ -7,9 +7,7 @@ using namespace s2d;
 
 class LevelExit : public Script {
 public:
-    std::string nextScene;  // set per door in the inspector
-
-    void exports(Exports& e) override { e.scene("next_scene", nextScene); }
+    EXPORT_SCENE(nextScene);  // set per door in the inspector
 
     void process(float) override {
         auto* area = self<Area2D>();

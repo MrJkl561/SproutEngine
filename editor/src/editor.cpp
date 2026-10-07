@@ -257,6 +257,9 @@ using namespace s2d;
 
 class $NAME : public Script {
 public:
+    // Variables shown in the inspector (Script Variables), set per node there:
+    EXPORT(float, speed, 200);
+
     void ready() override {
         print("$NAME is ready on " + node()->name);
     }
@@ -264,8 +267,8 @@ public:
     void process(float delta) override {
         // Example: move the node with the arrow keys.
         // if (auto* me = self<Node2D>()) {
-        //     if (IsKeyDown(KEY_RIGHT)) me->position.x += 200 * delta;
-        //     if (IsKeyDown(KEY_LEFT))  me->position.x -= 200 * delta;
+        //     if (IsKeyDown(KEY_RIGHT)) me->position.x += speed * delta;
+        //     if (IsKeyDown(KEY_LEFT))  me->position.x -= speed * delta;
         // }
         (void)delta;
     }
@@ -1785,12 +1788,12 @@ void Editor::scriptVariableRows(float x, float& y, float width) {
         inspectorScriptNode_ = selected_;
         inspectorScriptName_ = selected_->scriptName;
         Exports defaults;
-        inspectorScript_->exports(defaults);
+        inspectorScript_->collectExports(defaults);
         inspectorScriptDefaults_ = propertyListToJson(defaults.list);
         applyPropertyList(defaults.list, scriptVarsToJson(*selected_));
     }
     Exports e;
-    inspectorScript_->exports(e);
+    inspectorScript_->collectExports(e);
     if (e.list.empty()) return;
 
     // The node's saved values go into the copy, the rows edit the copy...
@@ -1811,7 +1814,7 @@ void Editor::scriptVariableRows(float x, float& y, float width) {
 void Editor::storeScriptVars() {
     if (!selected_ || !inspectorScript_ || inspectorScriptNode_ != selected_) return;
     Exports e;
-    inspectorScript_->exports(e);
+    inspectorScript_->collectExports(e);
     // Only values that differ from the script's defaults are kept.
     nlohmann::json now = propertyListToJson(e.list);
     std::map<std::string, std::string> vars;

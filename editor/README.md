@@ -387,21 +387,42 @@ both. Files you change outside Sprout show up in the Script tab by themselves.
 ### Script variables (shown in the inspector)
 
 Like Godot's `@export`, a script can show some of its variables in the
-inspector, so each node using it can have its own values. List them in
-`exports()`:
+inspector, so each node using it can have its own values. Declare them with
+`EXPORT`: one line makes the variable and shows it.
 
 ```cpp
 class PlayerController : public Script {
 public:
-    float speed = 260;
-    std::string nextLevel;
+    EXPORT(float, speed, 260);                  // float speed = 260, shown as "speed"
+    EXPORT(int, lives, 3);
+    EXPORT(bool, canDoubleJump, true);          // shown as "can_double_jump"
+    EXPORT(std::string, greeting, "Hello");
+    EXPORT(Vector2, launch, 0, -400);           // Vector2{0, -400}
+    EXPORT(Color, tint, 255, 200, 200, 255);
+    EXPORT_STEP(float, gravity, 1400, 5);       // dragging the number goes 5 at a time
+    EXPORT_SCENE(nextLevel, "scenes/level2.scene.json");  // pick a scene from a list
+    EXPORT_TEXTURE(skin, "assets/player.png");             // pick a picture from a list
 
-    void exports(Exports& e) override {
-        e.add("speed", speed);              // float, int, bool, std::string, Vector2, Color
-        e.scene("next_level", nextLevel);   // pick a scene from a list
-        // e.texture("icon", iconPath);     // pick a picture from a list
+    void process(float delta) override {
+        self<Node2D>()->position.x += speed * delta;       // use them like any variable
     }
 };
+```
+
+`EXPORT` works with `float`, `int`, `bool`, `std::string`, `Vector2` and
+`Color` (anything else is an error on that line, while you type). The name in
+the inspector and in scene files is the variable's name in snake_case
+(`jumpSpeed` is `jump_speed`).
+
+For more control (other names, or variables that only show sometimes), list
+them yourself in `exports()` instead, or as well:
+
+```cpp
+    float speed = 260;
+    void exports(Exports& e) override {
+        e.add("speed", speed);              // float, int, bool, std::string, Vector2, Color
+        e.scene("next_level", nextLevel);   // e.texture("icon", iconPath) for pictures
+    }
 ```
 
 They appear under **Script Variables** in the inspector. A value you change is

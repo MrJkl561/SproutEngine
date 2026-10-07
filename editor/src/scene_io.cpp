@@ -81,7 +81,7 @@ void setScriptVars(Node& node, const json& values) {
 void applyScriptVars(Node& node) {
     if (!node.script || node.scriptVars.empty()) return;
     Exports e;
-    node.script->exports(e);
+    node.script->collectExports(e);
     applyPropertyList(e.list, scriptVarsToJson(node));
 }
 
