@@ -15,7 +15,10 @@ namespace s2d {
 
 namespace {
 
-enum Kind : unsigned char { Plain, Keyword, Type, Function, String, Number, Comment, Preprocessor, Key };
+enum Kind : unsigned char {
+    Plain, Keyword, Type, Function, String, Number, Comment, Preprocessor, Key,
+    Member, Parameter, Macro, EnumMember, Namespace  // these come from clangd
+};
 
 const std::set<std::string> kCppKeywords = {
     "if", "else", "for", "while", "do", "switch", "case", "default", "break", "continue", "return", "goto", "try",
@@ -193,6 +196,11 @@ Color colorOf(unsigned char kind) {
         case Comment: return c.comment;
         case Preprocessor: return c.preprocessor;
         case Key: return c.key;
+        case Member: return c.member;
+        case Parameter: return c.parameter;
+        case Macro: return c.macro;
+        case EnumMember: return c.constant;
+        case Namespace: return c.namespaceName;
         default: return c.text;
     }
 }
@@ -818,6 +826,32 @@ void TextDocument::updateHighlight() {
     }
     if (language == Language::Cpp) highlightCpp(lines_, colors_);
     if (language == Language::Json) highlightJson(lines_, colors_);
+    // clangd's colors, on the lines that are still as they were
+    for (const SemanticSpan& span : semantic_) {
+        if (span.line >= static_cast<int>(lines_.size()) || span.line >= static_cast<int>(semanticLines_.size()) ||
+            lines_[span.line] != semanticLines_[span.line])
+            continue;
+        Kind kind;
+        switch (span.kind) {
+            case SemanticKind::Type: kind = Type; break;
+            case SemanticKind::Function: kind = Function; break;
+            case SemanticKind::Member: kind = Member; break;
+            case SemanticKind::Parameter: kind = Parameter; break;
+            case SemanticKind::Macro: kind = Macro; break;
+            case SemanticKind::EnumMember: kind = EnumMember; break;
+            case SemanticKind::Namespace: kind = Namespace; break;
+            default: kind = Comment; break;  // code #if'd out
+        }
+        auto& row = colors_[span.line];
+        for (int i = std::max(0, span.start); i < span.end && i < static_cast<int>(row.size()); ++i) row[i] = kind;
+    }
+}
+
+void TextDocument::setSemanticSpans(long version, std::vector<SemanticSpan> spans) {
+    if (version != version_) return;  // for text that has changed since
+    semantic_ = std::move(spans);
+    semanticLines_ = lines_;
+    highlightVersion_ = -1;
 }
 
 // ---------------------------------------------------------------------------
@@ -1136,6 +1170,35 @@ void TextDocument::draw(Rectangle r, bool focused, bool mouse, const TextStyle& 
             }
             ++v;
             i += bytes;
+        }
+        // A wavy line under each problem on this line
+        for (const Diagnostic& d : diagnostics) {
+            if (l + 1 < d.line || (d.endLine > 0 ? l + 1 > d.endLine : l + 1 != d.line)) continue;
+            int from = l + 1 == d.line ? std::max(0, d.column - 1) : 0;
+            int to;
+            if (d.endLine > 0 && l + 1 < d.endLine) {
+                to = static_cast<int>(s.size());
+            } else if (d.endLine > 0 && d.endColumn - 1 > from) {
+                to = d.endColumn - 1;
+            } else {  // no end given: the word that starts there
+                to = from;
+                while (to < static_cast<int>(s.size()) &&
+                       (std::isalnum(static_cast<unsigned char>(s[to])) || s[to] == '_'))
+                    ++to;
+                if (to == from) to = from + 1;
+            }
+            from = std::min(from, static_cast<int>(s.size()));
+            to = std::min(std::max(to, from + 1), static_cast<int>(s.size()) + 1);
+            float ax = x0 + visualCol(l, from) * charW_;
+            float bx = x0 + (to > static_cast<int>(s.size()) ? visualCol(l, static_cast<int>(s.size())) + 1
+                                                             : visualCol(l, to)) * charW_;
+            Color wc = d.error ? c.error : c.warning;
+            float wy = y + lineH_ - 3;
+            for (float wx = ax; wx < bx; wx += 4) {
+                float nx = std::min(wx + 2, bx), mx = std::min(wx + 4, bx);
+                DrawLineEx({wx, wy + 1.5f}, {nx, wy - 1.5f}, 1.2f, wc);
+                if (nx < bx) DrawLineEx({nx, wy - 1.5f}, {mx, wy + 1.5f}, 1.2f, wc);
+            }
         }
         // The compiler's message, after the line
         if (diag) {

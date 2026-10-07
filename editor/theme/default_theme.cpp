@@ -87,6 +87,11 @@ Theme makeTheme() {
     t.code.comment = Color{110, 118, 135, 255};
     t.code.preprocessor = Color{220, 150, 255, 255};
     t.code.key = Color{150, 200, 255, 255};
+    t.code.member = Color{156, 210, 254, 255};      // (from clangd) velocity, position
+    t.code.parameter = Color{230, 200, 160, 255};   // delta
+    t.code.macro = Color{220, 150, 255, 255};       // REGISTER_SCRIPT
+    t.code.constant = Color{180, 220, 150, 255};    // enum values
+    t.code.namespaceName = Color{200, 200, 150, 255};  // std, s2d
     t.code.error = Color{255, 90, 80, 255};
     t.code.warning = Color{255, 180, 70, 255};
     t.code.match = Color{90, 80, 30, 255};

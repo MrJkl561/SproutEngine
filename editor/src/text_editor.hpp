@@ -20,6 +20,14 @@ struct Diagnostic {
     int line = 1, column = 0;
     bool error = true;  // else a warning
     std::string message;
+    int endLine = 0, endColumn = 0;  // where it ends (0 = just the word at line/column)
+};
+
+// What a name is (from clangd), for coloring it.
+enum class SemanticKind : unsigned char { Type, Function, Member, Parameter, Macro, EnumMember, Namespace, Comment };
+struct SemanticSpan {
+    int line = 0, start = 0, end = 0;  // 0-based line; byte columns
+    SemanticKind kind = SemanticKind::Type;
 };
 
 // How the editor draws: the font and sizes, in UI pixels.
@@ -40,6 +48,10 @@ public:
     std::string text() const;
     void setText(const std::string& text);  // replaces everything (undoable)
     bool dirty() const { return version_ != savedVersion_; }
+    long version() const { return version_; }  // changes with every edit (and undo)
+    // Colors from clangd for the text as it was at `version`. They stay on the
+    // lines that haven't changed since, until newer ones come.
+    void setSemanticSpans(long version, std::vector<SemanticSpan> spans);
 
     // The file was changed by something else since it was loaded or saved.
     bool changedOnDisk() const;
@@ -161,6 +173,8 @@ private:
     long highlightVersion_ = -1;
     std::vector<std::vector<unsigned char>> colors_;
     int widestLine_ = 0;  // in columns, for horizontal scrolling
+    std::vector<SemanticSpan> semantic_;
+    std::vector<std::string> semanticLines_;  // the text the spans are for
 };
 
 Language languageFor(const std::filesystem::path& file);

@@ -15,6 +15,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <optional>
 #include <string>
 #include <thread>
@@ -27,6 +29,7 @@
 #include "projects.hpp"
 #include "raygui_include.hpp"
 #include "script.hpp"
+#include "script_checker.hpp"
 #include "theme.hpp"
 #include "ui_scale.hpp"
 
@@ -71,6 +74,61 @@ int checkScripts(const fs::path& project) {
 
 // Exports the game from the command line, printing progress. Exit code 0 if
 // every platform worked.
+// Checks one script the way the Script tab does while you type, and prints what
+// it finds. Exit code 0 if it has no errors.
+int checkFile(const fs::path& project, const fs::path& file) {
+    std::ifstream in(file, std::ios::binary);
+    if (!in) {
+        std::printf("Can't read %s\n", file.string().c_str());
+        return 2;
+    }
+    std::stringstream text;
+    text << in.rdbuf();
+    s2d::ScriptChecker checker({SPROUT_EDITOR_CLANGD, SPROUT_EDITOR_CXX, SPROUT_EDITOR_CXX_ID, project / "scripts",
+                                s2d::projects::workDir(project, SPROUT_EDITOR_BUILD_DIR), fs::path(SPROUT_EDITOR_DIR) / "src",
+                                SPROUT_EDITOR_DEPS_DIR});
+    if (checker.engine().empty()) {
+        std::printf("Nothing to check with (no clangd, and the compiler can't be used).\n");
+        return 2;
+    }
+    checker.update(file, text.str(), 1);
+    s2d::ScriptChecker::Result result;
+    bool diagnostics = false, tokens = false;
+    size_t tokenCount = 0;
+    std::vector<s2d::Diagnostic> found;
+    auto start = std::chrono::steady_clock::now();
+    while (std::chrono::steady_clock::now() - start < std::chrono::seconds(60)) {
+        checker.poll(std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
+        if (checker.take(file, result)) {
+            if (result.hasDiagnostics) {
+                diagnostics = true;
+                found = result.diagnostics;
+            }
+            if (result.hasTokens) {
+                tokens = true;
+                tokenCount = result.tokens.size();
+            }
+        }
+        if (diagnostics && (tokens || checker.engine() != "clangd")) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    if (!diagnostics) {
+        std::printf("No answer from %s.\n", checker.engine().c_str());
+        return 2;
+    }
+    int errors = 0;
+    for (const s2d::Diagnostic& d : found) {
+        std::printf("%s:%d:%d: %s: %s\n", file.filename().string().c_str(), d.line, d.column,
+                    d.error ? "error" : "warning", d.message.c_str());
+        errors += d.error;
+    }
+    std::printf("Checked with %s: %d error(s), %d warning(s)", checker.engine().c_str(), errors,
+                static_cast<int>(found.size()) - errors);
+    if (tokens) std::printf(", %zu names colored", tokenCount);
+    std::printf("\n");
+    return errors ? 1 : 0;
+}
+
 int exportGame(const fs::path& project, const std::string& targets, const std::string& outDir) {
     s2d::ProjectSettings settings = s2d::ProjectSettings::load(project);
     s2d::Exporter exporter({SPROUT_EDITOR_DIR, project, project / "scripts",
@@ -121,12 +179,14 @@ int main(int argc, char** argv) {
     //   sprout_editor [project folder]
     //   sprout_editor [--project folder] --check-scripts
     //   sprout_editor [--project folder] --export linux,windows,web [output folder]
-    std::string projectArg, exportTargets, exportOut;
+    //   sprout_editor [--project folder] --check-file scripts/player.cpp   (live checking, as in the Script tab)
+    std::string projectArg, exportTargets, exportOut, checkFileArg;
     bool check = false, exporting = false;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--project" && i + 1 < argc) projectArg = argv[++i];
         else if (a == "--check-scripts") check = true;
+        else if (a == "--check-file" && i + 1 < argc) checkFileArg = argv[++i];
         else if (a == "--export" && i + 1 < argc) {
             exporting = true;
             exportTargets = argv[++i];
@@ -134,6 +194,8 @@ int main(int argc, char** argv) {
         } else if (a.rfind("--", 0) != 0) projectArg = a;
     }
     // The command-line tools use the demo project unless told otherwise.
+    if (!checkFileArg.empty())
+        return checkFile(projectArg.empty() ? fs::path(SPROUT_EDITOR_PROJECT_DIR) : fs::path(projectArg), checkFileArg);
     if (check) return checkScripts(projectArg.empty() ? fs::path(SPROUT_EDITOR_PROJECT_DIR) : fs::path(projectArg));
     if (exporting)
         return exportGame(projectArg.empty() ? fs::path(SPROUT_EDITOR_PROJECT_DIR) : fs::path(projectArg), exportTargets,

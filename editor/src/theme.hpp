@@ -103,6 +103,12 @@ struct Theme {
         Color comment{110, 118, 135, 255};
         Color preprocessor{220, 150, 255, 255};  // #include...
         Color key{150, 200, 255, 255};         // JSON keys
+        // From clangd (live checking), when it's there:
+        Color member{156, 210, 254, 255};      // a class's variables: velocity, position
+        Color parameter{230, 200, 160, 255};   // a function's parameters: delta
+        Color macro{220, 150, 255, 255};       // REGISTER_SCRIPT, KEY_SPACE
+        Color constant{180, 220, 150, 255};    // enum values
+        Color namespaceName{200, 200, 150, 255};  // std, s2d
         Color error{255, 90, 80, 255};         // compile errors (line marks and messages)
         Color warning{255, 180, 70, 255};
         Color match{90, 80, 30, 255};          // Find results

@@ -6,8 +6,10 @@
 
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace s2d::platform {
 
@@ -39,6 +41,20 @@ std::string quoteArg(const std::filesystem::path& path);
 bool openWithSystem(const std::filesystem::path& file);
 // Shows the file selected in Explorer / Finder (Linux: opens its folder).
 bool showInFileManager(const std::filesystem::path& file);
+
+// A program running alongside the editor that it talks to through its standard
+// input and output (clangd). Its error output is thrown away.
+class ChildProcess {
+public:
+    virtual ~ChildProcess() = default;  // stops it too
+    // Closes its input and ends it (waiting at most a moment). Output already
+    // sent can still be read; then read() returns 0.
+    virtual void terminate() = 0;
+    virtual bool write(const std::string& data) = 0;
+    // Waits for some output; 0 when the program has ended or closed its output.
+    virtual size_t read(char* buffer, size_t size) = 0;
+};
+std::unique_ptr<ChildProcess> startProcess(const std::vector<std::string>& args, std::string& error);
 
 // Finds a program on the PATH (adding .exe/.bat/.cmd on Windows); "" if it isn't there.
 std::filesystem::path findProgram(const std::string& name);

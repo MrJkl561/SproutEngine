@@ -58,6 +58,11 @@ Theme makeTheme() {
     t.code.comment = Color{130, 138, 150, 255};
     t.code.preprocessor = Color{130, 50, 180, 255};
     t.code.key = Color{30, 90, 200, 255};
+    t.code.member = Color{0, 100, 150, 255};
+    t.code.parameter = Color{140, 80, 20, 255};
+    t.code.macro = Color{130, 50, 180, 255};
+    t.code.constant = Color{30, 120, 60, 255};
+    t.code.namespaceName = Color{110, 100, 30, 255};
     t.code.error = Color{210, 40, 30, 255};
     t.code.warning = Color{200, 120, 0, 255};
     t.code.match = Color{255, 236, 150, 255};

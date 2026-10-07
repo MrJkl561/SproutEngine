@@ -350,8 +350,19 @@ making a **New** script (it opens straight away). Each open file gets a tab.
   saves every open file
 - **Ctrl+F** find, **Ctrl+H** replace, **F3** next match, **Ctrl+G** go to line,
   **Ctrl+/** comment lines, **Ctrl+D** duplicate line, **Tab/Shift+Tab** indent
-- **Compile errors** are marked on their lines (with the message), and clicking
-  an error in the Output panel jumps to it
+- **Errors as you type**: scripts are checked live with
+  [clangd](https://clangd.llvm.org/) while you type, before saving. Problems get
+  a wavy underline and their message on the line, and the status bar counts
+  them. clangd also tells the editor what every name is, so members,
+  parameters, types, functions, macros and enum values each get their own
+  color. Nothing to install: building the editor downloads clangd once (20-90
+  MB, into the build folder). Where there's no ready-made clangd (Linux on
+  ARM64) one already on the computer is used, or else the compiler checks the
+  script (errors only). Turn the download off with `-DSPROUT_EDITOR_CLANGD=OFF`.
+  `sprout_editor --check-file scripts/player.cpp` checks one script from the
+  command line.
+- **Compile errors** from saving are also listed in the Output panel; clicking
+  one jumps to it
 - **Scene files** can be edited as JSON. A file that isn't valid JSON, or isn't
   a scene the editor can load, is never saved: the error line is marked
   instead. Saving a scene the 2D view shows (or uses) reloads it there.
@@ -490,7 +501,7 @@ restart the editor. It sets:
 | Widget look (buttons, text boxes...) | `t.widgets` = one of raygui's 20 styles, plus `t.customizeWidgets` for any `GuiSetStyle()` tweak |
 | Font and text size | `t.font` (a .ttf/.otf in `theme/`), `t.fontSize` |
 | Panel colors | `t.colors.background`, `panel`, `header`, `border`, `text`, `accent`, `selection`... |
-| Script editor | `t.code.background`, `keyword`, `string`, `comment`..., `t.code.font`, `t.code.fontSize` |
+| Script editor | `t.code.background`, `keyword`, `string`, `comment`, `member`, `parameter`..., `t.code.font`, `t.code.fontSize` |
 | Viewport colors | `t.viewport.background`, `grid`, axes, game frame, selection outline |
 | Gizmos | `t.gizmos.collisionShape`, `camera`... |
 | Each node type's color and icon | `t.nodes["Sprite2D"] = {color, ICON_..., "picture.png"}` (a picture replaces the icon) |
@@ -532,6 +543,7 @@ editor/
 │   ├── code_editor.*     <- opening files in VS Code, Visual Studio...
 │   ├── text_editor.*     <- the Script tab's text editor
 │   ├── autocomplete.*    <- its suggestions (reads the engine and raylib headers)
+│   ├── script_checker.*  <- live error checking and coloring (clangd)
 │   └── raygui_*          <- raygui and its widget styles
 ├── theme/                <- theme files (default_theme.cpp, light_theme.cpp) and their pictures
 ├── player/               <- the game runtime that exports are built from

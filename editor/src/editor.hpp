@@ -29,6 +29,7 @@
 #include "nodes.hpp"
 #include "project.hpp"
 #include "scene_tree.hpp"
+#include "script_checker.hpp"
 #include "text_editor.hpp"
 #include "theme.hpp"
 
@@ -346,6 +347,11 @@ private:
 
     CodeEditor codeEditor_;
     CompletionIndex completions_;  // autocomplete for the Script tab
+    // Live error checking and coloring of open scripts (clangd); made when the
+    // first script is opened.
+    std::unique_ptr<ScriptChecker> checker_;
+    std::map<TextDocument*, long> checkedVersion_;  // the version last given to it
+    void updateChecker();
 
     enum class MainView { View2D, Script } mainView_ = MainView::View2D;
     std::vector<std::unique_ptr<TextDocument>> docs_;

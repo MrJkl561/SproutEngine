@@ -44,6 +44,21 @@ jobs:
           if [ -f "$exe.exe" ]; then exe="$exe.exe"; fi
           "$exe" --check-scripts
 
+      # The Script tab's live checking (clangd, downloaded by the build): a good
+      # script has no errors, and a broken one is caught.
+      - name: Check live script checking
+        shell: bash
+        run: |
+          exe=build/bin/sprout_editor/sprout_editor
+          if [ -f "$exe.exe" ]; then exe="$exe.exe"; fi
+          "$exe" --check-file editor/project/scripts/player_controller.cpp
+          sed 's/float gravity = 1400;/float gravity = undefinedThing;/' editor/project/scripts/player_controller.cpp \
+            > editor/project/scripts/broken_check.cpp
+          if "$exe" --check-file editor/project/scripts/broken_check.cpp; then
+            echo "::error::the broken script wasn't caught"; exit 1
+          fi
+          rm editor/project/scripts/broken_check.cpp
+
       # Exports the editor's demo game for this runner's own platform, the way
       # the editor's Export window does, and plays the Linux one for 2 seconds.
       - name: Export the editor's demo game

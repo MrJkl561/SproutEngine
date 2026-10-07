@@ -512,6 +512,7 @@ void Editor::frame() {
     handleShortcuts();
     updateScripts();
     checkDocumentsOnDisk();
+    updateChecker();
 
     if (playTree_) {
         try {
@@ -2597,7 +2598,13 @@ TextDocument* Editor::openDocument(const fs::path& file, int line, int column) {
             return nullptr;
         }
         setDiagnostics(*fresh);
-        if (fresh->language == Language::Cpp) fresh->completer = &completions_;
+        if (fresh->language == Language::Cpp) {
+            fresh->completer = &completions_;
+            if (!checker_)
+                checker_ = std::make_unique<ScriptChecker>(ScriptChecker::Setup{
+                    SPROUT_EDITOR_CLANGD, SPROUT_EDITOR_CXX, SPROUT_EDITOR_CXX_ID, scriptsDir_, workDir_,
+                    fs::path(SPROUT_EDITOR_DIR) / "src", SPROUT_EDITOR_DEPS_DIR});
+        }
         doc = fresh.get();
         docs_.push_back(std::move(fresh));
     }
@@ -2610,6 +2617,7 @@ TextDocument* Editor::openDocument(const fs::path& file, int line, int column) {
 
 void Editor::setDiagnostics(TextDocument& doc) const {
     if (doc.language != Language::Cpp) return;  // JSON files get theirs when saving
+    if (checker_ && !checker_->engine().empty()) return;  // checked live instead
     doc.diagnostics.clear();
     std::error_code ec;
     for (const BuildMessage& m : buildMessages_)
@@ -2687,6 +2695,8 @@ void Editor::closeDocument(TextDocument* doc) {
         auto it = std::find_if(docs_.begin(), docs_.end(), [doc](auto& d) { return d.get() == doc; });
         if (it == docs_.end()) return;
         size_t index = static_cast<size_t>(it - docs_.begin());
+        if (checker_) checker_->close(doc->path);
+        checkedVersion_.erase(doc);
         docs_.erase(it);
         if (currentDoc_ == doc) currentDoc_ = docs_.empty() ? nullptr : docs_[std::min(index, docs_.size() - 1)].get();
         if (!currentDoc_) codeFocused_ = false;
@@ -2727,6 +2737,25 @@ void Editor::confirmUnsavedAll(std::function<void()> then) {
 void Editor::requestQuit() {
     if (confirm_.open || quit_) return;
     confirmUnsavedAll([this] { quit_ = true; });
+}
+
+void Editor::updateChecker() {
+    if (!checker_ || checker_->engine().empty()) return;
+    for (auto& d : docs_) {
+        if (d->language != Language::Cpp) continue;
+        auto [it, added] = checkedVersion_.try_emplace(d.get(), d->version() - 1);
+        if (it->second != d->version()) {
+            checker_->update(d->path, d->text(), d->version());
+            it->second = d->version();
+        }
+    }
+    checker_->poll(GetTime());
+    for (auto& d : docs_) {
+        ScriptChecker::Result r;
+        if (d->language != Language::Cpp || !checker_->take(d->path, r) || r.version != d->version()) continue;
+        if (r.hasDiagnostics) d->diagnostics = std::move(r.diagnostics);
+        if (r.hasTokens) d->setSemanticSpans(r.version, std::move(r.tokens));
+    }
 }
 
 void Editor::checkDocumentsOnDisk() {
@@ -3014,8 +3043,17 @@ void Editor::drawScriptView(Rectangle r) {
         drawText(text, sx, sy, errors ? kBad : kOrange);
         sx += textWidth(text) + 24;
     }
-    if (doc->language == Language::Cpp && ScriptReloader::supported() && scripts_->isBuilding())
+    if (doc->language == Language::Cpp && ScriptReloader::supported() && scripts_->isBuilding()) {
         drawText("compiling...", sx, sy, kOrange);
+        sx += textWidth("compiling...") + 24;
+    }
+    if (doc->language == Language::Cpp && checker_) {
+        std::string engine = checker_->engine();
+        std::string text = engine.empty()     ? "errors shown when saved"
+                           : checker_->busy() ? "checking (" + engine + ")..."
+                                              : "checked live (" + engine + ")";
+        drawText(text, sx, sy, kDim);
+    }
     std::error_code ec;
     std::string rel = fs::relative(doc->path, projectDir_, ec).generic_string();
     if (ec || rel.empty() || rel.rfind("..", 0) == 0) rel = doc->path.string();

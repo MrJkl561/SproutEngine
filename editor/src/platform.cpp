@@ -15,6 +15,8 @@
 #include <shobjidl.h>
 #else
 #include <dlfcn.h>
+#include <fcntl.h>
+#include <signal.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
@@ -120,6 +122,83 @@ bool openWithSystem(const std::filesystem::path& file) {
 
 bool showInFileManager(const std::filesystem::path& file) {
     return launch("explorer /select," + quoteArg(file.lexically_normal().make_preferred()));
+}
+
+namespace {
+class WinProcess : public ChildProcess {
+public:
+    HANDLE process = nullptr, in = nullptr, out = nullptr;
+    void terminate() override {
+        if (in) CloseHandle(in);  // clangd ends when its input closes
+        in = nullptr;
+        if (process && WaitForSingleObject(process, 300) == WAIT_TIMEOUT) TerminateProcess(process, 0);
+    }
+    ~WinProcess() override {
+        terminate();
+        if (out) CloseHandle(out);
+        if (process) CloseHandle(process);
+    }
+    bool write(const std::string& data) override {
+        if (!in) return false;
+        DWORD written = 0;
+        return WriteFile(in, data.data(), static_cast<DWORD>(data.size()), &written, nullptr) && written == data.size();
+    }
+    size_t read(char* buffer, size_t size) override {
+        DWORD got = 0;
+        if (!ReadFile(out, buffer, static_cast<DWORD>(size), &got, nullptr)) return 0;
+        return got;
+    }
+};
+
+std::wstring argQuote(const std::wstring& a) {
+    if (!a.empty() && a.find_first_of(L" \t\"") == std::wstring::npos) return a;
+    std::wstring out = L"\"";
+    for (size_t i = 0; i < a.size(); ++i) {
+        size_t slashes = 0;
+        while (i < a.size() && a[i] == L'\\') { ++slashes; ++i; }
+        if (i == a.size()) { out.append(slashes * 2, L'\\'); break; }
+        if (a[i] == L'"') { out.append(slashes * 2 + 1, L'\\'); out += L'"'; }
+        else { out.append(slashes, L'\\'); out += a[i]; }
+    }
+    return out + L"\"";
+}
+}  // namespace
+
+std::unique_ptr<ChildProcess> startProcess(const std::vector<std::string>& args, std::string& error) {
+    SECURITY_ATTRIBUTES sa{sizeof sa, nullptr, TRUE};
+    HANDLE inRead = nullptr, inWrite = nullptr, outRead = nullptr, outWrite = nullptr;
+    if (!CreatePipe(&inRead, &inWrite, &sa, 0) || !CreatePipe(&outRead, &outWrite, &sa, 0)) {
+        error = "couldn't make pipes";
+        return nullptr;
+    }
+    SetHandleInformation(inWrite, HANDLE_FLAG_INHERIT, 0);
+    SetHandleInformation(outRead, HANDLE_FLAG_INHERIT, 0);
+    HANDLE nul = CreateFileW(L"NUL", GENERIC_WRITE, FILE_SHARE_WRITE, &sa, OPEN_EXISTING, 0, nullptr);
+    std::wstring line;
+    for (const std::string& a : args) line += (line.empty() ? L"" : L" ") + argQuote(widen(a));
+    STARTUPINFOW si{};
+    si.cb = sizeof si;
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdInput = inRead;
+    si.hStdOutput = outWrite;
+    si.hStdError = nul;
+    PROCESS_INFORMATION pi{};
+    BOOL ok = CreateProcessW(nullptr, line.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
+    CloseHandle(inRead);
+    CloseHandle(outWrite);
+    if (nul != INVALID_HANDLE_VALUE) CloseHandle(nul);
+    if (!ok) {
+        CloseHandle(inWrite);
+        CloseHandle(outRead);
+        error = "couldn't start " + args[0];
+        return nullptr;
+    }
+    CloseHandle(pi.hThread);
+    auto p = std::make_unique<WinProcess>();
+    p->process = pi.hProcess;
+    p->in = inWrite;
+    p->out = outRead;
+    return p;
 }
 
 namespace {
@@ -251,6 +330,83 @@ bool showInFileManager(const std::filesystem::path& file) {
 #else
     return launch("xdg-open " + quoteArg(file.parent_path()));
 #endif
+}
+
+namespace {
+class PosixProcess : public ChildProcess {
+public:
+    pid_t pid = -1;
+    int in = -1, out = -1;
+    void terminate() override {
+        if (in >= 0) close(in);  // clangd ends when its input closes
+        in = -1;
+        if (pid > 0) {
+            for (int i = 0; i < 30; ++i) {  // up to 0.3 s
+                if (waitpid(pid, nullptr, WNOHANG) == pid) { pid = -1; break; }
+                usleep(10000);
+            }
+            if (pid > 0) {
+                kill(pid, SIGKILL);
+                waitpid(pid, nullptr, 0);
+                pid = -1;
+            }
+        }
+    }
+    ~PosixProcess() override {
+        terminate();
+        if (out >= 0) close(out);
+    }
+    bool write(const std::string& data) override {
+        if (in < 0) return false;
+        size_t done = 0;
+        while (done < data.size()) {
+            ssize_t n = ::write(in, data.data() + done, data.size() - done);
+            if (n <= 0) return false;
+            done += static_cast<size_t>(n);
+        }
+        return true;
+    }
+    size_t read(char* buffer, size_t size) override {
+        ssize_t n = ::read(out, buffer, size);
+        return n > 0 ? static_cast<size_t>(n) : 0;
+    }
+};
+}  // namespace
+
+std::unique_ptr<ChildProcess> startProcess(const std::vector<std::string>& args, std::string& error) {
+    int toChild[2], fromChild[2];
+    if (pipe(toChild) != 0 || pipe(fromChild) != 0) {
+        error = "couldn't make pipes";
+        return nullptr;
+    }
+    signal(SIGPIPE, SIG_IGN);  // writing to a program that ended must not end the editor
+    pid_t pid = fork();
+    if (pid < 0) {
+        error = "couldn't start " + args[0];
+        return nullptr;
+    }
+    if (pid == 0) {
+        dup2(toChild[0], 0);
+        dup2(fromChild[1], 1);
+        int null = open("/dev/null", O_WRONLY);
+        if (null >= 0) dup2(null, 2);
+        close(toChild[1]);
+        close(fromChild[0]);
+        std::vector<char*> argv;
+        for (const std::string& a : args) argv.push_back(const_cast<char*>(a.c_str()));
+        argv.push_back(nullptr);
+        execvp(argv[0], argv.data());
+        _exit(127);
+    }
+    close(toChild[0]);
+    close(fromChild[1]);
+    fcntl(toChild[1], F_SETFD, FD_CLOEXEC);
+    fcntl(fromChild[0], F_SETFD, FD_CLOEXEC);
+    auto p = std::make_unique<PosixProcess>();
+    p->pid = pid;
+    p->in = toChild[1];
+    p->out = fromChild[0];
+    return p;
 }
 
 namespace {
