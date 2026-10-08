@@ -135,6 +135,9 @@ target_include_directories(sprout_editor PRIVATE
     "${raylib_SOURCE_DIR}/src/external/glfw/include")  # GLFW, to read the display scale
 target_link_libraries(sprout_editor PRIVATE raylib_cpp nlohmann_json::nlohmann_json sprout_enet)
 
+# Visual Studio's folder, with / not \ (it goes into a C++ string, where
+# "\18" in "...\Microsoft Visual Studio\18\Community" would be a different character)
+string(REPLACE "\\" "/" _generator_instance "${CMAKE_GENERATOR_INSTANCE}")
 # The editor opens the project folder and writes new scripts straight into the
 # source tree, so "New Script" just works.
 target_compile_definitions(sprout_editor PRIVATE
@@ -151,7 +154,7 @@ target_compile_definitions(sprout_editor PRIVATE
     # use the same one; CMake on its own would pick the newest installed, even
     # one without the C++ tools)
     SPROUT_EDITOR_GENERATOR="${CMAKE_GENERATOR}"
-    SPROUT_EDITOR_GENERATOR_INSTANCE="${CMAKE_GENERATOR_INSTANCE}"
+    SPROUT_EDITOR_GENERATOR_INSTANCE="${_generator_instance}"
     # Live error checking in the Script tab: clangd, or else the compiler itself
     SPROUT_EDITOR_CLANGD="${_clangd}"
     SPROUT_EDITOR_CXX="${CMAKE_CXX_COMPILER}"
