@@ -18,6 +18,8 @@ void* loadLibrary(const std::filesystem::path& file, std::string& error);
 void freeLibrary(void* library);
 
 int processId();
+// The editor program's own file ("" if the system won't say).
+std::filesystem::path executablePath();
 
 // Runs a command line, waits for it, and returns its exit code. Everything it
 // printed (stdout and stderr) ends up in output.

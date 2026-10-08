@@ -93,6 +93,28 @@ jobs:
           esac
           "$exe" --export "$target"
 
+      # A portable copy of the editor (scripts/make-portable), used with the
+      # build folder and the editor's sources out of the way: it must find
+      # everything in its own folder.
+      - name: Test a portable editor
+        shell: bash
+        run: |
+          out="$RUNNER_TEMP/SproutEditor"
+          cmake --install build --config Release --component sprout_editor --prefix "$out"
+          exe="$out/sprout_editor"
+          if [ -f "$exe.exe" ]; then exe="$exe.exe"; fi
+          cp -r editor/templates/multiplayer "$RUNNER_TEMP/portable_test"
+          mv build build-hidden && mv editor editor-hidden
+          trap 'mv build-hidden build; mv editor-hidden editor' EXIT
+          case "$RUNNER_OS" in
+            Linux) target=linux ;;
+            Windows) target=windows ;;
+            macOS) target=macos ;;
+          esac
+          "$exe" --project "$RUNNER_TEMP/portable_test" --check-scripts
+          "$exe" --project "$RUNNER_TEMP/portable_test" --check-file "$RUNNER_TEMP/portable_test/scripts/lobby.cpp"
+          "$exe" --project "$RUNNER_TEMP/portable_test" --export "$target" "$RUNNER_TEMP/portable_export"
+
       - name: Run the exported game
         if: runner.os == 'Linux'
         run: SPROUT_TEST_FRAMES=120 timeout 60 xvfb-run -a editor/project/exports/linux/Sprout_Game

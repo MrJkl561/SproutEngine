@@ -84,6 +84,19 @@ void resetIfOtherPlatform(const fs::path& build, const std::string& platformName
     }
 }
 
+// A build folder made from the player sources in another place (the editor
+// was moved, or this is a portable copy): CMake won't reuse it, so start again.
+void resetIfMoved(const fs::path& build, const fs::path& source) {
+    std::ifstream cache(build / "CMakeCache.txt");
+    if (!cache) return;
+    std::string line, used;
+    while (std::getline(cache, line))
+        if (line.rfind("CMAKE_HOME_DIRECTORY:", 0) == 0) used = line.substr(line.find('=') + 1);
+    cache.close();
+    std::error_code ec;
+    if (!used.empty() && !fs::equivalent(used, source, ec)) fs::remove_all(build, ec);
+}
+
 #if defined(_WIN32)
 // Emscripten has no Windows ARM64 build, so emsdk is always asked for the x64 one
 // (Windows on ARM runs it through its x64 emulation; on x64 PCs it changes nothing).
@@ -548,6 +561,11 @@ bool Exporter::exportOne(State& s, const ExportTarget& t, const std::string& pro
     fs::path build = s.paths.workDir / t.id;
     fs::path stage = build / "stage" / "project";
     fs::path deps = s.paths.depsDir;
+    if (s.paths.cmake.empty()) {
+        say(s, "CMake wasn't found. Install it from https://cmake.org/download/ (tick \"Add CMake to the PATH\") "
+               "and restart the editor.", 2);
+        return false;
+    }
     std::string cmake = quote(s.paths.cmake);
     std::string host = kHost;
     fs::path ninjaPath = findNinja();
@@ -557,6 +575,7 @@ bool Exporter::exportOne(State& s, const ExportTarget& t, const std::string& pro
     // 1. Configure (only slow the first time: it builds raylib for that platform)
     std::string configure;
     if (t.id == "web") configure = web.env + quote(web.emcmake) + " ";
+    resetIfMoved(build, s.paths.editorDir / "player");
     configure += cmake + " -S " + quote(s.paths.editorDir / "player") + " -B " + quote(build);
     bool native = t.id == host || (host == "windows" && isWindowsTarget(t.id));
     bool visualStudio = native && host == "windows" && usesVisualStudio();

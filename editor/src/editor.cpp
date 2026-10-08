@@ -17,6 +17,7 @@
 #include <rlgl.h>
 
 #include "assets.hpp"
+#include "editor_paths.hpp"
 #include "raygui_include.hpp"
 #include "export.hpp"
 #include "ide_files.hpp"
@@ -111,9 +112,8 @@ std::string pascalWords(const std::string& text) {
 // ide_files.hpp). Returns what went wrong, if anything.
 std::string refreshIdeFiles(const fs::path& project) {
     std::string error;
-    writeIdeFiles({project, fs::path(SPROUT_EDITOR_DIR) / "src", SPROUT_EDITOR_DEPS_DIR, SPROUT_EDITOR_CXX,
-                   SPROUT_EDITOR_CXX_ID, SPROUT_EDITOR_CLANGD},
-                  error);
+    const EditorPaths& paths = editorPaths();
+    writeIdeFiles({project, paths.srcDir, paths.depsDir, paths.cxx, paths.cxxId, paths.clangd}, error);
     return error;
 }
 
@@ -389,13 +389,13 @@ struct ClipLock {
 // ===========================================================================
 Editor::Editor(fs::path projectDir)
     : projectDir_(std::move(projectDir)), scriptsDir_(projectDir_ / "scripts"),
-      workDir_(projects::workDir(projectDir_, SPROUT_EDITOR_BUILD_DIR)) {
+      workDir_(projects::workDir(projectDir_, editorPaths().buildDir)) {
     Assets::setProjectDir(projectDir_);
     loadTheme();
     loadEditorStyle();
     loadLayout();
     codeEditor_ = loadCodeEditor();
-    completions_.setFolders(fs::path(SPROUT_EDITOR_DIR) / "src", SPROUT_EDITOR_DEPS_DIR, scriptsDir_);
+    completions_.setFolders(editorPaths().srcDir, editorPaths().depsDir, scriptsDir_);
     setUiScale(systemUiScale());
     setPrintHandler([this](const std::string& msg) { log(msg, theme().colors.scriptPrint); });
 
@@ -422,8 +422,8 @@ Editor::Editor(fs::path projectDir)
     }
     editTree_.gameSize = raylib::Vector2{static_cast<float>(settings_.width), static_cast<float>(settings_.height)};
     exporter_ = std::make_unique<Exporter>(Exporter::Paths{
-        SPROUT_EDITOR_DIR, projectDir_, scriptsDir_, workDir_ / "exports",
-        SPROUT_EDITOR_DEPS_DIR, SPROUT_EDITOR_CMAKE, SPROUT_EDITOR_GENERATOR, SPROUT_EDITOR_GENERATOR_INSTANCE});
+        editorPaths().editorDir, projectDir_, scriptsDir_, workDir_ / "exports", editorPaths().depsDir,
+        editorPaths().cmake.string(), editorPaths().generator, editorPaths().generatorInstance});
     scenePath_ = settings_.mainScene;
     if (!openScene(scenePath_)) newScene();
     undoStack_.clear();
@@ -681,9 +681,7 @@ void Editor::setUiScale(float scale) {
     Font old = uiFont_;
     uiFont_ = Font{};
     std::string fontFile = themePath(theme().font);
-#if defined(SPROUT_EDITOR_FONT)
-    if (fontFile.empty()) fontFile = SPROUT_EDITOR_FONT;
-#endif
+    if (fontFile.empty()) fontFile = editorPaths().font.string();
     if (!fontFile.empty() && FileExists(fontFile.c_str())) {
         uiFont_ = LoadFontEx(fontFile.c_str(), static_cast<int>(std::lround(theme().fontSize * scale)), nullptr, 0);
         if (uiFont_.texture.id != 0) {
@@ -2715,8 +2713,8 @@ TextDocument* Editor::openDocument(const fs::path& file, int line, int column) {
             fresh->completer = &completions_;
             if (!checker_)
                 checker_ = std::make_unique<ScriptChecker>(ScriptChecker::Setup{
-                    SPROUT_EDITOR_CLANGD, SPROUT_EDITOR_CXX, SPROUT_EDITOR_CXX_ID, scriptsDir_, workDir_,
-                    fs::path(SPROUT_EDITOR_DIR) / "src", SPROUT_EDITOR_DEPS_DIR});
+                    editorPaths().clangd, editorPaths().cxx, editorPaths().cxxId, scriptsDir_, workDir_,
+                    editorPaths().srcDir, editorPaths().depsDir});
         }
         doc = fresh.get();
         docs_.push_back(std::move(fresh));
@@ -3228,7 +3226,7 @@ void Editor::openProjectManager() {
         if (projects_.list[i] == current) projects_.selected = static_cast<int>(i);
     std::snprintf(projects_.location, sizeof projects_.location, "%s",
                   projects::defaultProjectsFolder().string().c_str());
-    projects_.templates = projects::projectTemplates(SPROUT_EDITOR_DIR);
+    projects_.templates = projects::projectTemplates(editorPaths().editorDir);
 }
 
 void Editor::switchProject(const fs::path& project) {
@@ -4434,12 +4432,7 @@ void Editor::drawRunInstancesDialog() {
 
 void Editor::startInstances(const std::string& scene) {
     stopInstances();
-    fs::path exe = fs::path(GetApplicationDirectory()) /
-#if defined(_WIN32)
-                   "sprout_editor.exe";
-#else
-                   "sprout_editor";
-#endif
+    fs::path exe = platform::executablePath();
     if (!fs::exists(exe)) {
         log("Can't start the other copies: " + exe.string() + " is missing.", kBad);
         return;

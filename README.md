@@ -176,6 +176,7 @@ folder:
 | Build everything | `scripts\build.bat` | `scripts/build.sh` |
 | A Debug build | `scripts\build.bat debug` | `scripts/build.sh debug` |
 | Build and open the editor | `scripts\run-editor.bat` | `scripts/run-editor.sh` |
+| A [portable editor](editor/README.md#moving-the-editor-or-a-portable-copy) (one folder to put anywhere) | `scripts\make-portable.bat [folder]` | `scripts/make-portable.sh [folder]` |
 | Run the unit tests | `scripts\test.bat` | `scripts/test.sh` |
 | Test the editor's multiplayer | `scripts\test-multiplayer.bat` | `scripts/test-multiplayer.sh` |
 | Test the editor's signals | `scripts\test-signals.bat` | `scripts/test-signals.sh` |
@@ -378,7 +379,7 @@ Cpp-Game-engine-/
 │   ├── tests/          <- the editor's tests (multiplayer, signals)
 │   └── project/        <- the editor's demo project
 ├── docs/               <- the documentation (docs/editor/ for the editor)
-├── scripts/            <- build, run-editor, test, export, setup-web, test-signals and test-multiplayer scripts
+├── scripts/            <- build, run-editor, make-portable, test, export, setup-web, test-signals and test-multiplayer scripts
 ├── tests/              <- the engine's unit tests
 ├── cmake/              <- build helpers (downloads libraries, sprout_add_game, ENet for the editor)
 └── CMakeLists.txt      <- the main build file (you normally don't need to touch it)

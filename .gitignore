@@ -17,3 +17,6 @@ screenshot*.png
 # Games exported from the editor
 editor/exports/
 editor/project/exports/
+
+# Portable copies of the editor (scripts/make-portable)
+dist/

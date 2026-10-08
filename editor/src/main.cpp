@@ -27,6 +27,7 @@
 
 #include "editor.hpp"
 #include "export.hpp"
+#include "editor_paths.hpp"
 #include "game_runner.hpp"
 #include "hot_reload.hpp"
 #include "project.hpp"
@@ -37,9 +38,6 @@
 #include "theme.hpp"
 #include "ui_scale.hpp"
 
-#ifndef SPROUT_EDITOR_PROJECT_DIR
-#define SPROUT_EDITOR_PROJECT_DIR "project"
-#endif
 
 namespace fs = std::filesystem;
 
@@ -49,7 +47,7 @@ namespace {
 // build uses one) and makes one of each, without a window. Proves the library
 // builds, loads and links on this system.
 int checkScripts(const fs::path& project) {
-    s2d::ScriptReloader reloader(project / "scripts", s2d::projects::workDir(project, SPROUT_EDITOR_BUILD_DIR) / "scripts");
+    s2d::ScriptReloader reloader(project / "scripts", s2d::projects::workDir(project, s2d::editorPaths().buildDir) / "scripts");
     if (s2d::ScriptReloader::supported()) {
         std::string output;
         if (!reloader.buildNow(output)) {
@@ -79,7 +77,7 @@ int checkScripts(const fs::path& project) {
 // Runs the project as a game, with its scripts (building them first if they
 // changed and this is a hot reloading build).
 int playGame(const fs::path& project, std::vector<std::string> gameArgs) {
-    s2d::ScriptReloader reloader(project / "scripts", s2d::projects::workDir(project, SPROUT_EDITOR_BUILD_DIR) / "scripts");
+    s2d::ScriptReloader reloader(project / "scripts", s2d::projects::workDir(project, s2d::editorPaths().buildDir) / "scripts");
     if (s2d::ScriptReloader::supported()) {
         std::string output, error;
         // (--no-build: the editor started us and builds the scripts itself)
@@ -110,9 +108,9 @@ int checkFile(const fs::path& project, const fs::path& file) {
     }
     std::stringstream text;
     text << in.rdbuf();
-    s2d::ScriptChecker checker({SPROUT_EDITOR_CLANGD, SPROUT_EDITOR_CXX, SPROUT_EDITOR_CXX_ID, project / "scripts",
-                                s2d::projects::workDir(project, SPROUT_EDITOR_BUILD_DIR), fs::path(SPROUT_EDITOR_DIR) / "src",
-                                SPROUT_EDITOR_DEPS_DIR});
+    const s2d::EditorPaths& paths = s2d::editorPaths();
+    s2d::ScriptChecker checker({paths.clangd, paths.cxx, paths.cxxId, project / "scripts",
+                                s2d::projects::workDir(project, s2d::editorPaths().buildDir), paths.srcDir, paths.depsDir});
     if (checker.engine().empty()) {
         std::printf("Nothing to check with (no clangd, and the compiler can't be used).\n");
         return 2;
@@ -159,9 +157,10 @@ int checkFile(const fs::path& project, const fs::path& file) {
 // every platform worked.
 int exportGame(const fs::path& project, const std::string& targets, const std::string& outDir) {
     s2d::ProjectSettings settings = s2d::ProjectSettings::load(project);
-    s2d::Exporter exporter({SPROUT_EDITOR_DIR, project, project / "scripts",
-                            s2d::projects::workDir(project, SPROUT_EDITOR_BUILD_DIR) / "exports",
-                            SPROUT_EDITOR_DEPS_DIR, SPROUT_EDITOR_CMAKE, SPROUT_EDITOR_GENERATOR, SPROUT_EDITOR_GENERATOR_INSTANCE});
+    const s2d::EditorPaths& paths = s2d::editorPaths();
+    s2d::Exporter exporter({paths.editorDir, project, project / "scripts",
+                            s2d::projects::workDir(project, s2d::editorPaths().buildDir) / "exports",
+                            paths.depsDir, paths.cmake.string(), paths.generator, paths.generatorInstance});
     std::vector<std::string> ids;
     for (size_t start = 0; start <= targets.size();) {
         size_t comma = targets.find(',', start);
@@ -194,7 +193,7 @@ fs::path startupProject(const std::string& fromCommandLine) {
     if (!fromCommandLine.empty()) return fromCommandLine;
     s2d::projects::Recent recent = s2d::projects::loadRecent();
     if (!recent.last.empty() && s2d::projects::isProject(recent.last)) return recent.last;
-    if (s2d::projects::isProject(SPROUT_EDITOR_PROJECT_DIR)) return SPROUT_EDITOR_PROJECT_DIR;
+    if (s2d::projects::isProject(s2d::editorPaths().demoProject)) return s2d::editorPaths().demoProject;
     fs::path fresh = s2d::projects::defaultProjectsFolder() / "My Game";
     std::string error;
     if (!s2d::projects::isProject(fresh)) s2d::projects::createProject(fresh, "My Game", error);
@@ -230,11 +229,11 @@ int main(int argc, char** argv) {
     }
     // The command-line tools use the demo project unless told otherwise.
     if (!checkFileArg.empty())
-        return checkFile(projectArg.empty() ? fs::path(SPROUT_EDITOR_PROJECT_DIR) : fs::path(projectArg), checkFileArg);
-    if (playing) return playGame(projectArg.empty() ? fs::path(SPROUT_EDITOR_PROJECT_DIR) : fs::path(projectArg), gameArgs);
-    if (check) return checkScripts(projectArg.empty() ? fs::path(SPROUT_EDITOR_PROJECT_DIR) : fs::path(projectArg));
+        return checkFile(projectArg.empty() ? s2d::editorPaths().demoProject : fs::path(projectArg), checkFileArg);
+    if (playing) return playGame(projectArg.empty() ? s2d::editorPaths().demoProject : fs::path(projectArg), gameArgs);
+    if (check) return checkScripts(projectArg.empty() ? s2d::editorPaths().demoProject : fs::path(projectArg));
     if (exporting)
-        return exportGame(projectArg.empty() ? fs::path(SPROUT_EDITOR_PROJECT_DIR) : fs::path(projectArg), exportTargets,
+        return exportGame(projectArg.empty() ? s2d::editorPaths().demoProject : fs::path(projectArg), exportTargets,
                           exportOut);
     fs::path project = startupProject(projectArg);
 

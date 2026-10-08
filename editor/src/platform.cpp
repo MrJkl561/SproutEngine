@@ -19,6 +19,9 @@
 #include <signal.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#endif
 #endif
 
 namespace s2d::platform {
@@ -44,6 +47,16 @@ void freeLibrary(void* library) {
 }
 
 int processId() { return static_cast<int>(GetCurrentProcessId()); }
+
+std::filesystem::path executablePath() {
+    std::wstring buffer(MAX_PATH, L'\0');
+    for (;;) {
+        DWORD n = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+        if (n == 0) return {};
+        if (n < buffer.size()) return std::filesystem::path(buffer.substr(0, n));
+        buffer.resize(buffer.size() * 2);
+    }
+}
 
 bool canPickFolder() { return true; }
 
@@ -226,6 +239,21 @@ void freeLibrary(void* library) {
 }
 
 int processId() { return static_cast<int>(getpid()); }
+
+std::filesystem::path executablePath() {
+    std::error_code ec;
+#if defined(__APPLE__)
+    uint32_t size = 0;
+    _NSGetExecutablePath(nullptr, &size);
+    std::string buffer(size, '\0');
+    if (_NSGetExecutablePath(buffer.data(), &size) != 0) return {};
+    std::filesystem::path p = std::filesystem::weakly_canonical(buffer.c_str(), ec);
+    return ec ? std::filesystem::path(buffer.c_str()) : p;
+#else
+    std::filesystem::path p = std::filesystem::read_symlink("/proc/self/exe", ec);
+    return ec ? std::filesystem::path() : p;
+#endif
+}
 
 namespace {
 

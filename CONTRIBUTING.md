@@ -209,6 +209,12 @@ Things worth knowing:
   `.cpp` that games need at run time (nodes, scenes, scripts, signals,
   multiplayer...) must be added to `editor/player/CMakeLists.txt` too, or
   exports fail to link. Check with an export (below).
+- **Don't use build-time paths directly.** Where the editor's sources, the
+  libraries, CMake and the theme are comes from `editorPaths()`
+  (`editor_paths.hpp`), which also finds them in a portable copy or a moved
+  Sprout folder. A new folder the editor needs at run time also needs an
+  `install(...)` line at the end of `editor/CMakeLists.txt`, or portable
+  copies (`scripts/make-portable.sh`) won't have it.
 - **Scripts are a separate library** loaded by the editor (hot reloading).
   Whatever they call must be defined in the editor's `.cpp` files, not
   `inline` in a header with its own static state (a script library would get a

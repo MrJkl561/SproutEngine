@@ -76,6 +76,47 @@ collect the coins, then walk into the door to reach level 2. Press **Stop** (F8
 or Esc) to go back to editing. Its scripts (in `editor/project/scripts/`) are
 good examples to read.
 
+### Moving the editor, or a portable copy
+
+The editor you build stays connected to the Sprout folder: it compiles your
+scripts against the editor's sources and the libraries in there. If you **move
+the whole Sprout folder**, it still works (it finds everything again from where
+the program is now), no rebuilding needed. Don't copy `sprout_editor.exe` out
+of the build folder on its own, though: it needs the rest.
+
+To have an editor you can put anywhere (another drive, a USB stick, another
+computer), make a **portable copy**: one folder with the program and
+everything it needs.
+
+| Windows | macOS / Linux |
+|---|---|
+| `scripts\make-portable.bat [folder]` | `scripts/make-portable.sh [folder]` |
+
+It builds the editor and fills `dist/SproutEditor/` (or the folder you give
+it) with:
+
+```
+SproutEditor/
+├── sprout_editor(.exe)   <- start this (Windows: plus sprout_editor.lib, which scripts link to)
+├── editor/               <- the editor's sources, templates, demo project, theme
+├── cmake/, deps/         <- the libraries (raylib, raylib-cpp, raygui, json, ENet) and clangd
+├── README.txt
+└── LICENSE
+```
+
+About 180 MB. Move or copy that folder wherever you like, as long as its
+contents stay together. Your projects aren't stored in it, and each project's
+builds go in your user cache folder (`%LOCALAPPDATA%\SproutEditor` on Windows,
+`~/Library/Caches/SproutEditor` on macOS, `~/.cache/sprout-editor` on Linux), so
+it can even be read-only.
+
+The editor compiles your C++ scripts while it runs, so the computer it runs on
+needs the same tools that built it: on Windows, Visual Studio with "Desktop
+development with C++" and CMake (Visual Studio's own copy of CMake is found
+too); on macOS, Xcode's command line tools and CMake; on Linux, g++ and CMake.
+It also has to be the same kind of computer (an editor built on Windows x64
+runs on Windows x64). Games you export don't need any of this.
+
 ## Projects
 
 Each game is its own project folder:
@@ -823,6 +864,7 @@ editor/
 │   ├── autocomplete.*    <- its suggestions (reads the engine and raylib headers)
 │   ├── script_checker.*  <- live error checking and coloring (clangd)
 │   ├── platform.*        <- operating system calls: libraries, programs, folder windows
+│   ├── editor_paths.*    <- finds the editor's own files (also when moved or portable)
 │   ├── ui_scale.*        <- the editor's UI size (display scaling)
 │   └── raygui_*          <- raygui and its widget styles
 ├── theme/                <- theme files (default_theme.cpp, light_theme.cpp) and their pictures

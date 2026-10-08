@@ -3,12 +3,14 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
 #include <set>
 #include <chrono>
 #include <mutex>
 #include <system_error>
 #include <vector>
 
+#include "editor_paths.hpp"
 #include "platform.hpp"
 #include "script.hpp"
 
@@ -60,18 +62,31 @@ fs::path ScriptReloader::libraryPath() const {
 
 bool ScriptReloader::runBuild(const fs::path& scriptsDir, const fs::path& workDir, std::string& output) {
     auto q = [](const fs::path& p) { return "\"" + p.generic_string() + "\""; };
-    std::string cmake = q(SPROUT_EDITOR_CMAKE);
+    const EditorPaths& paths = editorPaths();
+    if (paths.cmake.empty()) {
+        output += "CMake wasn't found, so the scripts can't be built. Install it from https://cmake.org/download/\n"
+                  "(tick \"Add CMake to the PATH\") and restart the editor.\n";
+        return false;
+    }
+    std::string cmake = q(paths.cmake);
     std::error_code ec;
+    // What the build folder is set up with: the editor's files. If they've
+    // moved since (a portable copy, a moved Sprout folder), set it up again.
+    std::string common = cmake + " -S " + q(paths.editorDir / "scripts_module") + " -B " + q(workDir);
+    std::string settings = std::string(" -DCMAKE_BUILD_TYPE=") + SPROUT_EDITOR_BUILD_CONFIG;
+    settings += " -DSPROUT_SCRIPTS_DIR=" + q(scriptsDir);
+    settings += " -DSPROUT_EDITOR_SRC=" + q(paths.srcDir);
+    settings += " -DSPROUT_DEPS_DIR=" + q(paths.depsDir);
+    if (!paths.implib.empty()) settings += " -DSPROUT_EDITOR_IMPLIB=" + q(paths.implib);
+    const fs::path stampFile = workDir / "sprout_setup.txt";
+    std::string stamp = common + settings, oldStamp;
+    {
+        std::ifstream in(stampFile);
+        std::getline(in, oldStamp);
+    }
+    if (oldStamp != stamp) fs::remove(workDir / "CMakeCache.txt", ec);
     if (!fs::exists(workDir / "CMakeCache.txt", ec)) {
         // First time for this project: set up its build folder.
-        std::string common = cmake + " -S " + q(fs::path(SPROUT_EDITOR_DIR) / "scripts_module") + " -B " + q(workDir);
-        std::string settings = std::string(" -DCMAKE_BUILD_TYPE=") + SPROUT_EDITOR_BUILD_CONFIG;
-        settings += " -DSPROUT_SCRIPTS_DIR=" + q(scriptsDir);
-        settings += " -DSPROUT_EDITOR_SRC=" + q(fs::path(SPROUT_EDITOR_DIR) / "src");
-        settings += " -DSPROUT_DEPS_DIR=" + q(SPROUT_EDITOR_DEPS_DIR);
-#if defined(SPROUT_EDITOR_IMPLIB)
-        settings += " -DSPROUT_EDITOR_IMPLIB=" + q(SPROUT_EDITOR_IMPLIB);
-#endif
         // The ways to try, best first: if one fails (say the Visual Studio that
         // built the editor has moved or been updated), the next one gets a go.
         std::vector<std::string> generators;
@@ -89,8 +104,8 @@ bool ScriptReloader::runBuild(const fs::path& scriptsDir, const fs::path& workDi
 #else
         const std::string arch;
 #endif
-        const std::string editorGenerator = SPROUT_EDITOR_GENERATOR;
-        const std::string instance = SPROUT_EDITOR_GENERATOR_INSTANCE;
+        const std::string& editorGenerator = paths.generator;
+        const std::string& instance = paths.generatorInstance;
         const char* env = std::getenv("CMAKE_GENERATOR");
         bool envIsVs = !env || std::string(env).find("Visual Studio") != std::string::npos;
         if (editorGenerator.find("Visual Studio") != std::string::npos) {
@@ -120,6 +135,7 @@ bool ScriptReloader::runBuild(const fs::path& scriptsDir, const fs::path& workDi
             fs::remove(workDir / "CMakeCache.txt", ec);  // try setting it up again next time
             return false;
         }
+        std::ofstream(stampFile) << stamp << '\n';
     }
     // The same build type as the editor (on Windows the two must match).
     std::string build = cmake + " --build " + q(workDir) + " --config " + SPROUT_EDITOR_BUILD_CONFIG;
