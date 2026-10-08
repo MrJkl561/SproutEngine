@@ -3861,9 +3861,17 @@ void Editor::updateScripts() {
         std::stringstream ss(output);
         std::string line;
         int shown = 0, context = 0;
+        bool inCmakeError = false;  // CMake's own errors go on for several lines, all needed
         while (std::getline(ss, line) && shown < 40) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
             bool isError = line.find("error") != std::string::npos || line.find("Error") != std::string::npos;
-            if (isError) context = 3;
+            if (line.rfind("CMake Error", 0) == 0) inCmakeError = true;
+            else if (line.rfind("-- ", 0) == 0 || line.rfind("CMake ", 0) == 0) inCmakeError = false;
+            if (inCmakeError) {
+                if (line.find_first_not_of(" \t") == std::string::npos) continue;  // its blank lines
+                context = std::max(context, 1);
+            }
+            if (isError) context = std::max(context, 3);
             if (context > 0) {
                 log("  " + line, isError ? kBad : kDim);
                 --context;

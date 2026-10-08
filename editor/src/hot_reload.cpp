@@ -7,6 +7,7 @@
 #include <chrono>
 #include <mutex>
 #include <system_error>
+#include <vector>
 
 #include "platform.hpp"
 #include "script.hpp"
@@ -62,40 +63,60 @@ bool ScriptReloader::runBuild(const fs::path& scriptsDir, const fs::path& workDi
     std::string cmake = q(SPROUT_EDITOR_CMAKE);
     std::error_code ec;
     if (!fs::exists(workDir / "CMakeCache.txt", ec)) {
-        std::string cmd;
         // First time for this project: set up its build folder.
-        cmd = cmake + " -S " + q(fs::path(SPROUT_EDITOR_DIR) / "scripts_module") + " -B " + q(workDir);
+        std::string common = cmake + " -S " + q(fs::path(SPROUT_EDITOR_DIR) / "scripts_module") + " -B " + q(workDir);
+        std::string settings = std::string(" -DCMAKE_BUILD_TYPE=") + SPROUT_EDITOR_BUILD_CONFIG;
+        settings += " -DSPROUT_SCRIPTS_DIR=" + q(scriptsDir);
+        settings += " -DSPROUT_EDITOR_SRC=" + q(fs::path(SPROUT_EDITOR_DIR) / "src");
+        settings += " -DSPROUT_DEPS_DIR=" + q(SPROUT_EDITOR_DEPS_DIR);
+#if defined(SPROUT_EDITOR_IMPLIB)
+        settings += " -DSPROUT_EDITOR_IMPLIB=" + q(SPROUT_EDITOR_IMPLIB);
+#endif
+        // The ways to try, best first: if one fails (say the Visual Studio that
+        // built the editor has moved or been updated), the next one gets a go.
+        std::vector<std::string> generators;
 #if !defined(_WIN32)
-        if (!platform::findProgram("ninja").empty()) cmd += " -G Ninja";
+        generators.push_back(platform::findProgram("ninja").empty() ? "" : " -G Ninja");
 #elif defined(_MSC_VER)
         // The DLL has to be built for the editor's own CPU (x64 or ARM64), not
         // whatever Visual Studio would pick for this PC.
+#if defined(_M_ARM64)
+        const std::string arch = " -A ARM64";
+#elif defined(_M_X64)
+        const std::string arch = " -A x64";
+#elif defined(_M_IX86)
+        const std::string arch = " -A Win32";
+#else
+        const std::string arch;
+#endif
         const std::string editorGenerator = SPROUT_EDITOR_GENERATOR;
         const std::string instance = SPROUT_EDITOR_GENERATOR_INSTANCE;
+        const char* env = std::getenv("CMAKE_GENERATOR");
+        bool envIsVs = !env || std::string(env).find("Visual Studio") != std::string::npos;
         if (editorGenerator.find("Visual Studio") != std::string::npos) {
-            cmd += " -G \"" + editorGenerator + "\"";
-            if (!instance.empty()) cmd += " \"-DCMAKE_GENERATOR_INSTANCE=" + instance + "\"";
+            if (!instance.empty())
+                generators.push_back(" -G \"" + editorGenerator + "\"" + arch + " \"-DCMAKE_GENERATOR_INSTANCE=" + instance + "\"");
+            generators.push_back(" -G \"" + editorGenerator + "\"" + arch);
         }
-        const char* generator = std::getenv("CMAKE_GENERATOR");
-        if (editorGenerator.find("Visual Studio") != std::string::npos ||
-            !generator || std::string(generator).find("Visual Studio") != std::string::npos) {
-#if defined(_M_ARM64)
-            cmd += " -A ARM64";
-#elif defined(_M_X64)
-            cmd += " -A x64";
-#elif defined(_M_IX86)
-            cmd += " -A Win32";
+        generators.push_back(envIsVs ? arch : "");  // whatever CMake picks
+#else
+        generators.push_back("");
 #endif
+        bool configured = false;
+        std::string attempts;
+        for (const std::string& generator : generators) {
+            // A half-made build folder from a failed try would stop the next one
+            fs::remove(workDir / "CMakeCache.txt", ec);
+            fs::remove_all(workDir / "CMakeFiles", ec);
+            std::string out;
+            if (platform::runCommand(common + generator + settings, out) == 0) {
+                configured = true;
+                break;
+            }
+            attempts += out;
         }
-#endif
-        cmd += std::string(" -DCMAKE_BUILD_TYPE=") + SPROUT_EDITOR_BUILD_CONFIG;
-        cmd += " -DSPROUT_SCRIPTS_DIR=" + q(scriptsDir);
-        cmd += " -DSPROUT_EDITOR_SRC=" + q(fs::path(SPROUT_EDITOR_DIR) / "src");
-        cmd += " -DSPROUT_DEPS_DIR=" + q(SPROUT_EDITOR_DEPS_DIR);
-#if defined(SPROUT_EDITOR_IMPLIB)
-        cmd += " -DSPROUT_EDITOR_IMPLIB=" + q(SPROUT_EDITOR_IMPLIB);
-#endif
-        if (platform::runCommand(cmd, output) != 0) {
+        if (!configured) {
+            output += attempts;
             fs::remove(workDir / "CMakeCache.txt", ec);  // try setting it up again next time
             return false;
         }
