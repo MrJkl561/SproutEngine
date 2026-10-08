@@ -36,7 +36,7 @@ tests/                      doctest unit tests (built with -DSPROUT_BUILD_TESTS=
 editor/                     the Sprout Editor (separate from the engine; see below)
 scripts/                    build, run-editor, test, export, setup-web, test-signals, test-multiplayer
 docs/                       the beginner documentation (docs/editor/ for the editor)
-.github/workflows/build.yml CI: builds and tests on Windows, macOS and Linux
+.github/workflows/build.yml CI: builds and tests on Windows, macOS and Linux (run by hand)
 ```
 
 A few things worth knowing about the engine's insides:
@@ -241,7 +241,8 @@ build/bin/sprout_editor/sprout_editor --project editor/project --play --headless
 window). `SPROUT_TEST_FRAMES=120` makes the editor itself quit after 120 frames,
 and with it `SPROUT_EDITOR_SCREENSHOT=out.png` saves the last frame (use `xvfb-run` on
 Linux without a display). CI runs all of the above on every OS (see
-`.github/workflows/build.yml`). When you change what the editor can do, update
+`.github/workflows/build.yml`). It only runs when started by hand: on GitHub,
+**Actions** > **Build** > **Run workflow**. When you change what the editor can do, update
 [editor/README.md](editor/README.md) and, for multiplayer,
 [docs/editor/multiplayer.md](docs/editor/multiplayer.md).
 

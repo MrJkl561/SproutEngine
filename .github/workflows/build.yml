@@ -1,10 +1,9 @@
-# Builds Sprout, its examples and tests on Windows, macOS and Linux for every push,
-# runs the unit tests everywhere, and runs every game for 2 seconds on Linux.
+# Builds Sprout, its examples and tests on Windows, macOS and Linux, runs the
+# unit tests everywhere, and runs every game for 2 seconds on Linux.
+# Only when started by hand: GitHub > Actions > Build > Run workflow.
 name: Build
 
 on:
-  push:
-  pull_request:
   workflow_dispatch:
 
 jobs:
