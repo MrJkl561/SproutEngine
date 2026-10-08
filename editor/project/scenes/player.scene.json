@@ -1,0 +1,65 @@
+{
+  "format": "sprout-editor-scene",
+  "version": 1,
+  "root": {
+    "type": "CharacterBody2D",
+    "name": "Player",
+    "script": "PlayerController",
+    "properties": {
+      "position": [
+        0,
+        0
+      ]
+    },
+    "children": [
+      {
+        "type": "AnimatedSprite2D",
+        "name": "Sprite",
+        "properties": {
+          "texture": "assets/player_sheet.png",
+          "hframes": 8,
+          "animation": "idle",
+          "autoplay": true,
+          "animations": [
+            {
+              "name": "idle",
+              "frames": "0, 0, 0, 0, 0, 0, 0, 1",
+              "fps": 6,
+              "loop": true
+            },
+            {
+              "name": "run",
+              "frames": "2-5",
+              "fps": 10,
+              "loop": true
+            },
+            {
+              "name": "jump",
+              "frames": "6",
+              "fps": 1,
+              "loop": false
+            },
+            {
+              "name": "fall",
+              "frames": "7",
+              "fps": 1,
+              "loop": false
+            }
+          ]
+        },
+        "children": []
+      },
+      {
+        "type": "CollisionShape2D",
+        "name": "CollisionShape2D",
+        "properties": {
+          "size": [
+            32,
+            48
+          ]
+        },
+        "children": []
+      }
+    ]
+  }
+}

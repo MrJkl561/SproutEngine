@@ -1,0 +1,14 @@
+{
+  "format": "sprout-editor-scene",
+  "version": 1,
+  "root": {
+    "type": "Node2D",
+    "name": "Player",
+    "script": "TestMover",
+    "properties": {},
+    "children": [
+      {"type": "MultiplayerSynchronizer", "name": "MultiplayerSynchronizer",
+       "properties": {"properties": "position, :score"}, "children": []}
+    ]
+  }
+}

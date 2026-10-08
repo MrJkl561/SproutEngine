@@ -1,0 +1,14 @@
+{
+  "name": "Multiplayer Game",
+  "main_scene": "scenes/main.scene.json",
+  "width": 800,
+  "height": 450,
+  "export_targets": [],
+  "run_instances": {
+    "count": 2,
+    "args": [
+      "--host",
+      "--join 127.0.0.1"
+    ]
+  }
+}

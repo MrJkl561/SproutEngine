@@ -1,0 +1,14 @@
+{
+  "format": "sprout-editor-scene",
+  "version": 1,
+  "root": {
+    "type": "Node2D",
+    "name": "Main",
+    "script": "NetTest",
+    "properties": {},
+    "children": [
+      {"type": "Node2D", "name": "Players", "properties": {}, "children": []},
+      {"type": "MultiplayerSpawner", "name": "MultiplayerSpawner", "properties": {"spawn_path": "../Players"}, "children": []}
+    ]
+  }
+}

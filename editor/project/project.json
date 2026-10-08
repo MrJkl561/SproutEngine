@@ -1,0 +1,10 @@
+{
+  "export_targets": [
+    "linux",
+    "windows"
+  ],
+  "height": 450,
+  "main_scene": "scenes/main.scene.json",
+  "name": "Sprout Game",
+  "width": 800
+}

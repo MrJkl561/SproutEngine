@@ -1,0 +1,145 @@
+{
+  "format": "sprout-editor-scene",
+  "version": 1,
+  "root": {
+    "type": "Node2D",
+    "name": "Main",
+    "script": "SignalTest",
+    "properties": {},
+    "children": [
+      {
+        "type": "Area2D",
+        "name": "Area",
+        "properties": {
+          "position": [
+            200,
+            100
+          ]
+        },
+        "children": [
+          {
+            "type": "CollisionShape2D",
+            "name": "CollisionShape2D",
+            "properties": {
+              "size": [
+                40,
+                40
+              ]
+            },
+            "children": []
+          }
+        ],
+        "connections": [
+          {
+            "signal": "body_entered",
+            "target": "..",
+            "method": "onAreaBody"
+          }
+        ]
+      },
+      {
+        "type": "CharacterBody2D",
+        "name": "Body",
+        "script": "Walker",
+        "properties": {
+          "position": [
+            0,
+            100
+          ]
+        },
+        "children": [
+          {
+            "type": "CollisionShape2D",
+            "name": "CollisionShape2D",
+            "properties": {
+              "size": [
+                20,
+                20
+              ]
+            },
+            "children": []
+          }
+        ]
+      },
+      {
+        "type": "CharacterBody2D",
+        "name": "Body2",
+        "properties": {
+          "position": [
+            200,
+            100
+          ]
+        },
+        "children": [
+          {
+            "type": "CollisionShape2D",
+            "name": "CollisionShape2D",
+            "properties": {
+              "size": [
+                20,
+                20
+              ]
+            },
+            "children": []
+          }
+        ]
+      },
+      {
+        "type": "Timer",
+        "name": "Tick",
+        "properties": {
+          "wait_time": 0.1,
+          "autostart": true
+        },
+        "children": [],
+        "connections": [
+          {
+            "signal": "timeout",
+            "target": "..",
+            "method": "onTickFromEditor"
+          },
+          {
+            "signal": "timeout",
+            "target": "..",
+            "method": "onTickOnce",
+            "one_shot": true
+          }
+        ]
+      },
+      {
+        "type": "Timer",
+        "name": "Once",
+        "properties": {
+          "wait_time": 0.2,
+          "one_shot": true,
+          "autostart": true
+        },
+        "children": []
+      },
+      {
+        "type": "AnimatedSprite2D",
+        "name": "Anim",
+        "properties": {
+          "animations": [
+            {
+              "name": "go",
+              "frames": "0-2",
+              "fps": 30,
+              "loop": false
+            }
+          ],
+          "animation": "go",
+          "autoplay": true
+        },
+        "children": []
+      },
+      {
+        "type": "Node",
+        "name": "Listener",
+        "script": "Listener",
+        "properties": {},
+        "children": []
+      }
+    ]
+  }
+}

@@ -1,0 +1,239 @@
+{
+  "format": "sprout-editor-scene",
+  "version": 1,
+  "root": {
+    "type": "Node2D",
+    "name": "Main",
+    "script": "Lobby",
+    "properties": {},
+    "children": [
+      {
+        "type": "Camera2D",
+        "name": "Camera2D",
+        "properties": {
+          "position": [
+            400,
+            225
+          ]
+        },
+        "children": []
+      },
+      {
+        "type": "StaticBody2D",
+        "name": "Floor",
+        "properties": {
+          "position": [
+            400,
+            430
+          ]
+        },
+        "children": [
+          {
+            "type": "ColorRect",
+            "name": "ColorRect",
+            "properties": {
+              "position": [
+                -400.0,
+                -20.0
+              ],
+              "size": [
+                800,
+                40
+              ]
+            },
+            "children": []
+          },
+          {
+            "type": "CollisionShape2D",
+            "name": "CollisionShape2D",
+            "properties": {
+              "size": [
+                800,
+                40
+              ]
+            },
+            "children": []
+          }
+        ]
+      },
+      {
+        "type": "StaticBody2D",
+        "name": "LeftPlatform",
+        "properties": {
+          "position": [
+            200,
+            330
+          ]
+        },
+        "children": [
+          {
+            "type": "ColorRect",
+            "name": "ColorRect",
+            "properties": {
+              "position": [
+                -90.0,
+                -10.0
+              ],
+              "size": [
+                180,
+                20
+              ],
+              "color": [
+                110,
+                160,
+                90,
+                255
+              ]
+            },
+            "children": []
+          },
+          {
+            "type": "CollisionShape2D",
+            "name": "CollisionShape2D",
+            "properties": {
+              "size": [
+                180,
+                20
+              ]
+            },
+            "children": []
+          }
+        ]
+      },
+      {
+        "type": "StaticBody2D",
+        "name": "RightPlatform",
+        "properties": {
+          "position": [
+            600,
+            330
+          ]
+        },
+        "children": [
+          {
+            "type": "ColorRect",
+            "name": "ColorRect",
+            "properties": {
+              "position": [
+                -90.0,
+                -10.0
+              ],
+              "size": [
+                180,
+                20
+              ],
+              "color": [
+                110,
+                160,
+                90,
+                255
+              ]
+            },
+            "children": []
+          },
+          {
+            "type": "CollisionShape2D",
+            "name": "CollisionShape2D",
+            "properties": {
+              "size": [
+                180,
+                20
+              ]
+            },
+            "children": []
+          }
+        ]
+      },
+      {
+        "type": "StaticBody2D",
+        "name": "TopPlatform",
+        "properties": {
+          "position": [
+            400,
+            240
+          ]
+        },
+        "children": [
+          {
+            "type": "ColorRect",
+            "name": "ColorRect",
+            "properties": {
+              "position": [
+                -100.0,
+                -10.0
+              ],
+              "size": [
+                200,
+                20
+              ],
+              "color": [
+                110,
+                160,
+                90,
+                255
+              ]
+            },
+            "children": []
+          },
+          {
+            "type": "CollisionShape2D",
+            "name": "CollisionShape2D",
+            "properties": {
+              "size": [
+                200,
+                20
+              ]
+            },
+            "children": []
+          }
+        ]
+      },
+      {
+        "type": "Node2D",
+        "name": "Players",
+        "properties": {},
+        "children": []
+      },
+      {
+        "type": "MultiplayerSpawner",
+        "name": "MultiplayerSpawner",
+        "properties": {
+          "spawn_path": "../Players"
+        },
+        "children": []
+      },
+      {
+        "type": "Label",
+        "name": "Status",
+        "properties": {
+          "position": [
+            12,
+            10
+          ],
+          "text": "",
+          "font_size": 20
+        },
+        "children": []
+      },
+      {
+        "type": "Label",
+        "name": "Help",
+        "properties": {
+          "position": [
+            12,
+            36
+          ],
+          "text": "Arrows: move   Space: jump   E: wave   F: shoot",
+          "font_size": 16,
+          "color": [
+            170,
+            170,
+            170,
+            255
+          ]
+        },
+        "children": []
+      }
+    ]
+  }
+}

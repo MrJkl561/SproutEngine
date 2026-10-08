@@ -1,0 +1,322 @@
+{
+  "format": "sprout-editor-scene",
+  "root": {
+    "children": [
+      {
+        "children": [],
+        "name": "Background",
+        "properties": {
+          "color": [
+            38,
+            52,
+            82,
+            255
+          ],
+          "position": [
+            0.0,
+            0.0
+          ],
+          "rotation": 0.0,
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "size": [
+            800.0,
+            450.0
+          ],
+          "visible": true
+        },
+        "type": "ColorRect"
+      },
+      {
+        "children": [
+          {
+            "children": [],
+            "name": "Ground",
+            "properties": {
+              "color": [
+                70,
+                120,
+                60,
+                255
+              ],
+              "position": [
+                -400.0,
+                -20.0
+              ],
+              "rotation": 0.0,
+              "scale": [
+                1.0,
+                1.0
+              ],
+              "size": [
+                800.0,
+                40.0
+              ],
+              "visible": true
+            },
+            "type": "ColorRect"
+          },
+          {
+            "children": [],
+            "name": "CollisionShape2D",
+            "properties": {
+              "disabled": false,
+              "position": [
+                0.0,
+                0.0
+              ],
+              "rotation": 0.0,
+              "scale": [
+                1.0,
+                1.0
+              ],
+              "size": [
+                800.0,
+                40.0
+              ],
+              "visible": true
+            },
+            "type": "CollisionShape2D"
+          }
+        ],
+        "name": "Floor",
+        "properties": {
+          "position": [
+            400.0,
+            430.0
+          ],
+          "rotation": 0.0,
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "visible": true
+        },
+        "type": "StaticBody2D"
+      },
+      {
+        "instance": "scenes/box.scene.json",
+        "name": "Box",
+        "type": "StaticBody2D"
+      },
+      {
+        "children": [
+          {
+            "children": [],
+            "name": "Look",
+            "properties": {
+              "color": [
+                150,
+                110,
+                70,
+                255
+              ],
+              "position": [
+                -80.0,
+                -12.0
+              ],
+              "rotation": 0.0,
+              "scale": [
+                1.0,
+                1.0
+              ],
+              "size": [
+                160.0,
+                24.0
+              ],
+              "visible": true
+            },
+            "type": "ColorRect"
+          },
+          {
+            "children": [],
+            "name": "CollisionShape2D",
+            "properties": {
+              "disabled": false,
+              "position": [
+                0.0,
+                0.0
+              ],
+              "rotation": 0.0,
+              "scale": [
+                1.0,
+                1.0
+              ],
+              "size": [
+                160.0,
+                24.0
+              ],
+              "visible": true
+            },
+            "type": "CollisionShape2D"
+          }
+        ],
+        "name": "Platform",
+        "properties": {
+          "position": [
+            560.0,
+            340.0
+          ],
+          "rotation": 0.0,
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "visible": true
+        },
+        "type": "StaticBody2D"
+      },
+      {
+        "instance": "scenes/player.scene.json",
+        "name": "Player",
+        "properties": {
+          "position": [
+            100.0,
+            380.0
+          ]
+        },
+        "type": "CharacterBody2D"
+      },
+      {
+        "instance": "scenes/coin.scene.json",
+        "name": "Coin",
+        "properties": {
+          "position": [
+            250.0,
+            310.0
+          ]
+        },
+        "type": "Area2D"
+      },
+      {
+        "instance": "scenes/coin.scene.json",
+        "name": "Coin2",
+        "properties": {
+          "position": [
+            560.0,
+            300.0
+          ]
+        },
+        "type": "Area2D"
+      },
+      {
+        "instance": "scenes/coin.scene.json",
+        "name": "Coin3",
+        "properties": {
+          "position": [
+            720.0,
+            390.0
+          ]
+        },
+        "type": "Area2D"
+      },
+      {
+        "type": "Area2D",
+        "name": "Door",
+        "instance": "scenes/door.scene.json",
+        "properties": {
+          "position": [
+            765,
+            380
+          ]
+        },
+        "script_vars": {
+          "next_scene": "scenes/level2.scene.json"
+        }
+      },
+      {
+        "children": [],
+        "name": "Icon",
+        "properties": {
+          "centered": true,
+          "flip_h": false,
+          "flip_v": false,
+          "modulate": [
+            255,
+            255,
+            255,
+            255
+          ],
+          "offset": [
+            0.0,
+            0.0
+          ],
+          "position": [
+            730.0,
+            70.0
+          ],
+          "rotation": 0.0,
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "texture": "assets/icon.png",
+          "visible": true
+        },
+        "script": "Spinner",
+        "type": "Sprite2D"
+      },
+      {
+        "children": [],
+        "name": "Score",
+        "properties": {
+          "color": [
+            255,
+            255,
+            255,
+            255
+          ],
+          "font_size": 24,
+          "position": [
+            16.0,
+            12.0
+          ],
+          "rotation": 0.0,
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "text": "Coins: 0",
+          "visible": true
+        },
+        "type": "Label"
+      },
+      {
+        "children": [],
+        "name": "Camera2D",
+        "properties": {
+          "current": true,
+          "position": [
+            400.0,
+            225.0
+          ],
+          "rotation": 0.0,
+          "scale": [
+            1.0,
+            1.0
+          ],
+          "visible": true,
+          "zoom": 1.0
+        },
+        "type": "Camera2D"
+      }
+    ],
+    "name": "Main",
+    "properties": {
+      "position": [
+        0.0,
+        0.0
+      ],
+      "rotation": 0.0,
+      "scale": [
+        1.0,
+        1.0
+      ],
+      "visible": true
+    },
+    "type": "Node2D"
+  },
+  "version": 1
+}

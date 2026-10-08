@@ -1,0 +1,47 @@
+{
+  "format": "sprout-editor-scene",
+  "version": 1,
+  "root": {
+    "type": "Area2D",
+    "name": "Coin",
+    "script": "Coin",
+    "properties": {
+      "position": [
+        0,
+        0
+      ]
+    },
+    "children": [
+      {
+        "type": "AnimatedSprite2D",
+        "name": "Sprite",
+        "properties": {
+          "texture": "assets/coin_sheet.png",
+          "hframes": 6,
+          "animation": "spin",
+          "autoplay": true,
+          "animations": [
+            {
+              "name": "spin",
+              "frames": "0-5",
+              "fps": 10,
+              "loop": true
+            }
+          ]
+        },
+        "children": []
+      },
+      {
+        "type": "CollisionShape2D",
+        "name": "CollisionShape2D",
+        "properties": {
+          "size": [
+            24,
+            24
+          ]
+        },
+        "children": []
+      }
+    ]
+  }
+}

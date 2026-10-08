@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Game</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+    body { display: flex; align-items: center; justify-content: center; }
+    /* raylib sets the canvas to the game's size; this scales it to fit the page */
+    canvas { display: block; max-width: 100vw; max-height: 100vh; width: auto; height: auto;
+             object-fit: contain; image-rendering: pixelated; outline: none; }
+    #status { position: fixed; color: #ccc; font: 16px sans-serif; }
+  </style>
+</head>
+<body>
+  <div id="status">Loading...</div>
+  <canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
+  <script>
+    // Keys the game uses shouldn't scroll the page.
+    window.addEventListener('keydown', function (e) {
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' ', 'Tab'].indexOf(e.key) >= 0) e.preventDefault();
+    });
+    var statusBox = document.getElementById('status');
+    var Module = {
+      canvas: document.getElementById('canvas'),
+      print: function (text) { console.log(text); },
+      printErr: function (text) { console.error(text); },
+      setStatus: function (text) { statusBox.textContent = text; statusBox.style.display = text ? 'block' : 'none'; },
+      onRuntimeInitialized: function () { statusBox.style.display = 'none'; document.getElementById('canvas').focus(); }
+    };
+    window.onerror = function () { statusBox.textContent = 'Something went wrong; see the browser console.'; };
+  </script>
+  {{{ SCRIPT }}}
+</body>
+</html>

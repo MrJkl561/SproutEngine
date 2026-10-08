@@ -1,0 +1,6 @@
+# Code editor setup made by the Sprout Editor (paths on this computer)
+compile_commands.json
+.vscode/c_cpp_properties.json
+.vscode/settings.json
+CppProperties.json
+.cache/
