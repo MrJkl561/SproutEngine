@@ -29,6 +29,7 @@ public:
             if (x > 150) check("custom_signal_value");
         });
         connect(getNode("Body"), "moved_far", [this] { check("listener_takes_fewer_values"); });
+        connect(getNode("Body"), "started", &SignalTest::onStarted);  // a signal with no values
         connect(getNode("Anim"), "animation_finished", [this] { check("animation_finished"); });
         connect(getNode("Body"), "tree_exiting", [this] { check("tree_exiting"); });
         // "ready" of a node added later
@@ -39,6 +40,8 @@ public:
         // A misspelled signal: a warning, not a crash
         connect(getNode("Tick"), "timout", [] {});
     }
+
+    void onStarted() { check("signal_without_values"); }
 
     // Connected in the editor (saved in the scene file, see Tick and Area)
     CALLABLE(onTickFromEditor);
@@ -86,7 +89,7 @@ private:
             "body_entered_method", "body_exited_typed_lambda", "body_exited_when_freed", "timer_repeats",
             "one_shot_connection", "disconnect", "one_shot_timer", "freed_listener_not_called", "custom_signal_value",
             "listener_takes_fewer_values", "animation_finished", "tree_exiting", "ready", "editor_connection",
-            "editor_connection_one_shot", "editor_connection_with_value"};
+            "editor_connection_one_shot", "editor_connection_with_value", "signal_without_values"};
         for (const auto& n : all)
             if (!passed.count(n)) return;
         print("SIGNALS TEST PASSED");

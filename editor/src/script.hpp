@@ -530,6 +530,9 @@ namespace s2d::detail {
 class SignalField {
 public:
     SignalField(Script* script, const char* name, const char* args) { script->declareSignal({name, args}); }
+    // SIGNAL(name) with no values: Visual Studio's preprocessor drops the
+    // comma before an empty __VA_ARGS__, so the args don't arrive at all.
+    SignalField(Script* script, const char* name) { script->declareSignal({name, ""}); }
     SignalField(const SignalField&) = delete;
     SignalField& operator=(const SignalField&) = delete;
 };

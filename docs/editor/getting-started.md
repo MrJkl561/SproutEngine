@@ -221,8 +221,8 @@ Ideas to try with what you know:
   `Sprite2D` (`coin.png`) and a `CollisionShape2D` inside. Give the Area2D a
   script, then in the Inspector under **Signals** press **Connect...** next to
   `body_entered` and **Connect**: the editor writes the function for you. Fill
-  it in with `if (body->name == "Player") node()->queueFree();`. See
-  [Signals](../../editor/README.md#signals).
+  it in with `if (body->name == "Player") node()->queueFree();`.
+  [Signals, step by step](signals.md) walks through exactly this.
 - Open the demo project (**Projects** → **Open Folder...** → the `editor/project`
   folder inside the Sprout folder) and read its scripts: coins, a door to
   level 2, a spinning icon, and an animated player.
@@ -239,5 +239,6 @@ Everything the editor can do is in the **[Sprout Editor manual](../../editor/REA
 - [Changing scenes while the game runs](../../editor/README.md#changing-scenes-while-the-game-runs)
 - [Animation](../../editor/README.md#animation)
 - [Exporting your game](../../editor/README.md#exporting-your-game)
+- [Signals, step by step](signals.md): making one part of your game react to another
 - [Multiplayer](multiplayer.md): playing together over a network
 - [Customizing the editor](../../editor/README.md#customizing-the-editor): themes and layout

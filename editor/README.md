@@ -645,9 +645,15 @@ level, also with `body_entered`) and `spinner.cpp`.
 
 ### Signals
 
+> **New to signals?** Start with **[Signals, step by step](../docs/editor/signals.md)**:
+> what they are, connecting one in the editor and in code, signals of your
+> own, and the common mistakes. This section is the reference.
+
 Signals work like Godot's: a node announces that something happened, and
 every script that **connected** to it gets a call. The node doesn't need to
-know who's listening. Connect in `ready()`:
+know who's listening. `connect(sender, "signal", function)` goes in the
+**listening** script, and its first argument is always the node that
+**sends** the signal. Connect in `ready()`:
 
 ```cpp
 class Coin : public Script {

@@ -6,9 +6,14 @@ using namespace s2d;
 class Walker : public Script {
 public:
     SIGNAL(moved_far, float);  // sends its x position
+    SIGNAL(started);           // no values (Visual Studio once couldn't compile this)
 
     void process(float delta) override {
         auto* me = self<Node2D>();
+        if (!began) {
+            began = true;
+            emitSignal("started");
+        }
         me->position.x += 300 * delta;
         if (!told && me->position.x > 150) {
             told = true;
@@ -17,7 +22,7 @@ public:
     }
 
 private:
-    bool told = false;
+    bool told = false, began = false;
 };
 
 REGISTER_SCRIPT(Walker)

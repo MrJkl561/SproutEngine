@@ -314,8 +314,9 @@ The **[documentation](docs/README.md)** is written for beginners.
 1. [Installing and building](docs/01-installing.md), if you don't have a C++
    compiler, CMake and Git yet (the same for both parts)
 2. [Your first game in the editor](docs/editor/getting-started.md), a step-by-step tutorial
-3. [Multiplayer in the editor](docs/editor/multiplayer.md): playing together over a network
-4. The [Sprout Editor manual](editor/README.md): every dock, node, shortcut,
+3. [Signals, step by step](docs/editor/signals.md): making one part of your game react to another
+4. [Multiplayer in the editor](docs/editor/multiplayer.md): playing together over a network
+5. The [Sprout Editor manual](editor/README.md): every dock, node, shortcut,
    the script API, signals, scenes inside scenes, animation, exporting and themes
 
 ### Learning the Engine
