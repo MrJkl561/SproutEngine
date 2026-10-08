@@ -172,7 +172,7 @@ private:
     bool isTyping() const {
         return !activeField_.empty() || dialog_.open || confirm_.open || export_.open || projects_.open ||
                folderPick_.valid() || sheet_.open || codeEditorDialog_.open || instancesDialog_.open ||
-               connectDialog_.open || newScript_.open || (mainView_ == MainView::Script && (codeFocused_ || find_.findEdit || find_.withEdit));
+               connectDialog_.open || newScript_.open || ask_.open || (mainView_ == MainView::Script && (codeFocused_ || find_.findEdit || find_.withEdit));
     }
 
     // --- code editor (VS Code, Visual Studio...) -----------------------------
@@ -189,13 +189,13 @@ private:
     void drawScriptView(Rectangle r);
     void drawFindBar(Rectangle r, TextDocument& doc);
     bool saveDocument(TextDocument& doc);
-    void closeDocument(TextDocument* doc);  // asks first if it has unsaved changes
+    void closeDocument(TextDocument* doc, bool discard = false);  // asks first if it has unsaved changes (unless discard)
     void checkDocumentsOnDisk();
     void handleScriptShortcuts();
     void setDiagnostics(TextDocument& doc) const;  // the last build's messages for its file
     bool dialogOpen() const {
         return dialog_.open || confirm_.open || export_.open || projects_.open || folderPick_.valid() || sheet_.open ||
-               codeEditorDialog_.open || instancesDialog_.open || connectDialog_.open || newScript_.open;
+               codeEditorDialog_.open || instancesDialog_.open || connectDialog_.open || newScript_.open || ask_.open;
     }
 
     // --- Signals (the Inspector's Signals list and its Connect dialog) --------
@@ -476,6 +476,14 @@ private:
         std::function<void()> then;
         std::function<bool()> save;  // what Save does ("" = save the scene); false = it failed
     } confirm_;
+    // A question with one action ("Delete X?"): Yes runs onYes, Cancel nothing.
+    struct AskDialog {
+        bool open = false;
+        std::string title, message, yes;
+        std::function<void()> onYes;
+    } ask_;
+    void askFirst(std::string title, std::string message, std::string yes, std::function<void()> onYes);
+    void deleteFile(size_t index);  // asks, then moves it to the Recycle Bin / Trash
 };
 
 }  // namespace s2d

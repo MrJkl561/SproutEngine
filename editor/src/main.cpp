@@ -35,6 +35,7 @@
 #include "raygui_include.hpp"
 #include "script.hpp"
 #include "script_checker.hpp"
+#include "script_lint.hpp"
 #include "theme.hpp"
 #include "ui_scale.hpp"
 
@@ -140,6 +141,7 @@ int checkFile(const fs::path& project, const fs::path& file) {
         std::printf("No answer from %s.\n", checker.engine().c_str());
         return 2;
     }
+    for (s2d::Diagnostic& d : s2d::lintScript(text.str())) found.push_back(std::move(d));  // (as the Script tab does)
     int errors = 0;
     for (const s2d::Diagnostic& d : found) {
         std::printf("%s:%d:%d: %s: %s\n", file.filename().string().c_str(), d.line, d.column,

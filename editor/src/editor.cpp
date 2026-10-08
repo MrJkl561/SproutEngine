@@ -25,6 +25,7 @@
 #include "platform.hpp"
 #include "projects.hpp"
 #include "scene_io.hpp"
+#include "script_lint.hpp"
 #include "script.hpp"
 #include "theme.hpp"
 #include "ui_scale.hpp"
@@ -558,6 +559,9 @@ void Editor::ensureDefaultAssets() {
     fs::path dir = projectDir_ / "assets";
     std::error_code ec;
     fs::create_directories(dir, ec);
+    // Only for a new project (nothing in assets/ yet): pictures deleted later stay deleted.
+    for (auto it = fs::directory_iterator(dir, ec); !ec && it != fs::directory_iterator(); it.increment(ec))
+        if (it->path().filename().string().rfind('.', 0) != 0) return;
 
     auto make = [&](const char* file, int w, int h, const std::function<void(Image&)>& paint) {
         fs::path p = dir / file;
@@ -733,7 +737,7 @@ void Editor::frame() {
     updateSplitters(sw, sh, kLeftW, kRightW, kOutputH, sceneH);
     bool modal = popup_.open || dialog_.open || confirm_.open || export_.open || projects_.open ||
                  folderPick_.valid() || sheet_.open || codeEditorDialog_.open || instancesDialog_.open || connectDialog_.open ||
-                 newScript_.open || swallowMouse_ ||
+                 newScript_.open || ask_.open || swallowMouse_ ||
                  splitter_ != Splitter::None;
     if (modal) GuiLock();
     {
@@ -2840,7 +2844,63 @@ void Editor::fileMenu(size_t index, Vector2 at) {
         if (!platform::showInFileManager(full)) log("Couldn't open the folder of " + full.string(), kBad);
     });
     if (f.kind != FileEntry::Texture) add("Choose Code Editor...", [this] { openCodeEditorDialog(); });
+    if (!playTree_) add("Delete...", [this, index] { deleteFile(index); });
     openPopup(at, items, [actions](int i) { actions[i](); });
+}
+
+void Editor::askFirst(std::string title, std::string message, std::string yes, std::function<void()> onYes) {
+    activeField_.clear();
+    ask_ = AskDialog{true, std::move(title), std::move(message), std::move(yes), std::move(onYes)};
+}
+
+void Editor::deleteFile(size_t index) {
+    if (index >= files_.size() || playTree_) return;
+    const FileEntry f = files_[index];
+    fs::path full = f.kind == FileEntry::Script ? fs::path(f.path) : projectDir_ / f.path;
+#if defined(_WIN32)
+    const std::string trash = "Recycle Bin";
+#else
+    const std::string trash = "Trash";
+#endif
+    // What in this scene uses it, so the question can say so
+    int users = 0;
+    std::function<void(Node*)> count = [&](Node* n) {
+        if (!n) return;
+        if (f.kind == FileEntry::Script && !f.scriptClass.empty() && n->scriptName == f.scriptClass) ++users;
+        if (auto* sp = n->as<Sprite2D>(); f.kind == FileEntry::Texture && sp && sp->texture == f.path)
+            ++users;  // (AnimatedSprite2D is a Sprite2D too)
+        for (auto& c : n->children()) count(c.get());
+    };
+    count(editTree_.root());
+    std::string message = "Move " + full.filename().string() + " to the " + trash + "? You can get it back from there.";
+    if (users > 0)
+        message += " " + std::to_string(users) + (users == 1 ? " node" : " nodes") + " in this scene use" +
+                   (users == 1 ? "s" : "") + " it; they'll keep its name, but it won't be found.";
+    if (f.kind == FileEntry::Scene && f.path == scenePath_)
+        message += " It's the scene open now: it stays open here, so Save would make the file again.";
+    if (f.kind == FileEntry::Scene && f.path == settings_.mainScene)
+        message += " It's the game's main scene (set another in the Export window).";
+    askFirst("Delete File", message, "Delete", [this, full] {
+        // An open copy of it goes too (it's what's being deleted)
+        for (auto& d : docs_)
+            if (std::error_code ec; fs::equivalent(d->path, full, ec)) {
+                closeDocument(d.get(), true);
+                break;
+            }
+        std::string error;
+        if (!platform::moveToTrash(full, error)) {
+            log("Couldn't delete " + full.string() + ": " + error, kBad);
+            return;
+        }
+        log("Deleted " + full.filename().string() + " (it's in the " +
+#if defined(_WIN32)
+                std::string("Recycle Bin)"),
+#else
+                std::string("Trash)"),
+#endif
+            kAccent);
+        rescanFiles();
+    });
 }
 
 void Editor::openCodeEditorDialog() {
@@ -2987,6 +3047,7 @@ void Editor::setDiagnostics(TextDocument& doc) const {
     std::error_code ec;
     for (const BuildMessage& m : buildMessages_)
         if (fs::equivalent(m.file, doc.path, ec)) doc.diagnostics.push_back(m.diagnostic);
+    for (Diagnostic& d : lintScript(doc.text())) doc.diagnostics.push_back(std::move(d));  // mistakes that compile
 }
 
 bool Editor::saveDocument(TextDocument& doc) {
@@ -3055,7 +3116,7 @@ bool Editor::saveDocument(TextDocument& doc) {
     return true;
 }
 
-void Editor::closeDocument(TextDocument* doc) {
+void Editor::closeDocument(TextDocument* doc, bool discard) {
     auto remove = [this, doc] {
         auto it = std::find_if(docs_.begin(), docs_.end(), [doc](auto& d) { return d.get() == doc; });
         if (it == docs_.end()) return;
@@ -3066,7 +3127,7 @@ void Editor::closeDocument(TextDocument* doc) {
         if (currentDoc_ == doc) currentDoc_ = docs_.empty() ? nullptr : docs_[std::min(index, docs_.size() - 1)].get();
         if (!currentDoc_) codeFocused_ = false;
     };
-    if (!doc->dirty()) {
+    if (!doc->dirty() || discard) {
         remove();
         return;
     }
@@ -3118,7 +3179,10 @@ void Editor::updateChecker() {
     for (auto& d : docs_) {
         ScriptChecker::Result r;
         if (d->language != Language::Cpp || !checker_->take(d->path, r) || r.version != d->version()) continue;
-        if (r.hasDiagnostics) d->diagnostics = std::move(r.diagnostics);
+        if (r.hasDiagnostics) {
+            d->diagnostics = std::move(r.diagnostics);
+            for (Diagnostic& lint : lintScript(d->text())) d->diagnostics.push_back(std::move(lint));  // mistakes that compile
+        }
         if (r.hasTokens) d->setSemanticSpans(r.version, std::move(r.tokens));
     }
 }
@@ -3936,6 +4000,28 @@ void Editor::drawModal() {
         DrawRectangleRec(box, kPanel);
         DrawRectangleLinesEx(box, 1, kAccent);
         drawText(text, box.x + 20, box.y + 15, kText);
+        return;
+    }
+    if (ask_.open) {
+        float sw = screenW(), sh = screenH();
+        DrawRectangle(0, 0, static_cast<int>(sw), static_cast<int>(sh), Fade(BLACK, 0.5f));
+        float bw = std::min(480.0f, sw - 20);
+        std::vector<std::string> lines = wrapText(ask_.message, bw - 28);
+        float bh = 116 + lines.size() * 20.0f;
+        Rectangle box{std::floor(sw / 2 - bw / 2), std::floor(sh / 2 - bh / 2), bw, bh};
+        bool cancel = GuiWindowBox(box, ask_.title.c_str()) != 0;
+        for (size_t i = 0; i < lines.size(); ++i) drawText(lines[i], box.x + 14, box.y + 42 + i * 20.0f, kText);
+        float buttonsY = box.y + box.height - 46;
+        float yesW = textWidth(ask_.yes) + 40;
+        bool yes = GuiButton({box.x + box.width - 110 - yesW, buttonsY, yesW, 30}, ask_.yes.c_str());
+        if (GuiButton({box.x + box.width - 100, buttonsY, 86, 30}, "Cancel") || IsKeyPressed(KEY_ESCAPE)) cancel = true;
+        if (cancel) {
+            ask_.open = false;
+        } else if (yes) {
+            auto onYes = std::move(ask_.onYes);
+            ask_ = AskDialog{};
+            if (onYes) onYes();
+        }
         return;
     }
     if (confirm_.open) {

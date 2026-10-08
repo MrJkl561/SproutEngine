@@ -66,6 +66,14 @@ jobs:
           if [ -f "$exe.exe" ]; then exe="$exe.exe"; fi
           SPROUT_EDITOR="$PWD/$exe" scripts/test-signals.sh
 
+      # The Script tab's extra checks (findNode before ready()...)
+      - name: Test script checks
+        shell: bash
+        run: |
+          exe=build/bin/sprout_editor/sprout_editor
+          if [ -f "$exe.exe" ]; then exe="$exe.exe"; fi
+          SPROUT_EDITOR="$PWD/$exe" scripts/test-lint.sh
+
       # Multiplayer for real: a dedicated server and two clients (separate
       # programs, no windows) connect, call RPCs, sync nodes, spawn and leave.
       - name: Test multiplayer

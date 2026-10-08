@@ -271,10 +271,16 @@ public:
     // The node this script is attached to.
     Node* node() const { return node_; }
     // The node as a particular type, e.g. self<CharacterBody2D>(); nullptr if it isn't one.
-    template <class T> T* self() const { return node_ ? dynamic_cast<T*>(node_) : nullptr; }
+    template <class T> T* self() const {
+        if (!node_) notOnNodeYet("self");
+        return node_ ? dynamic_cast<T*>(node_) : nullptr;
+    }
 
     // Finds a node by path from this one: "Child", "../Sibling".
-    Node* getNode(const std::string& path) const { return node_ ? node_->getNode(path) : nullptr; }
+    Node* getNode(const std::string& path) const {
+        if (!node_) notOnNodeYet("getNode");
+        return node_ ? node_->getNode(path) : nullptr;
+    }
     // Finds a node by name anywhere in the scene.
     Node* findNode(const std::string& name) const;
     template <class T> T* findNode(const std::string& name) const {
@@ -283,6 +289,10 @@ public:
     }
 
     SceneTree* tree() const { return node_ ? node_->tree() : nullptr; }
+    // Says (once per script and function) that self/getNode/findNode was used
+    // before the script was put on its node: in a member variable's "= ..." or
+    // the constructor. They find nothing then; ready() is the place.
+    void notOnNodeYet(const char* what) const;
 
     // Switch to another scene at the end of this frame, or restart this one.
     void changeScene(const std::string& scenePath) const {

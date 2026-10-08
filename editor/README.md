@@ -181,6 +181,9 @@ window (800 x 450).
 - Drop picture files from your desktop onto the window to import them into
   the project's `assets/` folder.
 - Click a scene to open it. Click (or drag onto a node) a script to attach it.
+- Right-click a file for more: open it, show it in its folder, or **Delete...**
+  (it asks first, then moves the file to the Recycle Bin / Trash, where you can
+  get it back from).
 
 **Inspector (right)** - the selected node's fields.
 - Drag left/right on a number to change it, or click it to type a value.
@@ -502,6 +505,19 @@ or one of your own base classes (see
 | `EXPORT(float, speed, 200);` | A variable shown in the inspector ([more](#script-variables-shown-in-the-inspector)) |
 | `multiplayer()`, `RPC(name);`, `rpc(...)`, `INPUT(...)` | Networking ([Multiplayer](#multiplayer)) |
 | `hasArg("--host")`, `argValue("--join")` | The game's command line |
+
+**Find nodes in `ready()`, not where a variable is declared.** A member
+variable's `= ...` runs when the script is made, before it's on its node, so
+`AnimatedSprite2D* sprite = findNode<AnimatedSprite2D>("Hero");` always gets
+`nullptr`. Declare it `= nullptr` and set it in `ready()`:
+
+```cpp
+AnimatedSprite2D* sprite = nullptr;
+void ready() override { sprite = findNode<AnimatedSprite2D>("Hero"); }
+```
+
+The Script tab underlines the mistake as you type, and the Output panel says
+so if it runs.
 
 Scripts can also call any [raylib](https://www.raylib.com/cheatsheet/cheatsheet.html)
 function: `IsKeyDown(KEY_LEFT)`, `IsKeyPressed(KEY_SPACE)`, `GetMousePosition()`,
@@ -964,6 +980,7 @@ editor/
 │   ├── text_editor.*     <- the Script tab's text editor
 │   ├── autocomplete.*    <- its suggestions (reads the engine and raylib headers)
 │   ├── script_checker.*  <- live error checking and coloring (clangd)
+│   ├── script_lint.*     <- mistakes that compile but don't work (findNode before ready())
 │   ├── platform.*        <- operating system calls: libraries, programs, folder windows
 │   ├── editor_paths.*    <- finds the editor's own files (also when moved or portable)
 │   ├── ui_scale.*        <- the editor's UI size (display scaling)
@@ -973,6 +990,7 @@ editor/
 ├── templates/            <- New Project templates (multiplayer/)
 ├── tests/multiplayer/    <- the multiplayer test (scripts/test-multiplayer.sh)
 ├── tests/signals/        <- the signals test (scripts/test-signals.sh)
+├── tests/lint/           <- the script checks' test (scripts/test-lint.sh)
 ├── scripts_module/       <- builds a project's scripts into the hot reload library
 └── project/              <- the demo project
     ├── project.json      <- game name, main scene, window size, export settings

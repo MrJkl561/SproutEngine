@@ -1,6 +1,8 @@
 #include "scene_tree.hpp"
 
 #include <map>
+#include <set>
+#include <typeinfo>
 #include <vector>
 
 #include "assets.hpp"
@@ -232,6 +234,18 @@ void print(const std::string& message) {
 
 void setPrintHandler(std::function<void(const std::string&)> handler) { printHandler() = std::move(handler); }
 
-Node* Script::findNode(const std::string& name) const { return node_ ? node_->root()->findNode(name) : nullptr; }
+Node* Script::findNode(const std::string& name) const {
+    if (!node_) notOnNodeYet("findNode");
+    return node_ ? node_->root()->findNode(name) : nullptr;
+}
+
+void Script::notOnNodeYet(const char* what) const {
+    static std::set<std::string> told;  // once per script class and function
+    if (!told.insert(std::string(typeid(*this).name()) + "/" + what).second) return;
+    print(std::string("Warning: ") + what +
+          "() was used before this script is on its node (in a member variable's \"= ...\" or the "
+          "constructor), so it found nothing (nullptr). Do it in ready() instead: declare the variable "
+          "as nullptr and set it there.");
+}
 
 }  // namespace s2d

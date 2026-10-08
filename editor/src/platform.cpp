@@ -1,7 +1,11 @@
 #include "platform.hpp"
 
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <ctime>
+#include <fstream>
 
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
@@ -135,6 +139,21 @@ bool openWithSystem(const std::filesystem::path& file) {
 
 bool showInFileManager(const std::filesystem::path& file) {
     return launch("explorer /select," + quoteArg(file.lexically_normal().make_preferred()));
+}
+
+bool moveToTrash(const std::filesystem::path& file, std::string& error) {
+    std::wstring from = std::filesystem::absolute(file).lexically_normal().make_preferred().wstring();
+    from.push_back(L'\0');  // the list of files ends with two nulls
+    SHFILEOPSTRUCTW op{};
+    op.wFunc = FO_DELETE;
+    op.pFrom = from.c_str();
+    op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI;
+    int result = SHFileOperationW(&op);
+    if (result != 0 || op.fAnyOperationsAborted) {
+        error = "Windows couldn't move it to the Recycle Bin (error " + std::to_string(result) + ")";
+        return false;
+    }
+    return true;
 }
 
 namespace {
@@ -357,6 +376,77 @@ bool showInFileManager(const std::filesystem::path& file) {
     return launch("open -R " + quoteArg(file));
 #else
     return launch("xdg-open " + quoteArg(file.parent_path()));
+#endif
+}
+
+namespace {
+// Moves `from` to `to` (also across drives: copy, then delete)
+bool moveFile(const std::filesystem::path& from, const std::filesystem::path& to, std::string& error) {
+    std::error_code ec;
+    std::filesystem::rename(from, to, ec);
+    if (!ec) return true;
+    std::filesystem::copy(from, to, std::filesystem::copy_options::recursive, ec);
+    if (ec) {
+        error = ec.message();
+        return false;
+    }
+    std::filesystem::remove_all(from, ec);
+    return true;
+}
+
+// name, or "name 2", "name 3"... whichever isn't in dir yet
+std::filesystem::path freeName(const std::filesystem::path& dir, const std::filesystem::path& name) {
+    std::error_code ec;
+    std::filesystem::path p = dir / name;
+    for (int i = 2; std::filesystem::exists(p, ec); ++i)
+        p = dir / (name.stem().string() + " " + std::to_string(i) + name.extension().string());
+    return p;
+}
+}  // namespace
+
+bool moveToTrash(const std::filesystem::path& file, std::string& error) {
+    std::error_code ec;
+    std::filesystem::path full = std::filesystem::absolute(file, ec).lexically_normal();
+    const char* home = std::getenv("HOME");
+    if (!home || !*home) {
+        error = "no home folder (HOME isn't set)";
+        return false;
+    }
+#if defined(__APPLE__)
+    std::filesystem::path trash = std::filesystem::path(home) / ".Trash";
+    std::filesystem::create_directories(trash, ec);
+    return moveFile(full, freeName(trash, full.filename()), error);
+#else
+    // The freedesktop.org Trash (what the desktop's file manager uses):
+    // files/ holds the file, info/<name>.trashinfo where it came from.
+    const char* data = std::getenv("XDG_DATA_HOME");
+    std::filesystem::path trash =
+        (data && *data ? std::filesystem::path(data) : std::filesystem::path(home) / ".local" / "share") / "Trash";
+    std::filesystem::create_directories(trash / "files", ec);
+    std::filesystem::create_directories(trash / "info", ec);
+    std::filesystem::path to = freeName(trash / "files", full.filename());
+    std::string encoded;  // the path, percent-encoded
+    for (unsigned char c : full.string()) {
+        if (std::isalnum(c) || std::strchr("/-_.~", c)) {
+            encoded += static_cast<char>(c);
+        } else {
+            char hex[4];
+            std::snprintf(hex, sizeof hex, "%%%02X", c);
+            encoded += hex;
+        }
+    }
+    char when[32];
+    std::time_t now = std::time(nullptr);
+    std::strftime(when, sizeof when, "%Y-%m-%dT%H:%M:%S", std::localtime(&now));
+    {
+        std::ofstream info(trash / "info" / (to.filename().string() + ".trashinfo"));
+        info << "[Trash Info]\nPath=" << encoded << "\nDeletionDate=" << when << "\n";
+    }
+    if (!moveFile(full, to, error)) {
+        std::filesystem::remove(trash / "info" / (to.filename().string() + ".trashinfo"), ec);
+        return false;
+    }
+    return true;
 #endif
 }
 

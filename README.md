@@ -180,6 +180,7 @@ folder:
 | Run the unit tests | `scripts\test.bat` | `scripts/test.sh` |
 | Test the editor's multiplayer | `scripts\test-multiplayer.bat` | `scripts/test-multiplayer.sh` |
 | Test the editor's signals | `scripts\test-signals.bat` | `scripts/test-signals.sh` |
+| Test the Script tab's checks | `scripts\test-lint.bat` | `scripts/test-lint.sh` |
 | Export a game | `scripts\export.bat windows,web [project] [folder]` | `scripts/export.sh linux,web [project] [folder]` |
 | Set up web exports (once) | `scripts\setup-web.bat [emsdk folder]` | `scripts/setup-web.sh [emsdk folder]` |
 
@@ -380,7 +381,7 @@ Cpp-Game-engine-/
 │   ├── tests/          <- the editor's tests (multiplayer, signals)
 │   └── project/        <- the editor's demo project
 ├── docs/               <- the documentation (docs/editor/ for the editor)
-├── scripts/            <- build, run-editor, make-portable, test, export, setup-web, test-signals and test-multiplayer scripts
+├── scripts/            <- build, run-editor, make-portable, test, export, setup-web and the test-* scripts
 ├── tests/              <- the engine's unit tests
 ├── cmake/              <- build helpers (downloads libraries, sprout_add_game, ENet for the editor)
 └── CMakeLists.txt      <- the main build file (you normally don't need to touch it)

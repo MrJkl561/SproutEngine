@@ -43,6 +43,9 @@ std::string quoteArg(const std::filesystem::path& path);
 bool openWithSystem(const std::filesystem::path& file);
 // Shows the file selected in Explorer / Finder (Linux: opens its folder).
 bool showInFileManager(const std::filesystem::path& file);
+// Moves a file or folder to the Recycle Bin / Trash, where it can be restored
+// from. False (and error says why) if it couldn't.
+bool moveToTrash(const std::filesystem::path& file, std::string& error);
 
 // A program running alongside the editor that it talks to through its standard
 // input and output (clangd). Its error output is thrown away.
