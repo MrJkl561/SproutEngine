@@ -80,6 +80,15 @@ private:
     void drawGameView(Rectangle r);
     void drawPopup();
     void drawModal();
+    // A short explanation shown next to the mouse when it rests on r (for
+    // buttons that show only an icon, and text that had to be cut short).
+    void hint(Rectangle r, const std::string& text);
+    // Text cut short with "..." to fit maxWidth; the whole of it shows as a
+    // hint when the mouse is on it. fromLeft keeps the end (for paths).
+    void drawFit(const std::string& text, float x, float y, float maxWidth, Color c, bool fromLeft = false);
+    void drawHint();
+    std::string hintText_, shownHint_;
+    double hintSince_ = 0;
     void handleShortcuts();
     // Dragging the borders between panels (the sizes are kept per user).
     void updateSplitters(float sw, float sh, float leftW, float rightW, float bottomH, float sceneH);
@@ -302,6 +311,8 @@ private:
         Color color;
         std::string file;  // a compiler message's file and line: clicking it opens them
         int line = 0, column = 0;
+        std::vector<std::string> rows;  // the text wrapped to the panel's width...
+        float rowsWidth = -1;           // ...for this width
     };
     std::vector<LogLine> logLines_;
     bool scrollLogToBottom_ = false;

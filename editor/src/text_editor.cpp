@@ -1005,6 +1005,64 @@ void TextDocument::draw(Rectangle r, bool focused, bool mouse, const TextStyle& 
     const float bar = 12;
     area_ = {r.x + gutterW_, r.y, r.width - gutterW_ - bar, r.height - bar};
 
+    // The problems on the line the mouse is over (or else the cursor's line)
+    // are shown in full in a strip under the text, wrapped to fit: the
+    // message after the line itself is often too long to see.
+    std::vector<const Diagnostic*> shown;
+    {
+        Vector2 mp = GetMousePosition();
+        int hovered = -1;
+        if (mouse && CheckCollisionPointRec(mp, {area_.x, area_.y, area_.width, area_.height}))
+            hovered = static_cast<int>((mp.y - area_.y + scroll_.y) / std::max(1.0f, lineH_));
+        auto collect = [&](int line) {
+            shown.clear();
+            for (const Diagnostic& d : diagnostics)
+                if (d.line == line + 1) shown.push_back(&d);
+            std::stable_sort(shown.begin(), shown.end(), [](auto* a, auto* b) { return a->error && !b->error; });
+        };
+        collect(hovered);
+        if (shown.empty()) collect(cursor_.line);
+    }
+    std::vector<std::pair<std::string, bool>> strip;  // (text, error)
+    if (!shown.empty()) {
+        float maxW = r.width - bar - 24;
+        auto width = [&](const std::string& t) { return MeasureTextEx(font, t.c_str(), size, 1).x; };
+        for (const Diagnostic* d : shown) {
+            std::string text = std::string(d->error ? "Error" : "Warning") + " (line " + std::to_string(d->line) + "): " +
+                               d->message;
+            // Word wrap (cutting inside a word only when it doesn't fit a line by itself)
+            std::string line;
+            size_t i = 0;
+            while (i <= text.size()) {
+                size_t sp = text.find(' ', i);
+                if (sp == std::string::npos) sp = text.size();
+                std::string word = text.substr(i, sp - i);
+                std::string tried = line.empty() ? word : line + " " + word;
+                if (width(tried) <= maxW) {
+                    line = tried;
+                } else {
+                    if (!line.empty()) strip.push_back({line, d->error});
+                    while (width(word) > maxW && word.size() > 1) {
+                        size_t n = word.size();
+                        while (n > 1 && width(word.substr(0, n)) > maxW) --n;
+                        strip.push_back({word.substr(0, n), d->error});
+                        word.erase(0, n);
+                    }
+                    line = word;
+                }
+                i = sp + 1;
+            }
+            if (!line.empty()) strip.push_back({line, d->error});
+        }
+        size_t maxRows = static_cast<size_t>(std::max(1.0f, (r.height - bar) / 3 / lineH_));
+        if (strip.size() > maxRows) {
+            strip.resize(maxRows);
+            strip.back().first += " ...";
+        }
+    }
+    float stripH = strip.empty() ? 0 : strip.size() * lineH_ + 8;
+    area_.height -= stripH;
+
     // --- input ---------------------------------------------------------------
     if (focused) handleKeys();
     updateHighlight();
@@ -1012,7 +1070,16 @@ void TextDocument::draw(Rectangle r, bool focused, bool mouse, const TextStyle& 
     bool inside = mouse && CheckCollisionPointRec(m, r);
     float contentH = lines_.size() * lineH_ + area_.height * 0.5f;
     float maxY = std::max(0.0f, contentH - area_.height);
-    float maxX = std::max(0.0f, (widestLine_ + 4) * charW_ - area_.width);
+    // Wide enough to scroll to the end of the longest line, and of the messages after lines
+    float widest = (widestLine_ + 4) * charW_;
+    for (const Diagnostic& d : diagnostics) {
+        int l = d.line - 1;
+        if (l < 0 || l >= static_cast<int>(lines_.size())) continue;
+        std::string msg = d.message.size() > 160 ? d.message.substr(0, 157) + "..." : d.message;
+        widest = std::max(widest, (visualCol(l, static_cast<int>(lines_[l].size())) + 3) * charW_ +
+                                      MeasureTextEx(font, msg.c_str(), size, 1).x + 2 * charW_);
+    }
+    float maxX = std::max(0.0f, widest - area_.width);
     Rectangle vbar{r.x + r.width - bar, r.y, bar, r.height - bar};
     float thumbH = std::max(24.0f, vbar.height * std::min(1.0f, area_.height / contentH));
     auto thumbY = [&] { return vbar.y + (maxY > 0 ? scroll_.y / maxY : 0) * (vbar.height - thumbH); };
@@ -1231,6 +1298,18 @@ void TextDocument::draw(Rectangle r, bool focused, bool mouse, const TextStyle& 
     }
     EndScissorMode();
     DrawLineEx({r.x + gutterW_ - 0.5f, r.y}, {r.x + gutterW_ - 0.5f, r.y + area_.height}, 1, Fade(c.lineNumbers, 0.3f));
+
+    // The problems strip
+    if (stripH > 0) {
+        Rectangle sr{r.x, area_.y + area_.height, r.width - bar, stripH};
+        DrawRectangleRec(sr, c.background);
+        bool anyError = !shown.empty() && shown.front()->error;
+        DrawRectangleRec(sr, Fade(anyError ? c.error : c.warning, 0.10f));
+        DrawLineEx({sr.x, sr.y + 0.5f}, {sr.x + sr.width, sr.y + 0.5f}, 1, Fade(anyError ? c.error : c.warning, 0.6f));
+        for (size_t i = 0; i < strip.size(); ++i)
+            DrawTextEx(font, strip[i].first.c_str(), {snap(sr.x + 12), snap(sr.y + 4 + i * lineH_ + textY)}, size, 1,
+                       strip[i].second ? c.error : c.warning);
+    }
 
     // Scroll bars (with marks where the errors are)
     DrawRectangleRec(vbar, Fade(c.lineNumbers, 0.08f));

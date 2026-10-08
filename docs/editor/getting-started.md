@@ -170,8 +170,9 @@ What it does, line by line:
   [raylib](https://www.raylib.com/cheatsheet/cheatsheet.html), which the editor
   is built on. You can use any raylib function in a script.
 
-**Typos are caught as you type.** Mistakes get a red wavy underline with the
-message at the end of the line, before you even save. Start typing
+**Typos are caught as you type.** Mistakes get a red wavy underline, before
+you even save. Click the line (or point at it) and the whole message shows in
+a strip under the code. Start typing
 `body->` and a list of everything a `CharacterBody2D` has pops up; press
 **Enter** to pick one.
 

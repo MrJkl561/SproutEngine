@@ -197,7 +197,9 @@ in the Export window), **Play Scene** (F6) plays the scene you're editing, and
 how many copies of the game Play starts, for multiplayer
 ([Run Instances](#multiplayer)). Next to it, the scripts' build status, with a
 button to rebuild them. The **gear button** has **Code Editor...**, **Run
-Instances...** and **Reset Panel Layout**.
+Instances...** and **Reset Panel Layout**. In a narrow window the buttons show only their
+icons; point at one to see its name. Text that's cut short with "..." (long
+names, paths) shows in full when you point at it too.
 
 **UI size** - the editor follows your display scaling (for example 150% on
 many Windows laptops), and the window opens sized to fit your screen. Change it
@@ -518,8 +520,9 @@ making a **New** script (it opens straight away). Each open file gets a tab.
   **Ctrl+/** comment lines, **Ctrl+D** duplicate line, **Tab/Shift+Tab** indent
 - **Errors as you type**: scripts are checked live with
   [clangd](https://clangd.llvm.org/) while you type, before saving. Problems get
-  a wavy underline and their message on the line, and the status bar counts
-  them. clangd also tells the editor what every name is, so members,
+  a wavy underline and their message after the line; the whole message, wrapped
+  to fit, shows in a strip under the code for the line you're on (or the one
+  the mouse is over), and the status bar counts them. clangd also tells the editor what every name is, so members,
   parameters, types, functions, macros and enum values each get their own
   color. Nothing to install: building the editor downloads clangd once (20-90
   MB, into the build folder). Where there's no ready-made clangd (Linux on

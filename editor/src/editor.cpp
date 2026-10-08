@@ -235,6 +235,61 @@ void drawText(const std::string& s, float x, float y, Color c) {
 
 float textWidth(const std::string& s) { return static_cast<float>(GuiGetTextWidth(s.c_str())); }
 
+// Text broken into lines that fit maxWidth: at spaces where it can, inside a
+// word (a long path) where it must.
+std::vector<std::string> wrapText(const std::string& text, float maxWidth) {
+    std::vector<std::string> lines;
+    std::stringstream paragraphs(text);
+    std::string paragraph;
+    while (std::getline(paragraphs, paragraph)) {
+        std::string line;
+        size_t i = 0;
+        while (i <= paragraph.size()) {
+            size_t space = paragraph.find(' ', i);
+            if (space == std::string::npos) space = paragraph.size();
+            std::string word = paragraph.substr(i, space - i);
+            std::string tried = line.empty() ? word : line + " " + word;
+            if (textWidth(tried) <= maxWidth) {
+                line = tried;
+            } else {
+                if (!line.empty()) lines.push_back(line);
+                line.clear();
+                // A word too long for a line of its own: cut it up
+                while (textWidth(word) > maxWidth && word.size() > 1) {
+                    size_t n = word.size();
+                    while (n > 1 && textWidth(word.substr(0, n)) > maxWidth) --n;
+                    lines.push_back(word.substr(0, n));
+                    word.erase(0, n);
+                }
+                line = word;
+            }
+            i = space + 1;
+        }
+        lines.push_back(line);
+    }
+    if (lines.empty()) lines.push_back("");
+    return lines;
+}
+
+// Draws text wrapped to maxWidth; returns the height it took.
+float drawWrapped(const std::string& text, float x, float y, float maxWidth, Color c, float lineH = 20) {
+    std::vector<std::string> lines = wrapText(text, maxWidth);
+    for (size_t i = 0; i < lines.size(); ++i) drawText(lines[i], x, y + i * lineH, c);
+    return lines.size() * lineH;
+}
+
+// Text cut short with "..." so it fits maxWidth (fromLeft: keeps the end,
+// for paths).
+std::string fitText(const std::string& text, float maxWidth, bool fromLeft = false) {
+    if (textWidth(text) <= maxWidth) return text;
+    std::string s = text;
+    while (!s.empty() && textWidth(fromLeft ? "..." + s : s + "...") > maxWidth) {
+        if (fromLeft) s.erase(0, 1);
+        else s.pop_back();
+    }
+    return fromLeft ? "..." + s : s + "...";
+}
+
 void drawHeader(Rectangle r, const std::string& title) {
     DrawRectangleRec(r, kPanel);
     const Theme& t = theme();
@@ -649,6 +704,7 @@ void Editor::frame() {
     drawModal();
     if (popup_.open) GuiUnlock();
     drawPopup();
+    drawHint();
 
     if (!screenshotPath.empty()) {
         rlDrawRenderBatchActive();  // flush pending drawing so it's in the picture
@@ -838,70 +894,106 @@ void Editor::drawToolbar(Rectangle r) {
     drawThemeImage(theme().images.toolbar, r, false, WHITE);
     DrawLineEx({r.x, r.y + r.height - 1}, {r.x + r.width, r.y + r.height - 1}, 1, kBorder);
 
-    float x = 8, y = 6, h = 28;
+    const float y = 6, h = 28, gap = 4, iconW = 34;
+    // When the window is too narrow for every button's name, buttons show only
+    // their icon (the name appears when the mouse is over one): first the file
+    // buttons, then Play / Play Scene / Stop, then the "UI size" label goes.
+    struct Btn { int icon; const char* label; float width; };
+    const Btn fileBtns[] = {{ICON_FILETYPE_HOME, "Projects", 100}, {ICON_FILE_NEW, "New", 76},
+                            {ICON_FOLDER_FILE_OPEN, "Open", 80},   {ICON_FILE_SAVE_CLASSIC, "Save", 76},
+                            {ICON_FILE_SAVE, "Save As", 92},       {ICON_FILE_EXPORT, "Export", 84}};
+    const Btn playBtns[] = {{ICON_PLAYER_PLAY, "Play", 84}, {ICON_FILETYPE_PLAY, "Play Scene", 120},
+                            {ICON_PLAYER_STOP, "Stop", 84}};
+    auto groupW = [&](const Btn* b, int n, bool compact) {
+        float w = 0;
+        for (int i = 0; i < n; ++i) w += (compact ? iconW : b[i].width) + gap;
+        return w;
+    };
+    const float pctW = textWidth("300%") + 8, labelW = textWidth("UI size") + 8;
+    auto leftW = [&](bool compact) { return 8 + groupW(fileBtns, 6, compact) + 2 * (iconW + 2) + 8; };
+    auto midW = [&](bool compact) { return groupW(playBtns, 3, compact) + 50; };
+    auto rightW = [&](bool label) { return 8 + 30 + pctW + 34 + (label ? labelW : 0) + 42; };
+    const float reloadW = ScriptReloader::supported() ? 16 + iconW + 8 : 16;
+    bool compactFiles = false, compactPlay = false, showLabel = true;
+    for (int level = 0; level < 4; ++level) {
+        compactFiles = level >= 1;
+        compactPlay = level >= 2;
+        showLabel = level < 3;
+        if (leftW(compactFiles) + 10 + midW(compactPlay) + reloadW + rightW(showLabel) <= r.width) break;
+    }
+    auto button = [&](float& bx, const Btn& b, bool compact) {
+        Rectangle rc{bx, y, compact ? iconW : b.width, h};
+        bool pressed = GuiButton(rc, GuiIconText(b.icon, compact ? nullptr : b.label));
+        if (compact) hint(rc, b.label);
+        bx += rc.width + gap;
+        return pressed;
+    };
+
+    float x = 8;
     bool playing = playTree_ != nullptr;
     if (playing) GuiDisable();
-    if (GuiButton({x, y, 100, h}, GuiIconText(ICON_FILETYPE_HOME, "Projects"))) openProjectManager();
-    x += 108;
-    if (GuiButton({x, y, 76, h}, GuiIconText(ICON_FILE_NEW, "New"))) confirmUnsaved([this] { newScene(); });
-    x += 80;
-    if (GuiButton({x, y, 80, h}, GuiIconText(ICON_FOLDER_FILE_OPEN, "Open"))) {
+    if (button(x, fileBtns[0], compactFiles)) openProjectManager();
+    if (button(x, fileBtns[1], compactFiles)) confirmUnsaved([this] { newScene(); });
+    float openX = x;
+    if (button(x, fileBtns[2], compactFiles)) {
         std::vector<std::string> scenes;
         for (auto& f : files_)
             if (f.kind == FileEntry::Scene) scenes.push_back(f.path);
         if (scenes.empty()) {
             log("No scenes in " + (projectDir_ / "scenes").string() + " yet.", kDim);
         } else {
-            openPopup({x, y + h + 2}, scenes, [this, scenes](int i) { requestOpenScene(scenes[i]); });
+            openPopup({openX, y + h + 2}, scenes, [this, scenes](int i) { requestOpenScene(scenes[i]); });
         }
     }
-    x += 84;
-    if (GuiButton({x, y, 76, h}, GuiIconText(ICON_FILE_SAVE_CLASSIC, "Save"))) saveScene();
-    x += 80;
-    if (GuiButton({x, y, 92, h}, GuiIconText(ICON_FILE_SAVE, "Save As"))) {
+    if (button(x, fileBtns[3], compactFiles)) saveScene();
+    if (button(x, fileBtns[4], compactFiles)) {
         openTextDialog("Save Scene As", "Path inside the project folder:", scenePath_, [this](const std::string& p) {
             if (p.empty()) return;
             scenePath_ = p;
             saveScene();
         });
     }
-    x += 96;
-    if (GuiButton({x, y, 84, h}, GuiIconText(ICON_FILE_EXPORT, "Export"))) openExportDialog();
-    x += 88;
-    if (GuiButton({x, y, 34, h}, GuiIconText(ICON_UNDO, nullptr))) undo();
-    x += 36;
-    if (GuiButton({x, y, 34, h}, GuiIconText(ICON_REDO, nullptr))) redo();
-    x += 44;
+    if (button(x, fileBtns[5], compactFiles)) openExportDialog();
+    if (GuiButton({x, y, iconW, h}, GuiIconText(ICON_UNDO, nullptr))) undo();
+    hint({x, y, iconW, h}, "Undo (Ctrl+Z)");
+    x += iconW + 2;
+    if (GuiButton({x, y, iconW, h}, GuiIconText(ICON_REDO, nullptr))) redo();
+    hint({x, y, iconW, h}, "Redo (Ctrl+Y)");
+    x += iconW + 8;
     if (playing) GuiEnable();
 
-    // Play / Stop in the middle, like Godot (but never on top of the buttons)
+    // Play / Stop in the middle, like Godot (but never on top of the other buttons)
     // Play runs the game from its main scene (F5); Play Scene runs the one being edited (F6).
-    float px = std::max(std::floor(r.width / 2 - 150), x);
+    float rightStart = r.width - rightW(showLabel);
+    float px = std::floor(r.width / 2 - midW(compactPlay) / 2);
+    px = std::max(std::min(px, rightStart - reloadW - midW(compactPlay)), x + 2);
     if (playing) GuiDisable();
-    if (GuiButton({px, y, 84, h}, GuiIconText(ICON_PLAYER_PLAY, "Play"))) play(true);
-    if (GuiButton({px + 88, y, 120, h}, GuiIconText(ICON_FILETYPE_PLAY, "Play Scene"))) play(false);
+    if (button(px, playBtns[0], compactPlay)) play(true);
+    if (button(px, playBtns[1], compactPlay)) play(false);
     if (playing) GuiEnable();
     if (!playing) GuiDisable();
-    if (GuiButton({px + 212, y, 84, h}, GuiIconText(ICON_PLAYER_STOP, "Stop"))) stop();
+    if (button(px, playBtns[2], compactPlay)) stop();
     if (!playing) GuiEnable();
     // Run Instances: how many copies of the game Play starts (multiplayer)
     if (playing) GuiDisable();
     std::string copies = settings_.runInstances > 1 ? "x" + std::to_string(settings_.runInstances) : "";
-    if (GuiButton({px + 300, y, 50, h}, GuiIconText(ICON_WINDOW, copies.empty() ? nullptr : copies.c_str())))
+    if (GuiButton({px, y, 50, h}, GuiIconText(ICON_WINDOW, copies.empty() ? nullptr : copies.c_str())))
         openRunInstancesDialog();
+    hint({px, y, 50, h}, "Run Instances: how many copies of the game Play starts");
     if (playing) GuiEnable();
-    x = px + 366;
+    x = px + 50 + 16;
 
     // Script hot reload status
     if (ScriptReloader::supported()) {
         if (GuiButton({x, y, 34, h}, GuiIconText(ICON_ROTATE_FILL, nullptr))) scripts_->requestBuild();
+        hint({x, y, 34, h}, "Rebuild the scripts");
         std::string status = scripts_->isBuilding()        ? "Scripts: compiling..."
                              : scripts_->lastBuildFailed() ? "Scripts: build failed"
                                                            : "Scripts: " + std::to_string(scripts_->scriptNames().size()) +
                                                                  " loaded";
         Color c = scripts_->isBuilding() ? kOrange : scripts_->lastBuildFailed() ? kBad : kDim;
         // Only as much as fits before the controls on the right (gear, UI size)
-        float rightControls = r.width - 8 - 30 - 8 - textWidth("300%") - 34 - textWidth("UI size") - 8 - 42 - 12;
+        float rightControls = rightStart - 12;
         if (x + 42 + textWidth(status) > rightControls) status = "Scripts";
         if (x + 42 + textWidth(status) <= rightControls) {
             drawText(status, x + 42, y + 6, c);
@@ -912,21 +1004,29 @@ void Editor::drawToolbar(Rectangle r) {
     }
     if (exporter_ && exporter_->busy()) {
         std::string status = "Exporting " + exporter_->currentLabel() + "...";
-        drawText(status, x, y + 6, kOrange);
-        x += textWidth(status) + 16;
+        if (x + textWidth(status) > rightStart - 12) status = "Exporting...";
+        if (x + textWidth(status) <= rightStart - 12) {
+            drawText(status, x, y + 6, kOrange);
+            x += textWidth(status) + 16;
+        }
     }
 
     // Interface size, on the right (Ctrl + / Ctrl - / Ctrl 0 do the same)
     float ux = r.width - 8 - 30;
     if (GuiButton({ux, y, 30, h}, "+")) setUiScale(uiScale_ + 0.25f);
+    hint({ux, y, 30, h}, "Bigger interface (Ctrl +)");
     std::string pct = std::to_string(static_cast<int>(std::lround(uiScale_ * 100))) + "%";
-    ux -= 4 + textWidth("300%") + 4;
+    ux -= pctW;
     drawText(pct, ux + 4 + (textWidth("300%") - textWidth(pct)) / 2, y + 6, kText);
     ux -= 34;
     if (GuiButton({ux, y, 30, h}, "-")) setUiScale(uiScale_ - 0.25f);
-    ux -= textWidth("UI size") + 8;
-    drawText("UI size", ux, y + 6, kDim);
+    hint({ux, y, 30, h}, "Smaller interface (Ctrl -)");
+    if (showLabel) {
+        ux -= labelW;
+        drawText("UI size", ux, y + 6, kDim);
+    }
     ux -= 42;
+    hint({ux, y, 34, h}, "Settings");
     if (GuiButton({ux, y, 34, h}, GuiIconText(ICON_GEAR, nullptr))) {
         openPopup({ux, y + h + 2}, {"Code Editor...", "Run Instances...", "Reset Panel Layout"}, [this](int i) {
             if (i == 0) openCodeEditorDialog();
@@ -1034,8 +1134,9 @@ void Editor::drawSceneDock(Rectangle r) {
         }
         drawNodeIcon(n, ix + 18, row.y + (kRowH - 16) / 2);
         // Nodes that come from an instanced scene are drawn in a softer colour.
-        drawText(n->name + (n->instanceMissing ? "  (missing scene)" : ""), ix + 40, row.y + 4,
-                 n->instanceMissing ? kBad : n->inInstance ? theme().colors.instancedText : kText);
+        float iconsW = (!n->sceneFile.empty() ? 50.0f : !n->scriptName.empty() ? 28.0f : 4.0f);
+        drawFit(n->name + (n->instanceMissing ? "  (missing scene)" : ""), ix + 40, row.y + 4,
+                row.x + row.width - iconsW - (ix + 40), n->instanceMissing ? kBad : n->inInstance ? theme().colors.instancedText : kText);
         if (!n->sceneFile.empty()) {  // instanced scene: a scene icon at the right
             GuiDrawIcon(ICON_LAYERS, static_cast<int>(row.x + row.width - 46), static_cast<int>(row.y + 4), 1,
                         n->instanceMissing ? kBad : kAccent);
@@ -1186,7 +1287,8 @@ void Editor::drawFileSystem(Rectangle r) {
         std::string label = f.label;
         if (f.kind == FileEntry::Script && !f.scriptClass.empty() && !ScriptRegistry::has(f.scriptClass))
             label += ScriptReloader::supported() ? "  (not loaded)" : "  (rebuild)";
-        drawText(label, ix + 26, row.y + 4, f.kind == FileEntry::Scene && f.path == scenePath_ ? kAccent : kText);
+        drawFit(label, ix + 26, row.y + 4, row.x + row.width - ix - 30,
+                f.kind == FileEntry::Scene && f.path == scenePath_ ? kAccent : kText);
 
         if (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
             drag_ = DragState{DragKind::File, nullptr, rows[i].file, mouse, false};
@@ -1530,8 +1632,15 @@ void Editor::drawViewport(Rectangle r) {
     std::snprintf(info, sizeof info, "Zoom %d%%   Mouse %.0f, %.0f", static_cast<int>(viewCam_.zoom * 100 + 0.5f),
                   world.x, world.y);
     drawText(info, r.x + 10, r.y + 8, kDim);
-    drawText("Drag: move  Handle: rotate (Shift snaps)  Ctrl: grid snap  Wheel: zoom  Right/Middle drag: pan  Home: show all",
-             r.x + 10, r.y + r.height - 24, Fade(kDim, 0.8f));
+    // The controls, as many as fit
+    std::string controls;
+    for (const char* c : {"Drag: move", "Handle: rotate (Shift snaps)", "Ctrl: grid snap", "Wheel: zoom",
+                          "Right/Middle drag: pan", "Home: show all"}) {
+        std::string more = controls.empty() ? c : controls + "  " + c;
+        if (textWidth(more) > r.width - 20) break;
+        controls = more;
+    }
+    drawText(controls, r.x + 10, r.y + r.height - 24, Fade(kDim, 0.8f));
     EndScissorMode();
     DrawRectangleLinesEx(r, 1, kBorder);
 }
@@ -1681,7 +1790,7 @@ void Editor::propertyRow(Property& p, float x, float& y, float width, const std:
     if (inspectorOriginal_.is_object() && inspectorOriginal_.contains(p.name) && inspectorCurrent_.contains(p.name) &&
         inspectorOriginal_[p.name] != inspectorCurrent_[p.name]) {
         DrawRectangleRec({x - 6, y + 4, 3, 16}, kOrange);
-        drawText(label, x, y + 4, kOrange);
+        drawFit(label, x, y + 4, labelW - 30, kOrange);
         if (GuiButton({x + labelW - 26, y + 2, 22, 20}, GuiIconText(ICON_UNDO, nullptr))) {
             touch();
             nlohmann::json one;
@@ -1689,7 +1798,7 @@ void Editor::propertyRow(Property& p, float x, float& y, float width, const std:
             applyPropertyList({p}, one);
         }
     } else {
-        drawText(label, x, y + 4, kDim);
+        drawFit(label, x, y + 4, labelW - 6, kDim);  // a long name is cut short (all of it shows on hover)
     }
 
     switch (p.kind) {
@@ -2004,8 +2113,9 @@ void Editor::drawInspector(Rectangle r) {
     Color statusColor = selected_->scriptName.empty() ? kDim
                         : ScriptRegistry::has(selected_->scriptName) ? kGood
                                                                      : kOrange;
-    drawText(status, x, y + 4, statusColor);
-    if (fs::path file = scriptFileOf(selected_->scriptName); !file.empty()) {
+    fs::path scriptFile = scriptFileOf(selected_->scriptName);
+    drawFit(status, x, y + 4, w - (scriptFile.empty() ? 0 : 84), statusColor);
+    if (fs::path file = scriptFile; !file.empty()) {
         if (GuiButton({x + w - 76, y, 76, 24}, GuiIconText(ICON_PENCIL, "Edit"))) openInCodeEditor(file);
     }
     if (!selected_->scriptName.empty() && !ScriptRegistry::has(selected_->scriptName)) {
@@ -2107,7 +2217,9 @@ void Editor::log(const std::string& message, Color color) {
             for (size_t p; (p = line.find(curly)) != std::string::npos;) line.replace(p, 3, "'");
         for (const char* curly : {"\xE2\x80\x9C", "\xE2\x80\x9D"})
             for (size_t p; (p = line.find(curly)) != std::string::npos;) line.replace(p, 3, "\"");
-        LogLine entry{line, color, {}, 0, 0};
+        LogLine entry;
+        entry.text = line;
+        entry.color = color;
         if (auto m = parseCompilerLine(line)) {
             // Compiler messages can be clicked to open the file at that line.
             std::error_code ec;
@@ -2151,7 +2263,17 @@ void Editor::drawOutput(Rectangle r) {
 
     Rectangle area{r.x, r.y + kHeaderH, r.width, r.height - kHeaderH};
     const float lineH = 20;
-    Rectangle content{0, 0, area.width - 16, logLines_.size() * lineH + 8};
+    // Long lines wrap to the panel's width (kept until the width changes)
+    float textW = std::max(40.0f, area.width - 16 - 16);
+    size_t rows = 0;
+    for (LogLine& l : logLines_) {
+        if (l.rowsWidth != textW) {
+            l.rows = wrapText(l.text, textW);
+            l.rowsWidth = textW;
+        }
+        rows += l.rows.size();
+    }
+    Rectangle content{0, 0, area.width - 16, rows * lineH + 8};
     if (scrollLogToBottom_) {
         outputScroll_.y = std::min(0.0f, -(content.height - (area.height - 2)));
         scrollLogToBottom_ = false;
@@ -2159,19 +2281,23 @@ void Editor::drawOutput(Rectangle r) {
     Rectangle view{};
     GuiScrollPanel(area, nullptr, content, &outputScroll_, &view);
     beginClip(view);
-    for (size_t i = 0; i < logLines_.size(); ++i) {
-        float y = view.y + outputScroll_.y + 4 + i * lineH;
-        if (y + lineH < view.y || y > view.y + view.height) continue;
-        drawText(logLines_[i].text, view.x + 8, y, logLines_[i].color);
-        const LogLine& l = logLines_[i];
-        if (!l.file.empty() && !GuiIsLocked() && mouseIn(view) && mouseIn({view.x, y, view.width, lineH})) {
-            DrawLineEx({view.x + 8, y + 17}, {view.x + 8 + textWidth(l.text), y + 17}, 1, l.color);
-            mouseCursor_ = MOUSE_CURSOR_POINTING_HAND;
-            if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
-                if (codeEditor_.builtin) openDocument(l.file, l.line, l.column);
-                else openInCodeEditor(l.file);
+    float y = view.y + outputScroll_.y + 4;
+    for (const LogLine& l : logLines_) {
+        float h = l.rows.size() * lineH;
+        if (y + h >= view.y && y <= view.y + view.height) {
+            for (size_t k = 0; k < l.rows.size(); ++k) drawText(l.rows[k], view.x + 8, y + k * lineH, l.color);
+            if (!l.file.empty() && !GuiIsLocked() && mouseIn(view) && mouseIn({view.x, y, view.width, h})) {
+                for (size_t k = 0; k < l.rows.size(); ++k)
+                    DrawLineEx({view.x + 8, y + k * lineH + 17}, {view.x + 8 + textWidth(l.rows[k]), y + k * lineH + 17}, 1,
+                               l.color);
+                mouseCursor_ = MOUSE_CURSOR_POINTING_HAND;
+                if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                    if (codeEditor_.builtin) openDocument(l.file, l.line, l.column);
+                    else openInCodeEditor(l.file);
+                }
             }
         }
+        y += h;
     }
     EndScissorMode();
 }
@@ -2298,7 +2424,7 @@ void Editor::drawAnimationPanel(Rectangle r, AnimatedSprite2D& sprite) {
         if (static_cast<int>(i) == animSel_) DrawRectangleRec(row, kSelect);
         else if (hover) DrawRectangleRec(row, kHover);
         bool startsWith = sprite.autoplay && sprite.animation == anims[i].name;
-        drawText(anims[i].name, row.x + 8, row.y + 4, kText);
+        drawFit(anims[i].name, row.x + 8, row.y + 4, row.width - 16 - (startsWith ? textWidth("(start)") + 8 : 0), kText);
         if (startsWith) drawText("(start)", row.x + row.width - textWidth("(start)") - 8, row.y + 4, kGood);
         if (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
             animSel_ = static_cast<int>(i);
@@ -2437,7 +2563,7 @@ void Editor::drawSheetDialog() {
     }
     if (GuiButton({x + 404, y, 70, 26}, "Clear")) sheet_.picked.clear();
     y += 36;
-    drawText("Click frames in the order they should play (click again to unpick).", x, y, kDim);
+    drawFit("Click frames in the order they should play (click again to unpick).", x, y, w, kDim);
     y += 24;
 
     // The sheet with its grid; picked frames show their order.
@@ -2494,6 +2620,39 @@ void Editor::drawSheetDialog() {
 // ===========================================================================
 void Editor::openPopup(Vector2 at, std::vector<std::string> items, std::function<void(int)> onPick) {
     popup_ = Popup{true, at, std::move(items), std::move(onPick), true};
+}
+
+void Editor::hint(Rectangle r, const std::string& text) {
+    if (!GuiIsLocked() && mouseIn(r)) hintText_ = text;
+}
+
+void Editor::drawFit(const std::string& text, float x, float y, float maxWidth, Color c, bool fromLeft) {
+    std::string shown = fitText(text, maxWidth, fromLeft);
+    drawText(shown, x, y, c);
+    if (shown != text) hint({x, y - 2, textWidth(shown), 20}, text);
+}
+
+void Editor::drawHint() {
+    std::string text = std::move(hintText_);
+    hintText_.clear();
+    if (text != shownHint_) {
+        shownHint_ = text;
+        hintSince_ = GetTime();
+    }
+    if (text.empty() || popup_.open || GetTime() - hintSince_ < 0.4) return;
+    float sw = screenW(), sh = screenH();
+    // Long hints wrap at about half the window's width
+    std::vector<std::string> lines = wrapText(text, std::min(520.0f, sw / 2));
+    float w = 0;
+    for (auto& l : lines) w = std::max(w, textWidth(l));
+    float lh = 20, bw = w + 16, bh = lines.size() * lh + 8;
+    Vector2 m = GetMousePosition();
+    float bx = std::clamp(m.x + 12, 4.0f, std::max(4.0f, sw - bw - 4));
+    float by = m.y + 22;
+    if (by + bh > sh - 4) by = m.y - bh - 6;
+    DrawRectangleRec({bx, by, bw, bh}, kPanel);
+    DrawRectangleLinesEx({bx, by, bw, bh}, 1, kBorder);
+    for (size_t i = 0; i < lines.size(); ++i) drawText(lines[i], bx + 8, by + 4 + i * lh, kText);
 }
 
 void Editor::drawPopup() {
@@ -2613,7 +2772,7 @@ void Editor::drawCodeEditorDialog() {
     float sw = screenW(), sh = screenH();
     DrawRectangle(0, 0, static_cast<int>(sw), static_cast<int>(sh), Fade(BLACK, 0.5f));
     float listH = (editors.size() + 1) * kRowH + 8;
-    float w = 560, h = 96 + listH + 96;
+    float w = std::min(560.0f, sw - 20), h = 96 + listH + 96;
     Rectangle box{std::floor(sw / 2 - w / 2), std::floor(std::max(8.0f, sh / 2 - h / 2)), w, h};
     bool cancel = GuiWindowBox(box, "Code Editor") != 0;
     float x = box.x + 14, y = box.y + 36, iw = box.width - 28;
@@ -2637,7 +2796,12 @@ void Editor::drawCodeEditorDialog() {
                            : editors[i].builtin         ? "the Script tab, inside Sprout"
                            : editors[i].command.empty() ? "whatever the system opens the file with"
                                                         : editors[i].command;
-        if (!hint.empty()) drawText(hint, row.x + row.width - textWidth(hint) - 8, row.y + 4, kDim);
+        if (!hint.empty()) {
+            // Right-aligned, in the room the name leaves
+            float room = row.width - 28 - textWidth(label) - 24;
+            std::string shown = fitText(hint, room);
+            if (room > 30) drawFit(hint, row.x + row.width - textWidth(shown) - 8, row.y + 4, room, kDim);
+        }
         if (mouseIn(row) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !GuiIsLocked()) {
             d.selected = static_cast<int>(i);
             if (!isCustom) std::snprintf(d.command, sizeof d.command, "%s", editors[i].command.c_str());
@@ -2654,9 +2818,9 @@ void Editor::drawCodeEditorDialog() {
     // Typing a command of your own makes it a custom one.
     if (before != d.command) d.selected = static_cast<int>(editors.size());
     y += 34;
-    drawText("{file} = the file, {project} = the project folder.", x, y, kDim);
+    drawFit("{file} = the file, {project} = the project folder.", x, y, iw, kDim);
     y += 20;
-    drawText("Saved for you on this computer (all projects).", x, y, kDim);
+    drawFit("Saved for you on this computer (all projects).", x, y, iw, kDim);
 
     bool ok = (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER));
     if (GuiButton({box.x + box.width - 200, box.y + box.height - 42, 90, 30}, "OK")) ok = true;
@@ -3158,19 +3322,28 @@ void Editor::drawScriptView(Rectangle r) {
         drawText("compiling...", sx, sy, kOrange);
         sx += textWidth("compiling...") + 24;
     }
+    float statusEnd = status.x + status.width - 10;
     if (doc->language == Language::Cpp && checker_) {
         std::string engine = checker_->engine();
         std::string text = engine.empty()     ? "errors shown when saved"
                            : checker_->busy() ? "checking (" + engine + ")..."
                                               : "checked live (" + engine + ")";
-        drawText(text, sx, sy, kDim);
+        if (sx + textWidth(text) <= statusEnd) {
+            drawText(text, sx, sy, kDim);
+            sx += textWidth(text) + 24;
+        }
     }
+    // The file on the right, in whatever room is left (its path shortened from the left)
     std::error_code ec;
     std::string rel = fs::relative(doc->path, projectDir_, ec).generic_string();
     if (ec || rel.empty() || rel.rfind("..", 0) == 0) rel = doc->path.string();
     std::string right = std::string(doc->language == Language::Cpp ? "C++" : doc->language == Language::Json ? "JSON" : "Text") +
                         "   " + rel;
-    drawText(right, status.x + status.width - textWidth(right) - 10, sy, kDim);
+    if (statusEnd - sx < textWidth(right)) right = rel;
+    if (statusEnd - sx >= 60) {
+        right = fitText(right, statusEnd - sx, true);
+        drawText(right, statusEnd - textWidth(right), sy, kDim);
+    }
 
     if (toClose) closeDocument(toClose);
 }
@@ -3273,14 +3446,15 @@ void Editor::drawProjectManager() {
             else if (hover) DrawRectangleRec(row, kHover);
             const fs::path& p = projects_.list[i];
             std::string name = projects::projectName(p) + (p == current ? "   (open now)" : "");
-            drawText(name, row.x + 10, row.y + 5, p == current ? kGood : kText);
-            drawText(p.string(), row.x + 10, row.y + 25, kDim);
+            drawFit(name, row.x + 10, row.y + 5, row.width - 20, p == current ? kGood : kText);
+            drawFit(p.string(), row.x + 10, row.y + 25, row.width - 20, kDim, true);
             if (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
                 if (projects_.selected == static_cast<int>(i)) switchProject(p);  // a second click opens it
                 projects_.selected = static_cast<int>(i);
             }
         }
-        if (projects_.list.empty()) drawText("No projects yet: make one with New Project.", view.x + 10, view.y + 10, kDim);
+        if (projects_.list.empty())
+            drawWrapped("No projects yet: make one with New Project.", view.x + 10, view.y + 10, view.width - 20, kDim);
         EndScissorMode();
 
         // Buttons on the right
@@ -3316,8 +3490,7 @@ void Editor::drawProjectManager() {
             projects_.selected = -1;
         }
         if (!hasSel) GuiEnable();
-        drawText("Removing only forgets it here;", bx, y + 168, kDim);
-        drawText("its files stay on disk.", bx, y + 186, kDim);
+        drawWrapped("Removing only forgets it here; its files stay on disk.", bx, y + 168, bw2, kDim, 18);
         if (GuiButton({box.x + box.width - 106, by, 90, 30}, "Close")) close = true;
     } else if (projects_.mode == 1) {
         const float labelW = 110;
@@ -3355,14 +3528,18 @@ void Editor::drawProjectManager() {
         y += 32;
         const projects::ProjectTemplate* chosen =
             projects_.templateIndex < static_cast<int>(templates.size()) ? &templates[projects_.templateIndex] : nullptr;
-        if (chosen) drawText(chosen->description, x + labelW, y, kDim);
+        if (chosen) y += drawWrapped(chosen->description, x + labelW, y, w - labelW, kDim) - 20;
         y += 34;
         std::string folder;
         for (char c : std::string(projects_.name)) folder += (c == '/' || c == '\\' || c == ':') ? '_' : c;
+        // No spaces or dots at the ends (Windows can't have a folder named "My Game ")
+        while (!folder.empty() && (folder.back() == ' ' || folder.back() == '.')) folder.pop_back();
+        while (!folder.empty() && folder.front() == ' ') folder.erase(0, 1);
         fs::path target = fs::path(projects_.location) / folder;
         drawText("The project will be made in:", x, y, kDim);
-        drawText(target.string(), x, y + 20, kAccent);
-        drawText("with scenes/, assets/ and scripts/ folders and a first scene.", x, y + 44, kDim);
+        y += 20;
+        y += drawWrapped(target.string(), x, y, w, kAccent);
+        drawWrapped("with scenes/, assets/ and scripts/ folders and a first scene.", x, y + 4, w, kDim);
         if (GuiButton({box.x + box.width - 210, by, 100, 30}, "Back")) projects_.mode = 0;
         if (GuiButton({box.x + box.width - 106, by, 90, 30}, "Create")) {
             std::string error;
@@ -3386,7 +3563,7 @@ void Editor::drawProjectManager() {
             });
         }
         y += 40;
-        drawText("Type or paste the path of a project folder (the one with project.json in it).", x, y, kDim);
+        drawWrapped("Type or paste the path of a project folder (the one with project.json in it).", x, y, w, kDim);
         if (GuiButton({box.x + box.width - 210, by, 100, 30}, "Back")) projects_.mode = 0;
         if (GuiButton({box.x + box.width - 106, by, 90, 30}, "Open")) {
             fs::path p = projects_.path;
@@ -3398,7 +3575,13 @@ void Editor::drawProjectManager() {
             }
         }
     }
-    if (!projects_.error.empty()) drawText(projects_.error, x, by + 6, kBad);
+    // An error goes left of the buttons at the bottom (wrapping upwards if it's long)
+    if (!projects_.error.empty()) {
+        float errW = box.x + box.width - 222 - x;
+        std::vector<std::string> lines = wrapText(projects_.error, errW);
+        for (size_t i = 0; i < lines.size(); ++i)
+            drawText(lines[i], x, by + 6 - (lines.size() - 1 - i) * 18.0f, kBad);
+    }
 
     if (close || (IsKeyPressed(KEY_ESCAPE) && !editing)) {
         if (projects_.mode != 0) projects_.mode = 0;
@@ -3452,7 +3635,7 @@ void Editor::drawExportDialog() {
     y += 34;
 
     label("Main scene");
-    if (GuiButton({x + labelW, y, w - labelW, 26}, settings_.mainScene.c_str())) {
+    if (GuiButton({x + labelW, y, w - labelW, 26}, fitText(settings_.mainScene, w - labelW - 16, true).c_str())) {
         std::vector<std::string> scenes;
         for (auto& f : files_)
             if (f.kind == FileEntry::Scene) scenes.push_back(f.path);
@@ -3480,11 +3663,8 @@ void Editor::drawExportDialog() {
         export_.chosen[i] = on && t.available;
         drawText(t.label, x + 32, y + 4, t.available ? kText : kDim);
         drawText(t.available ? "ready" : "not available", x + 120, y + 4, t.available ? kGood : kOrange);
-        // The note, shortened to fit
-        std::string note = t.note;
-        float room = w - 250;
-        while (note.size() > 4 && textWidth(note) > room) note = note.substr(0, note.size() - 4) + "...";
-        drawText(note, x + 240, y + 4, kDim);
+        // The note, shortened to fit (all of it shows when the mouse is on it)
+        drawFit(t.note, x + 240, y + 4, w - 240, kDim);
         y += 30;
     }
     y += 4;
@@ -3496,9 +3676,7 @@ void Editor::drawExportDialog() {
         label("Emscripten");
         std::string where = emsdk.empty() ? "emsdk not found" : emsdk.string() + (ready ? "" : "  (not set up yet)");
         float buttonsW = (platform::canPickFolder() ? 104 : 0) + (!emsdk.empty() && !ready ? 104 : 0);
-        float room = w - labelW - buttonsW - 8;
-        while (where.size() > 4 && textWidth(where) > room) where = "..." + where.substr(4);
-        drawText(where, x + labelW, y + 5, ready ? kText : kOrange);
+        drawFit(where, x + labelW, y + 5, w - labelW - buttonsW - 8, ready ? kText : kOrange, true);
         float bx = x + w - buttonsW;
         if (!emsdk.empty() && !ready) {
             if (exporter_->busy()) GuiDisable();
@@ -3539,7 +3717,7 @@ void Editor::drawExportDialog() {
         });
     }
     y += 34;
-    drawText("Each platform goes in its own folder inside it (linux/, windows/, macos/, web/).", x, y, kDim);
+    drawWrapped("Each platform goes in its own folder inside it (linux/, windows/, macos/, web/).", x, y, w, kDim);
 
     // Bottom row
     float by = box.y + box.height - 44;
@@ -3550,10 +3728,11 @@ void Editor::drawExportDialog() {
         for (size_t i = 0; i < export_.targets.size(); ++i) export_.chosen[i] = chosen[i] && export_.targets[i].available;
     }
     export_.wasBusy = busy;
+    float statusW = box.x + box.width - 16 - 290 - 8 - x;  // left of the three buttons
     if (busy) {
-        drawText("Exporting " + exporter_->currentLabel() + "... (see Output)", x, by + 6, kOrange);
+        drawFit("Exporting " + exporter_->currentLabel() + "... (see Output)", x, by + 6, statusW, kOrange);
     } else if (std::none_of(export_.chosen.begin(), export_.chosen.end(), [](bool b) { return b; })) {
-        drawText("Tick a platform to export.", x, by + 6, kDim);
+        drawFit("Tick a platform to export.", x, by + 6, statusW, kDim);
     }
     float bx = box.x + box.width - 16;
     bx -= 90;
@@ -3647,13 +3826,17 @@ void Editor::drawModal() {
     if (confirm_.open) {
         float sw = screenW(), sh = screenH();
         DrawRectangle(0, 0, static_cast<int>(sw), static_cast<int>(sh), Fade(BLACK, 0.5f));
-        Rectangle box{sw / 2 - 230, sh / 2 - 70, 460, 140};
+        float bw = std::min(460.0f, sw - 20);
+        std::vector<std::string> lines = wrapText(confirm_.message, bw - 28);
+        float bh = 116 + lines.size() * 20.0f;
+        Rectangle box{std::floor(sw / 2 - bw / 2), std::floor(sh / 2 - bh / 2), bw, bh};
         bool cancel = GuiWindowBox(box, "Unsaved changes") != 0;
-        GuiLabel({box.x + 14, box.y + 40, box.width - 28, 24}, confirm_.message.c_str());
+        for (size_t i = 0; i < lines.size(); ++i) drawText(lines[i], box.x + 14, box.y + 42 + i * 20.0f, kText);
         int choice = -1;
-        if (GuiButton({box.x + box.width - 318, box.y + 94, 96, 30}, "Save")) choice = 0;
-        if (GuiButton({box.x + box.width - 216, box.y + 94, 110, 30}, "Don't Save")) choice = 1;
-        if (GuiButton({box.x + box.width - 100, box.y + 94, 86, 30}, "Cancel") || IsKeyPressed(KEY_ESCAPE)) cancel = true;
+        float buttonsY = box.y + box.height - 46;
+        if (GuiButton({box.x + box.width - 318, buttonsY, 96, 30}, "Save")) choice = 0;
+        if (GuiButton({box.x + box.width - 216, buttonsY, 110, 30}, "Don't Save")) choice = 1;
+        if (GuiButton({box.x + box.width - 100, buttonsY, 86, 30}, "Cancel") || IsKeyPressed(KEY_ESCAPE)) cancel = true;
         if (cancel) {
             confirm_.open = false;
         } else if (choice >= 0) {
@@ -3676,13 +3859,17 @@ void Editor::drawModal() {
     if (!dialog_.open) return;
     float sw = screenW(), sh = screenH();
     DrawRectangle(0, 0, static_cast<int>(sw), static_cast<int>(sh), Fade(BLACK, 0.5f));
-    Rectangle box{sw / 2 - 220, sh / 2 - 85, 440, 170};
+    float bw = std::min(440.0f, sw - 20);
+    std::vector<std::string> lines = wrapText(dialog_.message, bw - 28);
+    float extra = (lines.size() - 1) * 20.0f;
+    Rectangle box{std::floor(sw / 2 - bw / 2), std::floor(sh / 2 - (170 + extra) / 2), bw, 170 + extra};
     bool cancel = GuiWindowBox(box, dialog_.title.c_str()) != 0;
-    GuiLabel({box.x + 14, box.y + 36, box.width - 28, 24}, dialog_.message.c_str());
-    GuiTextBox({box.x + 14, box.y + 64, box.width - 28, 30}, dialog_.text, sizeof dialog_.text, true);
+    for (size_t i = 0; i < lines.size(); ++i) drawText(lines[i], box.x + 14, box.y + 40 + i * 20.0f, kText);
+    GuiTextBox({box.x + 14, box.y + 64 + extra, box.width - 28, 30}, dialog_.text, sizeof dialog_.text, true);
     bool ok = IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER);
-    if (GuiButton({box.x + box.width - 200, box.y + 124, 90, 30}, "OK")) ok = true;
-    if (GuiButton({box.x + box.width - 104, box.y + 124, 90, 30}, "Cancel") || IsKeyPressed(KEY_ESCAPE)) cancel = true;
+    if (GuiButton({box.x + box.width - 200, box.y + 124 + extra, 90, 30}, "OK")) ok = true;
+    if (GuiButton({box.x + box.width - 104, box.y + 124 + extra, 90, 30}, "Cancel") || IsKeyPressed(KEY_ESCAPE))
+        cancel = true;
 
     if (ok && !cancel) {
         auto onOk = dialog_.onOk;
@@ -4125,7 +4312,7 @@ void Editor::signalRows(float x, float& y, float w) {
     bool editable = !selected_->inInstance && !playTree_;
     for (const SignalInfo& s : signals) {
         GuiDrawIcon(ICON_LINK_NET, static_cast<int>(x), static_cast<int>(y + 3), 1, kAccent);
-        drawText(s.name, x + 22, y + 4, kText);
+        drawFit(s.name, x + 22, y + 4, w - 22 - (editable ? 86 : 0), kText);
         if (!s.args.empty() && x + 22 + textWidth(s.name) + 6 + textWidth("(" + s.args + ")") < x + w - 84)
             drawText("(" + s.args + ")", x + 22 + textWidth(s.name) + 6, y + 4, kDim);
         if (editable && GuiButton({x + w - 80, y, 80, 24}, "Connect...")) openConnectDialog(s);
@@ -4140,7 +4327,7 @@ void Editor::signalRows(float x, float& y, float w) {
             Rectangle row{x + 18, y, w - 18 - (editable ? 30 : 0), 22};
             bool hover = mouseIn(row) && !GuiIsLocked();
             if (hover) DrawRectangleRec(row, kHover);
-            drawText(label, row.x + 4, y + 3, target ? kGood : kBad);
+            drawFit(label, row.x + 4, y + 3, row.width - 8, target ? kGood : kBad);
             if (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && target)
                 addCallableToScript(target->scriptName, c.method, s.args, "");  // (opens it; adds it if it's missing)
             if (editable && GuiButton({x + w - 26, y, 26, 22}, GuiIconText(ICON_CROSS_SMALL, nullptr))) {
@@ -4152,9 +4339,9 @@ void Editor::signalRows(float x, float& y, float w) {
             y += 24;
         }
     }
-    drawText(selected_->inInstance ? "Connect this in its own scene file." : "Or in a script: connect(node, \"name\", ...)",
-             x, y + 2, kDim);
-    y += 26;
+    y += drawWrapped(selected_->inInstance ? "Connect this in its own scene file." : "Or in a script: connect(node, \"name\", ...)",
+                     x, y + 2, w, kDim) +
+         6;
 }
 
 void Editor::openConnectDialog(const SignalInfo& signal) {
@@ -4183,9 +4370,10 @@ void Editor::drawConnectDialog() {
     bool cancel = GuiWindowBox(box, ("Connect a Signal: " + d.signal.name).c_str()) != 0;
     float x = box.x + 14, y = box.y + 38, iw = box.width - 28;
 
-    drawText("When '" + d.emitter->name + "' sends " + d.signal.name + "(" + d.signal.args + "), call a function of:", x, y,
-             kText);
-    y += 26;
+    y += drawWrapped("When '" + d.emitter->name + "' sends " + d.signal.name + "(" + d.signal.args +
+                         "), call a function of:",
+                     x, y, iw, kText) +
+         6;
 
     // The scene's nodes: pick the one whose script gets the call
     struct Row {
@@ -4259,7 +4447,7 @@ void Editor::drawConnectDialog() {
         note = "Adds  void " + method + "(" + d.signal.args + ")  to " + d.target->scriptName +
                " if it isn't there, and shows it.";
     }
-    drawText(note, x, y, noteColor);
+    drawWrapped(note, x, y, iw, noteColor);
 
     bool ok = hasScript && validName && !inInstance;
     if (!ok) GuiDisable();
@@ -4379,7 +4567,7 @@ void Editor::drawRunInstancesDialog() {
     RunInstancesDialog& d = instancesDialog_;
     float sw = screenW(), sh = screenH();
     DrawRectangle(0, 0, static_cast<int>(sw), static_cast<int>(sh), Fade(BLACK, 0.5f));
-    float w = 600, h = 236 + ProjectSettings::kMaxInstances * 34;
+    float w = std::min(600.0f, sw - 20), h = 236 + ProjectSettings::kMaxInstances * 34;
     Rectangle box{std::floor(sw / 2 - w / 2), std::floor(std::max(8.0f, sh / 2 - h / 2)), w, h};
     bool cancel = GuiWindowBox(box, "Run Instances") != 0;
     float x = box.x + 14, y = box.y + 38, iw = box.width - 28;
@@ -4390,7 +4578,8 @@ void Editor::drawRunInstancesDialog() {
     std::string n = std::to_string(d.count);
     drawText(n, cx + 36 + (12 - textWidth(n)) / 2, y + 5, kAccent);
     if (GuiButton({cx + 56, y, 28, 26}, "+") && d.count < ProjectSettings::kMaxInstances) ++d.count;
-    drawText(d.count == 1 ? "copy of the game." : "copies of the game, to test multiplayer.", cx + 94, y + 5, kText);
+    drawFit(d.count == 1 ? "copy of the game." : "copies of the game, to test multiplayer.", cx + 94, y + 5,
+            x + iw - cx - 94, kText);
     y += 40;
 
     drawText("Each copy's command line (for its scripts):", x, y, kDim);
@@ -4406,8 +4595,9 @@ void Editor::drawRunInstancesDialog() {
         y += 34;
     }
     y += 4;
-    drawText("e.g. --host on one and --join 127.0.0.1 on the others. Scripts read them", x, y, kDim);
-    drawText("with hasArg(\"--host\") and argValue(\"--join\"). --server: no window.", x, y + 20, kDim);
+    drawWrapped("e.g. --host on one and --join 127.0.0.1 on the others. Scripts read them with hasArg(\"--host\") "
+                "and argValue(\"--join\"). --server: no window.",
+                x, y, iw, kDim);
 
     bool ok = d.editing < 0 && (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER));
     if (GuiButton({box.x + box.width - 200, box.y + box.height - 42, 90, 30}, "OK")) ok = true;
