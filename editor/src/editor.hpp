@@ -347,6 +347,9 @@ private:
 
     std::filesystem::path workDir_;  // this project's builds (scripts, exports)
     std::optional<std::filesystem::path> switchTo_;
+    // Play was pressed while the scripts were compiling: it starts when they're
+    // done (true: the main scene, false: the scene being edited).
+    std::optional<bool> playWhenBuilt_;
     std::future<std::optional<std::filesystem::path>> folderPick_;
     std::function<void(const std::filesystem::path&)> folderPicked_;
     struct ProjectManagerDialog {

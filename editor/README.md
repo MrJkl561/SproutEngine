@@ -198,7 +198,7 @@ how many copies of the game Play starts, for multiplayer
 ([Run Instances](#multiplayer)). Next to it, the scripts' build status, with a
 button to rebuild them. The **gear button** has **Code Editor...**, **Run
 Instances...** and **Reset Panel Layout**. In a narrow window the buttons show only their
-icons; point at one to see its name. Text that's cut short with "..." (long
+icons. Point at any button to see what it does. Text that's cut short with "..." (long
 names, paths) shows in full when you point at it too.
 
 **UI size** - the editor follows your display scaling (for example 150% on
@@ -518,6 +518,12 @@ making a **New** script (it opens straight away). Each open file gets a tab.
   saves every open file
 - **Ctrl+F** find, **Ctrl+H** replace, **F3** next match, **Ctrl+G** go to line,
   **Ctrl+/** comment lines, **Ctrl+D** duplicate line, **Tab/Shift+Tab** indent
+- **Brackets and quotes close themselves**: typing `(`, `[`, `{`, `"` or `'`
+  adds the closing one after the cursor, and `<` does too after a template
+  name (`std::vector<`, `self<`, `template<`) or `#include` (not in `a < b`).
+  Typing the closer steps over it, Backspace between an empty pair deletes
+  both, and typing one with text selected puts the pair around the selection.
+  Not in comments.
 - **Errors as you type**: scripts are checked live with
   [clangd](https://clangd.llvm.org/) while you type, before saving. Problems get
   a wavy underline and their message after the line; the whole message, wrapped
@@ -763,6 +769,10 @@ and it works while the game is playing too:
 
 - The toolbar shows *Scripts: compiling...*, then *Scripts: N loaded*. The
   Output panel lists the scripts that were reloaded.
+- Pressing **Play** while the scripts are compiling (say, right after saving
+  one) waits for them, then plays, so the game always starts with the code you
+  just wrote. If they don't compile, it doesn't play and says so; **Stop**
+  (F8) cancels the wait.
 - If the code doesn't compile, the compiler's errors appear in the Output panel
   and the last working version keeps running. Fix the error, save, and it
   reloads.

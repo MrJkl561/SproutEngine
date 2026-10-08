@@ -39,6 +39,9 @@ public:
     // True once, when a build has finished. ok/output describe how it went.
     bool pollBuild(bool& ok, std::string& output);
     bool isBuilding() const { return building_; }
+    // A build is running, or about to (a script changed and hasn't been built
+    // yet). Looks at the files right now.
+    bool busy(double now);
     bool lastBuildFailed() const { return lastBuildFailed_; }
 
     bool libraryExists() const;

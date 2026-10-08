@@ -1,6 +1,7 @@
 #include "text_editor.hpp"
 
 #include <algorithm>
+#include <cstring>
 #include <cctype>
 #include <cmath>
 #include <fstream>
@@ -416,7 +417,109 @@ void TextDocument::insert(const std::string& text) {
     wantedCol_ = -1;
 }
 
+namespace {
+bool isWordChar(char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; }
+
+// Is `<` typed at col (in line) the start of a template's <...> or an
+// #include <...>, rather than "less than"?
+bool opensAngle(const std::string& line, int col) {
+    std::string before = line.substr(0, col);
+    size_t end = before.find_last_not_of(' ');
+    if (end == std::string::npos) return false;
+    std::string head = before.substr(0, end + 1);
+    if (head.size() >= 8 && head.compare(head.size() - 8, 8, "#include") == 0) return true;
+    if (end + 1 != before.size()) return false;  // "a <": a comparison
+    size_t start = end + 1;
+    while (start > 0 && (isWordChar(before[start - 1]) || before[start - 1] == ':')) --start;
+    std::string word = before.substr(start);
+    if (word.rfind("std::", 0) == 0) return true;
+    static const char* templates[] = {"template", "vector", "map", "unordered_map", "set", "unordered_set", "array",
+                                      "pair", "tuple", "optional", "variant", "unique_ptr", "shared_ptr", "weak_ptr",
+                                      "function", "static_cast", "dynamic_cast", "reinterpret_cast", "const_cast",
+                                      "make_unique", "make_shared", "numeric_limits", "self", "findNode", "getChild",
+                                      "as", "createNode"};
+    for (const char* t : templates)
+        if (word == t) return true;
+    return false;
+}
+}  // namespace
+
+bool TextDocument::autoPair(int codepoint) {
+    if (language == Language::Text || codepoint > 127) return false;
+    char ch = static_cast<char>(codepoint);
+    if (cursor_.line != autoCloseLine_) autoClosed_ = 0;
+    const std::string& line = lines_[cursor_.line];
+    char next = cursor_.col < static_cast<int>(line.size()) ? line[cursor_.col] : '\0';
+    char prev = cursor_.col > 0 ? line[cursor_.col - 1] : '\0';
+    bool inComment = line.substr(0, cursor_.col).find("//") != std::string::npos;
+
+    // A closer that was typed for you: step over it
+    if (!hasSelection() && autoClosed_ > 0 && next == ch && std::strchr(")]}>\"'", ch)) {
+        int left = autoClosed_ - 1;
+        moveTo({cursor_.line, cursor_.col + 1}, false);
+        autoClosed_ = left;
+        return true;
+    }
+    char close = ch == '(' ? ')' : ch == '[' ? ']' : ch == '{' ? '}' : ch == '"' ? '"' : ch == '\'' ? '\'' : ch == '<' ? '>' : 0;
+    if (!close || inComment) return false;
+    bool quote = ch == '"' || ch == '\'';
+    if (ch == '<' && (language != Language::Cpp || hasSelection() || !opensAngle(line, cursor_.col))) return false;
+    if (quote && language == Language::Json && ch == '\'') return false;
+    if (hasSelection()) {
+        // Wrap what's selected
+        if (cursor_.line != anchor_.line) return false;
+        auto [a, b] = selection();
+        std::string inner = selectedText();
+        beginEdit(EditKind::Other);
+        insert(std::string(1, ch) + inner + close);
+        anchor_ = {a.line, a.col + 1};
+        cursor_ = {b.line, b.col + 1};
+        return true;
+    }
+    // Only where nothing would be in the way: at the end of the line, before a
+    // space or a closer. Quotes: not right after a letter (it's an apostrophe
+    // or the end of a string), and not inside a string.
+    bool roomy = next == '\0' || next == ' ' || next == '\t' || std::strchr(")]};,>", next);
+    if (!roomy) return false;
+    if (quote) {
+        if (isWordChar(prev) || prev == '\\') return false;
+        int quotes = 0;
+        for (int i = 0; i < cursor_.col; ++i)
+            if (line[i] == ch && (i == 0 || line[i - 1] != '\\')) ++quotes;
+        if (quotes % 2 == 1) return false;
+    }
+    beginEdit(EditKind::Typing);
+    int closed = cursor_.line == autoCloseLine_ ? autoClosed_ : 0;
+    insert(std::string(1, ch) + close);
+    cursor_.col -= 1;  // between the two
+    anchor_ = cursor_;
+    lastEdit_ = EditKind::Typing;
+    autoCloseLine_ = cursor_.line;
+    autoClosed_ = closed + 1;
+    return true;
+}
+
+bool TextDocument::deletePair() {
+    if (hasSelection() || language == Language::Text) return false;
+    const std::string& line = lines_[cursor_.line];
+    if (cursor_.col <= 0 || cursor_.col >= static_cast<int>(line.size())) return false;
+    char a = line[cursor_.col - 1], b = line[cursor_.col];
+    bool pair = (a == '(' && b == ')') || (a == '[' && b == ']') || (a == '{' && b == '}') || (a == '"' && b == '"') ||
+                (a == '\'' && b == '\'') || (a == '<' && b == '>' && autoClosed_ > 0 && cursor_.line == autoCloseLine_);
+    if (!pair) return false;
+    beginEdit(EditKind::Deleting);
+    anchor_ = {cursor_.line, cursor_.col - 1};
+    cursor_ = {cursor_.line, cursor_.col + 1};
+    eraseSelection();
+    if (autoClosed_ > 0 && cursor_.line == autoCloseLine_) --autoClosed_;
+    return true;
+}
+
 void TextDocument::typeChar(int codepoint) {
+    if (autoPair(codepoint)) {
+        if (acOpen_) acOpen_ = false;
+        return;
+    }
     int size = 0;
     const char* utf8 = CodepointToUTF8(codepoint, &size);
     beginEdit(EditKind::Typing);
@@ -666,6 +769,7 @@ void TextDocument::moveTo(Pos p, bool select, bool keepColumn) {
     lastEdit_ = EditKind::Other;
     keepCursorVisible_ = true;
     blinkStart_ = GetTime();
+    autoClosed_ = 0;  // moved away: closers typed for you are just text now
 }
 
 void TextDocument::moveVertical(int lines, bool select) {
@@ -906,7 +1010,9 @@ void TextDocument::handleKeys() {
         else moveTo({cursor_.line, static_cast<int>(lines_[cursor_.line].size())}, shift);
     }
 
-    if (pressed(KEY_BACKSPACE)) {
+    if (pressed(KEY_BACKSPACE) && !ctrl && deletePair()) {
+        acOpen_ = false;
+    } else if (pressed(KEY_BACKSPACE)) {
         if (!hasSelection()) {
             Pos from = left(cursor_, ctrl);
             // In the indent, delete back to the previous tab stop.

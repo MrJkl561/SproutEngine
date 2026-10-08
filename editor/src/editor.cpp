@@ -858,6 +858,7 @@ void Editor::updateSplitters(float sw, float sh, float leftW, float rightW, floa
 
 void Editor::handleShortcuts() {
     bool scriptView = mainView_ == MainView::Script;
+    if (playWhenBuilt_ && !playTree_ && IsKeyPressed(KEY_F8)) stop();  // cancel a Play that's waiting
     if (playTree_) {
         bool typing = scriptView && (codeFocused_ || find_.findEdit || find_.withEdit);
         if (IsKeyPressed(KEY_F8) || (IsKeyPressed(KEY_ESCAPE) && !typing && !find_.open)) stop();
@@ -898,12 +899,17 @@ void Editor::drawToolbar(Rectangle r) {
     // When the window is too narrow for every button's name, buttons show only
     // their icon (the name appears when the mouse is over one): first the file
     // buttons, then Play / Play Scene / Stop, then the "UI size" label goes.
-    struct Btn { int icon; const char* label; float width; };
-    const Btn fileBtns[] = {{ICON_FILETYPE_HOME, "Projects", 100}, {ICON_FILE_NEW, "New", 76},
-                            {ICON_FOLDER_FILE_OPEN, "Open", 80},   {ICON_FILE_SAVE_CLASSIC, "Save", 76},
-                            {ICON_FILE_SAVE, "Save As", 92},       {ICON_FILE_EXPORT, "Export", 84}};
-    const Btn playBtns[] = {{ICON_PLAYER_PLAY, "Play", 84}, {ICON_FILETYPE_PLAY, "Play Scene", 120},
-                            {ICON_PLAYER_STOP, "Stop", 84}};
+    struct Btn { int icon; const char* label; float width; const char* what; };
+    const Btn fileBtns[] = {
+        {ICON_FILETYPE_HOME, "Projects", 100, "Projects: open another project or make a new one"},
+        {ICON_FILE_NEW, "New", 76, "New: start a new, empty scene"},
+        {ICON_FOLDER_FILE_OPEN, "Open", 80, "Open: open another scene of this project"},
+        {ICON_FILE_SAVE_CLASSIC, "Save", 76, "Save the scene (Ctrl+S)"},
+        {ICON_FILE_SAVE, "Save As", 92, "Save As: save the scene under another name"},
+        {ICON_FILE_EXPORT, "Export", 84, "Export: turn the project into a game for Windows, macOS, Linux or the web"}};
+    const Btn playBtns[] = {{ICON_PLAYER_PLAY, "Play", 84, "Play the game from its main scene (F5)"},
+                            {ICON_FILETYPE_PLAY, "Play Scene", 120, "Play the scene you're editing (F6)"},
+                            {ICON_PLAYER_STOP, "Stop", 84, "Stop the game and go back to editing (F8)"}};
     auto groupW = [&](const Btn* b, int n, bool compact) {
         float w = 0;
         for (int i = 0; i < n; ++i) w += (compact ? iconW : b[i].width) + gap;
@@ -924,7 +930,7 @@ void Editor::drawToolbar(Rectangle r) {
     auto button = [&](float& bx, const Btn& b, bool compact) {
         Rectangle rc{bx, y, compact ? iconW : b.width, h};
         bool pressed = GuiButton(rc, GuiIconText(b.icon, compact ? nullptr : b.label));
-        if (compact) hint(rc, b.label);
+        hint(rc, b.what);
         bx += rc.width + gap;
         return pressed;
     };
@@ -971,9 +977,10 @@ void Editor::drawToolbar(Rectangle r) {
     if (button(px, playBtns[0], compactPlay)) play(true);
     if (button(px, playBtns[1], compactPlay)) play(false);
     if (playing) GuiEnable();
-    if (!playing) GuiDisable();
+    bool canStop = playing || playWhenBuilt_.has_value();  // (Stop also cancels a Play that's waiting)
+    if (!canStop) GuiDisable();
     if (button(px, playBtns[2], compactPlay)) stop();
-    if (!playing) GuiEnable();
+    if (!canStop) GuiEnable();
     // Run Instances: how many copies of the game Play starts (multiplayer)
     if (playing) GuiDisable();
     std::string copies = settings_.runInstances > 1 ? "x" + std::to_string(settings_.runInstances) : "";
@@ -1060,11 +1067,13 @@ void Editor::drawSceneDock(Rectangle r) {
 
     float y = r.y + kHeaderH + 4, x = r.x + 6;
     float addW = std::min(88.0f, r.width - 12 - 5 * 33 - 4);  // the other five buttons are 30 wide
+    hint({x, y, addW, 26}, "Add a node inside the selected one");
     if (GuiButton({x, y, addW, 26}, GuiIconText(ICON_CIRCLE_ADD, addW >= 64 ? "Add" : nullptr))) {
         openPopup({x, y + 28}, nodeTypeNames(), [this](int i) { addNode(nodeTypeNames()[i]); });
     }
     x += addW + 4;
     // Instance a scene (like Godot's chain-link button)
+    hint({x, y, 30, 26}, "Add a scene: put a copy of another scene file here");
     if (GuiButton({x, y, 30, 26}, GuiIconText(ICON_LAYERS, nullptr))) {
         std::vector<std::string> scenes;
         for (auto& f : files_)
@@ -1079,12 +1088,16 @@ void Editor::drawSceneDock(Rectangle r) {
         }
     }
     x += 33;
+    hint({x, y, 30, 26}, "Duplicate the selected node (Ctrl+D)");
     if (GuiButton({x, y, 30, 26}, GuiIconText(ICON_FILE_COPY, nullptr))) duplicateSelected();
     x += 33;
+    hint({x, y, 30, 26}, "Delete the selected node (Delete)");
     if (GuiButton({x, y, 30, 26}, GuiIconText(ICON_BIN, nullptr))) deleteSelected();
     x += 33;
+    hint({x, y, 30, 26}, "Move the selected node up (drawn earlier, behind)");
     if (GuiButton({x, y, 30, 26}, GuiIconText(ICON_ARROW_UP_FILL, nullptr))) moveSelected(-1);
     x += 33;
+    hint({x, y, 30, 26}, "Move the selected node down (drawn later, in front)");
     if (GuiButton({x, y, 30, 26}, GuiIconText(ICON_ARROW_DOWN_FILL, nullptr))) moveSelected(1);
 
     Rectangle area{r.x, y + 32, r.width, r.y + r.height - (y + 32)};
@@ -1227,6 +1240,7 @@ void Editor::rescanFiles() {
 
 void Editor::drawFileSystem(Rectangle r) {
     drawHeader(r, "FileSystem");
+    hint({r.x + r.width - 34, r.y + 2, 28, 24}, "Look for new or changed files in the project folder");
     if (GuiButton({r.x + r.width - 34, r.y + 2, 28, 24}, GuiIconText(ICON_ROTATE_FILL, nullptr))) rescanFiles();
 
     struct Row {
@@ -1791,6 +1805,7 @@ void Editor::propertyRow(Property& p, float x, float& y, float width, const std:
         inspectorOriginal_[p.name] != inspectorCurrent_[p.name]) {
         DrawRectangleRec({x - 6, y + 4, 3, 16}, kOrange);
         drawFit(label, x, y + 4, labelW - 30, kOrange);
+        hint({x + labelW - 26, y + 2, 22, 20}, "Back to the value in the original scene");
         if (GuiButton({x + labelW - 26, y + 2, 22, 20}, GuiIconText(ICON_UNDO, nullptr))) {
             touch();
             nlohmann::json one;
@@ -1889,6 +1904,7 @@ void Editor::propertyRow(Property& p, float x, float& y, float width, const std:
                     storeScriptVars();  // (if this is a script variable, keep it before the next frame)
                 });
             }
+            hint({fx + fw - 24, y, 24, 24}, "Clear it");
             if (GuiButton({fx + fw - 24, y, 24, 24}, GuiIconText(ICON_CROSS_SMALL, nullptr)) && !path->empty()) {
                 touch();
                 path->clear();
@@ -1909,6 +1925,7 @@ void Editor::propertyRow(Property& p, float x, float& y, float width, const std:
                     storeScriptVars();  // (if this is a script variable, keep it before the next frame)
                 });
             }
+            hint({fx + fw - 24, y, 24, 24}, "Clear it");
             if (GuiButton({fx + fw - 24, y, 24, 24}, GuiIconText(ICON_CROSS_SMALL, nullptr)) && !path->empty()) {
                 touch();
                 path->clear();
@@ -1964,6 +1981,7 @@ void Editor::animationsEditor(std::vector<SpriteAnimation>& list, const std::str
             touch();
             a.loop = loop;
         }
+        hint({x + width - 24, y, 24, 24}, "Delete this animation");
         if (GuiButton({x + width - 24, y, 24, 24}, GuiIconText(ICON_BIN, nullptr))) remove = static_cast<int>(i);
         y += 28;
         drawText("frames", x, y + 4, kDim);
@@ -2116,6 +2134,7 @@ void Editor::drawInspector(Rectangle r) {
     fs::path scriptFile = scriptFileOf(selected_->scriptName);
     drawFit(status, x, y + 4, w - (scriptFile.empty() ? 0 : 84), statusColor);
     if (fs::path file = scriptFile; !file.empty()) {
+        hint({x + w - 76, y, 76, 24}, "Open the script in the Script tab (or your code editor)");
         if (GuiButton({x + w - 76, y, 76, 24}, GuiIconText(ICON_PENCIL, "Edit"))) openInCodeEditor(file);
     }
     if (!selected_->scriptName.empty() && !ScriptRegistry::has(selected_->scriptName)) {
@@ -2125,6 +2144,7 @@ void Editor::drawInspector(Rectangle r) {
     }
     y += 30;
     float bw = (w - 8) / 3;
+    hint({x, y, bw, 26}, "Attach a script that already exists to this node");
     if (GuiButton({x, y, bw, 26}, GuiIconText(ICON_LINK_BOXES, "Attach"))) {
         std::vector<std::string> names = ScriptRegistry::names();
         if (names.empty()) {
@@ -2139,10 +2159,12 @@ void Editor::drawInspector(Rectangle r) {
             });
         }
     }
+    hint({x + bw + 4, y, bw, 26}, "Make a new script file and attach it to this node");
     if (GuiButton({x + bw + 4, y, bw, 26}, GuiIconText(ICON_FILE_ADD, "New"))) {
         openTextDialog("New C++ Script", "Class name (e.g. PlayerController):",
                        pascalCase(selected_->name) + "Script", [this](const std::string& n) { createScript(n); });
     }
+    hint({x + 2 * (bw + 4), y, bw, 26}, "Take the script off this node (the file stays)");
     if (GuiButton({x + 2 * (bw + 4), y, bw, 26}, GuiIconText(ICON_CROSS, "Detach")) && !selected_->scriptName.empty()) {
         touch();
         selected_->scriptName.clear();
@@ -2183,13 +2205,16 @@ void Editor::drawInspector(Rectangle r) {
                 !selected_->instanceMissing)
                 requestOpenScene(selected_->sceneFile);
             y += 30;
+            hint({x, y, hw, 26}, "Undo every change made to this copy, back to the original scene");
             if (GuiButton({x, y, hw, 26}, GuiIconText(ICON_UNDO, "Reset Copy")) && !selected_->instanceMissing)
                 resetInstance(selected_);
+            hint({x + hw + 4, y, hw, 26}, "Turn this copy into ordinary nodes of this scene (no longer linked)");
             if (GuiButton({x + hw + 4, y, hw, 26}, GuiIconText(ICON_LINK_BOXES, "Make Local"))) makeLocal(selected_);
         } else {
             drawText("Move this node and its children", x, y + 4, kDim);
             drawText("into their own scene file:", x, y + 24, kDim);
             y += 48;
+            hint({x, y, w, 26}, "Save this node and its children as their own scene file, to reuse anywhere");
             if (GuiButton({x, y, w, 26}, GuiIconText(ICON_FILE_SAVE, "Save Branch as Scene"))) {
                 Node* target = selected_;
                 openTextDialog("Save Branch as Scene", "New scene file (inside the project):",
@@ -2259,6 +2284,7 @@ void Editor::drawOutput(Rectangle r) {
         drawAnimationPanel({r.x, r.y + kHeaderH, r.width, r.height - kHeaderH}, *sprite);
         return;
     }
+    hint({r.x + r.width - 64, r.y + 2, 58, 24}, "Clear the Output panel");
     if (GuiButton({r.x + r.width - 64, r.y + 2, 58, 24}, "Clear")) logLines_.clear();
 
     Rectangle area{r.x, r.y + kHeaderH, r.width, r.height - kHeaderH};
@@ -2360,6 +2386,7 @@ void Editor::drawAnimationPanel(Rectangle r, AnimatedSprite2D& sprite) {
     // --- Left: the animations ---------------------------------------------
     const float leftW = 240;
     float x = r.x + 8, y = r.y + 6, w = leftW - 16;
+    hint({x, y, (w - 4) / 2, 26}, "Make a new animation");
     if (GuiButton({x, y, (w - 4) / 2, 26}, GuiIconText(ICON_CIRCLE_ADD, "New"))) {
         touch();
         SpriteAnimation a;
@@ -2375,6 +2402,7 @@ void Editor::drawAnimationPanel(Rectangle r, AnimatedSprite2D& sprite) {
         changed = true;
     }
     if (!anim) GuiDisable();
+    hint({x + (w + 4) / 2, y, (w - 4) / 2, 26}, "Delete the selected animation");
     if (GuiButton({x + (w + 4) / 2, y, (w - 4) / 2, 26}, GuiIconText(ICON_BIN, "Delete")) && anim) {
         touch();
         anims.erase(anims.begin() + animSel_);
@@ -2454,12 +2482,14 @@ void Editor::drawAnimationPanel(Rectangle r, AnimatedSprite2D& sprite) {
     // --- Middle: toolbar and filmstrip ---------------------------------------
     float mx = r.x + leftW + 10, mw = preview.x - 10 - mx, my = r.y + 6;
     if (!anim) GuiDisable();
+    hint({mx, my, 84, 26}, "Play or stop the animation preview");
     if (GuiButton({mx, my, 84, 26}, GuiIconText(animPreview_ ? ICON_PLAYER_STOP : ICON_PLAYER_PLAY,
                                                  animPreview_ ? "Stop" : "Play"))) {
         animPreview_ = !animPreview_;
         animPreviewStart_ = GetTime();
     }
     float bx = mx + 88;
+    hint({bx, my, 190, 26}, "Pick frames for this animation from the sprite sheet");
     if (GuiButton({bx, my, 190, 26}, GuiIconText(ICON_BOX_GRID, "Add Frames from Sheet")) && anim) {
         if (!tex) {
             log("Pick a sprite sheet as the node's texture first (in the inspector).", kOrange);
@@ -2481,8 +2511,11 @@ void Editor::drawAnimationPanel(Rectangle r, AnimatedSprite2D& sprite) {
         anim->frames = SpriteAnimation::framesText(frames);
         changed = true;
     };
+    hint({bx, my, 30, 26}, "Move the selected frame earlier");
     if (GuiButton({bx, my, 30, 26}, GuiIconText(ICON_ARROW_LEFT_FILL, nullptr))) moveFrame(frameSel_ - 1);
+    hint({bx + 33, my, 30, 26}, "Move the selected frame later");
     if (GuiButton({bx + 33, my, 30, 26}, GuiIconText(ICON_ARROW_RIGHT_FILL, nullptr))) moveFrame(frameSel_ + 1);
+    hint({bx + 66, my, 30, 26}, "Remove the selected frame");
     if (GuiButton({bx + 66, my, 30, 26}, GuiIconText(ICON_BIN, nullptr)) && haveFrame) {
         touch();
         frames.erase(frames.begin() + frameSel_);
@@ -2493,6 +2526,7 @@ void Editor::drawAnimationPanel(Rectangle r, AnimatedSprite2D& sprite) {
     if (!haveFrame) GuiEnable();
     bx += 104;
     bool isStart = anim && sprite.autoplay && sprite.animation == anim->name;
+    hint({bx, my, 120, 26}, "Make this the animation that plays when the game starts");
     if (GuiButton({bx, my, 120, 26}, GuiIconText(ICON_PLAYER_PLAY, isStart ? "Plays first" : "Play at start")) &&
         anim && !isStart) {
         touch();
@@ -3159,15 +3193,19 @@ void Editor::drawFindBar(Rectangle r, TextDocument& doc) {
     }
     if (before != find_.find) doc.findNext(find_.find, false, find_.matchCase, true);  // as you type
     float bx = box.x + box.width + 6;
+    hint({bx, y, 30, 26}, "Previous match (Shift+F3)");
     if (GuiButton({bx, y, 30, 26}, GuiIconText(ICON_ARROW_LEFT, nullptr))) doc.findNext(find_.find, true, find_.matchCase);
+    hint({bx + 34, y, 30, 26}, "Next match (F3)");
     if (GuiButton({bx + 34, y, 30, 26}, GuiIconText(ICON_ARROW_RIGHT, nullptr))) doc.findNext(find_.find, false, find_.matchCase);
     Rectangle caseBox{bx + 68, y, 36, 26};
+    hint(caseBox, "Match upper and lower case exactly");
     if (GuiButton(caseBox, "Aa")) find_.matchCase = !find_.matchCase;
     if (find_.matchCase) DrawRectangleLinesEx(caseBox, 2, kAccent);
     int count = find_.find[0] ? doc.countMatches(find_.find, find_.matchCase) : 0;
     if (find_.find[0])
         drawText(count == 0 ? "No matches" : std::to_string(count) + (count == 1 ? " match" : " matches"), bx + 112,
                  y + 5, count ? kDim : kBad);
+    hint({r.x + r.width - 34, y, 28, 26}, "Close the find bar (Esc)");
     if (GuiButton({r.x + r.width - 34, y, 28, 26}, GuiIconText(ICON_CROSS_SMALL, nullptr))) {
         find_.open = find_.findEdit = find_.withEdit = false;
         codeFocused_ = true;
@@ -3278,10 +3316,12 @@ void Editor::drawScriptView(Rectangle r) {
         Rectangle banner{r.x, y, r.width, 34};
         DrawRectangleRec(banner, Fade(kOrange, 0.22f));
         drawText("This file was changed outside the editor, and it has unsaved changes here.", r.x + 10, y + 9, kText);
+        hint({r.x + r.width - 220, y + 4, 100, 26}, "Load the file as it is on disk now (your unsaved changes are lost)");
         if (GuiButton({r.x + r.width - 220, y + 4, 100, 26}, "Reload")) {
             doc->reloadFromDisk();
             doc->diskConflict = false;
         }
+        hint({r.x + r.width - 114, y + 4, 106, 26}, "Keep your version here (saving will overwrite the file on disk)");
         if (GuiButton({r.x + r.width - 114, y + 4, 106, 26}, "Keep Mine")) {
             doc->acceptDiskVersion();
             doc->diskConflict = false;
@@ -3484,6 +3524,7 @@ void Editor::drawProjectManager() {
             }
         }
         if (!hasSel) GuiDisable();
+        hint({bx, y + 130, bw2, 30}, "Forget this project in the list (its files stay on disk)");
         if (GuiButton({bx, y + 130, bw2, 30}, GuiIconText(ICON_CROSS, "Remove from List"))) {
             projects::forget(projects_.list[projects_.selected]);
             projects_.list.erase(projects_.list.begin() + projects_.selected);
@@ -3620,7 +3661,7 @@ void Editor::openExportDialog() {
 void Editor::drawExportDialog() {
     float sw = screenW(), sh = screenH();
     DrawRectangle(0, 0, static_cast<int>(sw), static_cast<int>(sh), Fade(BLACK, 0.5f));
-    float bw = std::min(640.0f, sw - 40), bh = std::min(560.0f, sh - 40);
+    float bw = std::min(720.0f, sw - 40), bh = std::min(620.0f, sh - 40);
     Rectangle box{std::floor((sw - bw) / 2), std::floor((sh - bh) / 2), bw, bh};
     bool close = GuiWindowBox(box, "Export Game") != 0;
     bool editing = export_.nameEdit || export_.dirEdit || export_.widthEdit || export_.heightEdit;
@@ -3654,6 +3695,11 @@ void Editor::drawExportDialog() {
 
     drawText("Platforms", x, y, kAccent);
     y += 26;
+    // Columns sized by their text; each platform's note wraps in the last one.
+    float nameW = 0;
+    for (const ExportTarget& t : export_.targets) nameW = std::max(nameW, textWidth(t.label));
+    float statusX = x + 32 + nameW + 16;
+    float noteX = statusX + std::max(textWidth("ready"), textWidth("not available")) + 16;
     for (size_t i = 0; i < export_.targets.size(); ++i) {
         const ExportTarget& t = export_.targets[i];
         bool on = export_.chosen[i];
@@ -3662,10 +3708,9 @@ void Editor::drawExportDialog() {
         if (!t.available) GuiEnable();
         export_.chosen[i] = on && t.available;
         drawText(t.label, x + 32, y + 4, t.available ? kText : kDim);
-        drawText(t.available ? "ready" : "not available", x + 120, y + 4, t.available ? kGood : kOrange);
-        // The note, shortened to fit (all of it shows when the mouse is on it)
-        drawFit(t.note, x + 240, y + 4, w - 240, kDim);
-        y += 30;
+        drawText(t.available ? "ready" : "not available", statusX, y + 4, t.available ? kGood : kOrange);
+        float noteH = t.note.empty() ? 20 : drawWrapped(t.note, noteX, y + 4, x + w - noteX, kDim, 18);
+        y += std::max(30.0f, noteH + 10);
     }
     y += 4;
 
@@ -3676,16 +3721,18 @@ void Editor::drawExportDialog() {
         label("Emscripten");
         std::string where = emsdk.empty() ? "emsdk not found" : emsdk.string() + (ready ? "" : "  (not set up yet)");
         float buttonsW = (platform::canPickFolder() ? 104 : 0) + (!emsdk.empty() && !ready ? 104 : 0);
-        drawFit(where, x + labelW, y + 5, w - labelW - buttonsW - 8, ready ? kText : kOrange, true);
+        float whereH = drawWrapped(where, x + labelW, y + 5, w - labelW - buttonsW - 8, ready ? kText : kOrange, 18);
         float bx = x + w - buttonsW;
         if (!emsdk.empty() && !ready) {
             if (exporter_->busy()) GuiDisable();
+            hint({bx, y, 100, 26}, "Install and activate Emscripten in that folder (needs the internet; takes a while)");
             if (GuiButton({bx, y, 100, 26}, "Set Up")) {
                 if (exporter_->setUpEmsdk(emsdk)) log("Setting up Emscripten (see below)...", kAccent);
             }
             if (exporter_->busy()) GuiEnable();
             bx += 104;
         }
+        if (platform::canPickFolder()) hint({bx, y, 100, 26}, "Pick the folder emsdk is in");
         if (platform::canPickFolder() && GuiButton({bx, y, 100, 26}, "Choose...")) {
             std::error_code ec;
             pickFolder("Emscripten's emsdk folder", emsdk.empty() ? fs::path() : emsdk, [this](const fs::path& p) {
@@ -3702,7 +3749,7 @@ void Editor::drawExportDialog() {
                     export_.chosen[i] = chosen[i] && export_.targets[i].available;
             });
         }
-        y += 34;
+        y += std::max(34.0f, whereH + 14);
     }
 
     label("Export to");
@@ -3739,9 +3786,11 @@ void Editor::drawExportDialog() {
     if (GuiButton({bx, by, 90, 30}, "Close")) close = true;
     bx -= 100;
     if (busy) GuiDisable();
+    hint({bx, by, 96, 30}, "Export the ticked platforms (progress shows in Output)");
     if (GuiButton({bx, by, 96, 30}, GuiIconText(ICON_FILE_EXPORT, "Export"))) startExport();
     if (busy) GuiEnable();
     bx -= 100;
+    hint({bx, by, 96, 30}, "Check again which platforms can be exported (after installing something)");
     if (GuiButton({bx, by, 96, 30}, GuiIconText(ICON_ROTATE_FILL, "Recheck"))) {
         auto chosen = export_.chosen;
         export_.targets = exporter_->detectTargets();
@@ -3835,6 +3884,7 @@ void Editor::drawModal() {
         int choice = -1;
         float buttonsY = box.y + box.height - 46;
         if (GuiButton({box.x + box.width - 318, buttonsY, 96, 30}, "Save")) choice = 0;
+        hint({box.x + box.width - 216, buttonsY, 110, 30}, "Go on and lose the changes");
         if (GuiButton({box.x + box.width - 216, buttonsY, 110, 30}, "Don't Save")) choice = 1;
         if (GuiButton({box.x + box.width - 100, buttonsY, 86, 30}, "Cancel") || IsKeyPressed(KEY_ESCAPE)) cancel = true;
         if (cancel) {
@@ -3968,6 +4018,17 @@ void Editor::saveScene() {
 
 void Editor::play(bool mainScene) {
     if (playTree_) return;
+    // Scripts still compiling (e.g. just saved): play once they're done, so the
+    // game runs the code that was just written. (While the game is already
+    // running, saving a script reloads it as usual.)
+    if (ScriptReloader::supported() && scripts_->busy(GetTime())) {
+        if (!playWhenBuilt_) log("Waiting for the scripts to finish compiling, then playing...", kOrange);
+        playWhenBuilt_ = mainScene;
+        return;
+    }
+    playWhenBuilt_.reset();
+    if (ScriptReloader::supported() && scripts_->lastBuildFailed())
+        log("The scripts have errors (see above): playing with the last version that compiled.", kOrange);
     // The main scene, unless it's the one open here (then play it with any unsaved edits).
     std::string scene = mainScene ? settings_.mainScene : scenePath_;
     std::unique_ptr<Node> root;
@@ -4012,6 +4073,11 @@ void Editor::play(bool mainScene) {
 }
 
 void Editor::stop() {
+    if (playWhenBuilt_ && !playTree_) {
+        playWhenBuilt_.reset();
+        log("Play cancelled.", kDim);
+        return;
+    }
     if (!playTree_) return;
     multiplayer().close();  // before the scripts go: peers hear that we left
     stopInstances();
@@ -4064,9 +4130,18 @@ void Editor::updateScripts() {
             }
         }
         if (shown == 0) log(output, kDim);
+        if (playWhenBuilt_) {
+            playWhenBuilt_.reset();
+            log("Not playing: fix the errors above and press Play again.", kBad);
+        }
         return;
     }
     reloadScripts();
+    if (playWhenBuilt_) {
+        bool mainScene = *playWhenBuilt_;
+        playWhenBuilt_.reset();
+        play(mainScene);
+    }
 }
 
 void Editor::reloadScripts() {
@@ -4315,6 +4390,7 @@ void Editor::signalRows(float x, float& y, float w) {
         drawFit(s.name, x + 22, y + 4, w - 22 - (editable ? 86 : 0), kText);
         if (!s.args.empty() && x + 22 + textWidth(s.name) + 6 + textWidth("(" + s.args + ")") < x + w - 84)
             drawText("(" + s.args + ")", x + 22 + textWidth(s.name) + 6, y + 4, kDim);
+        if (editable) hint({x + w - 80, y, 80, 24}, "Call a script function when this signal is sent");
         if (editable && GuiButton({x + w - 80, y, 80, 24}, "Connect...")) openConnectDialog(s);
         y += 28;
         // Its connections: click one to see the function, x to remove it
@@ -4330,6 +4406,7 @@ void Editor::signalRows(float x, float& y, float w) {
             drawFit(label, row.x + 4, y + 3, row.width - 8, target ? kGood : kBad);
             if (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && target)
                 addCallableToScript(target->scriptName, c.method, s.args, "");  // (opens it; adds it if it's missing)
+            if (editable) hint({x + w - 26, y, 26, 22}, "Remove this connection");
             if (editable && GuiButton({x + w - 26, y, 26, 22}, GuiIconText(ICON_CROSS_SMALL, nullptr))) {
                 touch();
                 selected_->connections.erase(selected_->connections.begin() + static_cast<long>(i));

@@ -185,6 +185,15 @@ void ScriptReloader::requestBuild() {
     changedAt_ = -100;
 }
 
+bool ScriptReloader::busy(double now) {
+    if (auto files = scanScripts(); files != known_) {
+        known_ = std::move(files);
+        pending_ = true;
+        changedAt_ = now;
+    }
+    return pending_ || building_;
+}
+
 void ScriptReloader::startBuild() {
     pending_ = false;
     building_ = true;
@@ -283,6 +292,7 @@ bool ScriptReloader::buildNow(std::string&) { return true; }
 ScriptReloader::~ScriptReloader() = default;
 std::map<std::string, fs::file_time_type> ScriptReloader::scanScripts() const { return {}; }
 void ScriptReloader::update(double) {}
+bool ScriptReloader::busy(double) { return false; }
 void ScriptReloader::requestBuild() {}
 void ScriptReloader::startBuild() {}
 bool ScriptReloader::pollBuild(bool&, std::string&) { return false; }
