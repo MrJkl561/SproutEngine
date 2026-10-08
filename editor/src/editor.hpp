@@ -133,7 +133,18 @@ private:
     void duplicateSelected();
     void moveSelected(int direction);
     void createSpriteAt(const std::string& texture, Vector2 world);
-    void createScript(const std::string& className);
+    // New Script: a script to attach, or a base class other scripts inherit
+    // from; either can inherit from Script or from one of the project's base
+    // classes. attach: give it to the selected node once it's made.
+    void openNewScriptDialog(bool attach, const std::string& suggestedName);
+    void drawNewScriptDialog();
+    void createScript(const std::string& className, const std::string& base = "Script",
+                      const std::string& baseHeader = "", bool baseClass = false, bool attach = true);
+    struct BaseClass {
+        std::string name;    // e.g. AI
+        std::string header;  // e.g. ai.hpp (in scripts/)
+    };
+    std::vector<BaseClass> scriptBaseClasses() const;  // the project's classes scripts can inherit from
     void activateFile(size_t index);
     void reparent(Node* node, Node* target, int zone);
     void renderGame();
@@ -161,7 +172,7 @@ private:
     bool isTyping() const {
         return !activeField_.empty() || dialog_.open || confirm_.open || export_.open || projects_.open ||
                folderPick_.valid() || sheet_.open || codeEditorDialog_.open || instancesDialog_.open ||
-               connectDialog_.open || (mainView_ == MainView::Script && (codeFocused_ || find_.findEdit || find_.withEdit));
+               connectDialog_.open || newScript_.open || (mainView_ == MainView::Script && (codeFocused_ || find_.findEdit || find_.withEdit));
     }
 
     // --- code editor (VS Code, Visual Studio...) -----------------------------
@@ -184,7 +195,7 @@ private:
     void setDiagnostics(TextDocument& doc) const;  // the last build's messages for its file
     bool dialogOpen() const {
         return dialog_.open || confirm_.open || export_.open || projects_.open || folderPick_.valid() || sheet_.open ||
-               codeEditorDialog_.open || instancesDialog_.open || connectDialog_.open;
+               codeEditorDialog_.open || instancesDialog_.open || connectDialog_.open || newScript_.open;
     }
 
     // --- Signals (the Inspector's Signals list and its Connect dialog) --------
@@ -435,6 +446,17 @@ private:
         char args[ProjectSettings::kMaxInstances][256] = {};
         int editing = -1;  // the text box being typed in
     } instancesDialog_;
+
+    struct NewScriptDialog {
+        bool open = false;
+        char name[64] = "";
+        bool nameEdit = true;
+        int base = 0;  // 0: Script, else bases[base - 1]
+        std::vector<BaseClass> bases;
+        bool baseClass = false;  // make a base class (a .hpp) instead of a script to attach
+        bool attach = false;     // attach the new script to the selected node
+        Vector2 scroll{0, 0};
+    } newScript_;
     // Copies of the game running in windows of their own (sprout_editor --play)
     struct InstanceOutput {
         std::mutex mutex;

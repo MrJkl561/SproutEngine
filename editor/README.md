@@ -184,7 +184,8 @@ window (800 x 450).
 
 **Inspector (right)** - the selected node's fields.
 - Drag left/right on a number to change it, or click it to type a value.
-- **Attach** picks a loaded script, **New** writes a new script file, **Edit**
+- **Attach** picks a loaded script, **New** makes a new script (see
+  [New Script](#c-scripts)), **Edit**
   opens it, **Detach** removes the script. Its `EXPORT` variables show under
   **Script Variables**.
 - **Signals** lists what the node can announce, with **Connect...** to make a
@@ -465,12 +466,18 @@ public:
 REGISTER_SCRIPT(Spinner)
 ```
 
-To add one: select a node, press **New** under *Script* in the inspector and
-type a class name. The editor writes the file in the project's `scripts/`
-folder, named after the class in snake_case (`PlayerController` is
-`player_controller.cpp`), from a template, attaches it and opens it (in the
-Script tab, or [your code editor](#using-another-code-editor-vs-code-visual-studio)).
-Save it (Ctrl+S) and it's compiled in the background, ready for Play.
+To add one: select a node, press **New** under *Script* in the inspector,
+type a class name and press **Create**. (Or press **New Script** in the Script
+tab, which makes one without attaching it.) The editor writes the file in the
+project's `scripts/` folder, named after the class in snake_case
+(`PlayerController` is `player_controller.cpp`), from a template, attaches it
+and opens it (in the Script tab, or
+[your code editor](#using-another-code-editor-vs-code-visual-studio)). Save it
+(Ctrl+S) and it's compiled in the background, ready for Play.
+
+The New Script window also asks what the class **inherits** from: `Script`,
+or one of your own base classes (see
+[Sharing code between scripts](#sharing-code-between-scripts-inheritance)).
 
 **What a script can use** (see `editor/src/script.hpp` for the details):
 
@@ -505,7 +512,8 @@ function: `IsKeyDown(KEY_LEFT)`, `IsKeyPressed(KEY_SPACE)`, `GetMousePosition()`
 Sprout has its own script editor, like Godot's: the **2D | Script** switch above
 the viewport. Open a file with the **Edit** button next to a node's script in
 the Inspector, by right-clicking a script or scene in the FileSystem dock, or by
-making a **New** script (it opens straight away). Each open file gets a tab.
+making a new one with **New Script** at the top right (it opens straight away).
+Each open file gets a tab.
 
 - C++ and JSON syntax colors, line numbers, auto-indent, undo/redo
 - **Autocomplete** as you type (or **Ctrl+Space**): the engine's classes and
@@ -594,6 +602,80 @@ panel; delete it and reopen the project to have it made again.
 Still seeing "cannot open source file script.hpp"? Open the project in the
 Sprout Editor once (that writes the files), then reload your editor's window
 (in VS Code: Ctrl+Shift+P, **Developer: Reload Window**).
+
+### Sharing code between scripts (inheritance)
+
+Like `extends` in Godot, a script can inherit from another class, getting
+everything it has (its `EXPORT` variables, signals and functions) and changing
+or adding to it. Say every enemy sees the player and chases it, but each kind
+chases in its own way:
+
+1. **New Script** (Script tab or Inspector), choose **A base class**, name it
+   `AI`, **Create**. That makes `scripts/ai.hpp`: shared code, in a header so
+   other scripts can include it. It has no `REGISTER_SCRIPT`, so it isn't
+   attached to nodes by itself.
+2. Write what every enemy does, and leave the parts that differ to a
+   `virtual` function:
+
+   ```cpp
+   #pragma once
+   #include "script.hpp"
+   using namespace s2d;
+
+   class AI : public Script {
+   public:
+       EXPORT(float, speed, 100);
+       EXPORT(float, sightRange, 200);
+       SIGNAL(spotted, Node*);
+
+       void process(float delta) override {
+           auto* me = self<Node2D>();
+           auto* player = findNode<Node2D>("Player");
+           if (!me || !player) return;
+           if (me->position.Distance(player->position) < sightRange) chase(player, delta);
+           else wander(delta);
+       }
+
+   protected:
+       virtual void chase(Node2D* target, float delta) = 0;  // = 0: each enemy must write it
+       virtual void wander(float delta) {}                   // optional
+   };
+   ```
+
+3. **New Script** again, leave **A script**, name it `Slime`, pick **AI**
+   under **Inherits**, **Create**. The editor writes `scripts/slime.cpp`
+   with `#include "ai.hpp"`, `class Slime : public AI`, and `chase` ready to
+   fill in (it lists the functions `AI` lets you change, too):
+
+   ```cpp
+   #include "ai.hpp"
+
+   class Slime : public AI {
+   public:
+       EXPORT(int, damage, 1);  // its own, on top of AI's
+
+   protected:
+       void chase(Node2D* target, float delta) override {
+           auto* me = self<Node2D>();
+           me->position.x += (target->position.x > me->position.x ? 1 : -1) * speed * delta;
+       }
+   };
+
+   REGISTER_SCRIPT(Slime)
+   ```
+
+Attach `Slime` to a node: the Inspector shows `speed` and `sight range` (from
+`AI`) and `damage`, and the node has `AI`'s `spotted` signal. A `Bat` can
+inherit from `AI` too and chase differently; change `ai.hpp` and every enemy
+gets it (they're all rebuilt when you save it).
+
+- Base classes go in `.hpp` files in `scripts/` (they show in the FileSystem
+  dock: click one to open it). A base can inherit from another base.
+- Only scripts you attach have `REGISTER_SCRIPT`. To attach `AI` itself too,
+  add `scripts/ai.cpp` with just `#include "ai.hpp"` and `REGISTER_SCRIPT(AI)`
+  (not in the header: every script that includes it would register it again).
+- A script that writes its own `ready()` or `process()` replaces the base's;
+  call `AI::process(delta);` inside it to keep the base's part too.
 
 ### Script variables (shown in the inspector)
 

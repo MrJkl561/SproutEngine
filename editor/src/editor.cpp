@@ -355,15 +355,25 @@ Node* nodeAt(Node* root, const std::vector<int>& path) {
 }
 
 std::string snakeCase(const std::string& name) {
+    // PlayerController -> player_controller; acronyms and numbers stay together:
+    // AI -> ai, PlayerAI -> player_ai, HTTPServer -> http_server,
+    // CharacterBody2DScript -> character_body_2d_script, Enemy2 -> enemy_2
+    auto up = [](char c) { return std::isupper(static_cast<unsigned char>(c)) != 0; };
+    auto low = [](char c) { return std::islower(static_cast<unsigned char>(c)) != 0; };
+    auto digit = [](char c) { return std::isdigit(static_cast<unsigned char>(c)) != 0; };
     std::string out;
     for (size_t i = 0; i < name.size(); ++i) {
-        char c = name[i];
-        if (std::isupper(static_cast<unsigned char>(c))) {
-            if (i > 0 && !out.empty() && out.back() != '_') out += '_';
-            out += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        } else {
-            out += c;
+        char c = name[i], prev = i > 0 ? name[i - 1] : '\0', next = i + 1 < name.size() ? name[i + 1] : '\0';
+        bool split = false;
+        if (up(c)) {
+            if (low(prev)) split = true;                         // playerController
+            else if (up(prev) && low(next)) split = true;        // HTTPServer: the S
+            else if (digit(prev) && low(next)) split = true;     // Enemy2Boss: the B (2D stays together)
+        } else if (digit(c)) {
+            split = std::isalpha(static_cast<unsigned char>(prev)) != 0;  // Body2D: before the 2
         }
+        if (split && !out.empty() && out.back() != '_') out += '_';
+        out += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     }
     return out;
 }
@@ -413,6 +423,48 @@ public:
         (void)delta;
     }
 };
+
+REGISTER_SCRIPT($NAME)
+)";
+
+// A base class: shared code other scripts inherit from (New Script, Inherits).
+const char* kBaseClassTemplate = R"(// $NAME: shared code for other scripts. It isn't attached to nodes itself
+// (so it has no REGISTER_SCRIPT): make scripts that inherit from it instead,
+// with New Script and $NAME under "Inherits". They get its variables, signals
+// and functions, and fill in the parts that differ.
+#pragma once
+
+#include "$INCLUDE"
+
+using namespace s2d;
+
+class $NAME : public $BASE {
+public:
+$EXPORTS    void process(float delta) override {
+        $SUPER_PROCESS// What every script that inherits this does each frame. Here: it calls
+        // act(), which each of them writes its own version of.
+        act(delta);
+    }
+
+protected:
+    // Each script that inherits from $NAME can write its own act().
+    virtual void act(float delta) { (void)delta; }
+};
+)";
+
+// A script that inherits from one of the project's base classes.
+const char* kDerivedTemplate = R"(// $NAME inherits from $BASE ($INCLUDE): it has all of $BASE's variables,
+// signals and functions, and changes or adds what it needs.
+// Save this file and the editor reloads it, even while the game is running.
+#include "$INCLUDE"
+
+class $NAME : public $BASE {
+public:
+    void ready() override {
+        $BASE::ready();  // keep what $BASE does when it starts
+        print("$NAME is ready on " + node()->name);
+    }
+$OVERRIDES};
 
 REGISTER_SCRIPT($NAME)
 )";
@@ -681,7 +733,7 @@ void Editor::frame() {
     updateSplitters(sw, sh, kLeftW, kRightW, kOutputH, sceneH);
     bool modal = popup_.open || dialog_.open || confirm_.open || export_.open || projects_.open ||
                  folderPick_.valid() || sheet_.open || codeEditorDialog_.open || instancesDialog_.open || connectDialog_.open ||
-                 swallowMouse_ ||
+                 newScript_.open || swallowMouse_ ||
                  splitter_ != Splitter::None;
     if (modal) GuiLock();
     {
@@ -1212,7 +1264,8 @@ void Editor::rescanFiles() {
     if (fs::is_directory(scriptsDir_, ec)) {
         for (auto it = fs::directory_iterator(scriptsDir_, ec); !ec && it != fs::directory_iterator();
              it.increment(ec)) {
-            if (!it->is_regular_file(ec) || it->path().extension() != ".cpp") continue;
+            auto ext = it->path().extension();
+            if (!it->is_regular_file(ec) || (ext != ".cpp" && ext != ".hpp" && ext != ".h")) continue;
             std::ifstream in(it->path());
             std::stringstream ss;
             ss << in.rdbuf();
@@ -1293,7 +1346,9 @@ void Editor::drawFileSystem(Rectangle r) {
             }
         } else {
             int icon = f.kind == FileEntry::Scene ? ICON_LAYERS : ICON_FILETYPE_TEXT;
+            bool header = f.kind == FileEntry::Script && fs::path(f.path).extension() != ".cpp";
             Color c = f.kind == FileEntry::Scene ? kAccent
+                      : header                    ? kText  // a base class or helpers: nothing to load
                       : ScriptRegistry::has(f.scriptClass) ? kGood
                                                            : kOrange;
             GuiDrawIcon(icon, static_cast<int>(ix), static_cast<int>(row.y + 4), 1, c);
@@ -1326,7 +1381,9 @@ void Editor::activateFile(size_t index) {
             break;
         case FileEntry::Scene: requestOpenScene(f.path); break;
         case FileEntry::Script:
-            if (f.scriptClass.empty()) {
+            if (fs::path(f.path).extension() != ".cpp") {
+                openInCodeEditor(f.path);  // a header (a base class...): nothing to attach, so open it
+            } else if (f.scriptClass.empty()) {
                 log(f.label + " has no REGISTER_SCRIPT(...) line, so it can't be attached.", kBad);
             } else if (selected_) {
                 touch();
@@ -2161,8 +2218,7 @@ void Editor::drawInspector(Rectangle r) {
     }
     hint({x + bw + 4, y, bw, 26}, "Make a new script file and attach it to this node");
     if (GuiButton({x + bw + 4, y, bw, 26}, GuiIconText(ICON_FILE_ADD, "New"))) {
-        openTextDialog("New C++ Script", "Class name (e.g. PlayerController):",
-                       pascalCase(selected_->name) + "Script", [this](const std::string& n) { createScript(n); });
+        openNewScriptDialog(true, pascalCase(selected_->name) + "Script");
     }
     hint({x + 2 * (bw + 4), y, bw, 26}, "Take the script off this node (the file stays)");
     if (GuiButton({x + 2 * (bw + 4), y, bw, 26}, GuiIconText(ICON_CROSS, "Detach")) && !selected_->scriptName.empty()) {
@@ -3247,12 +3303,19 @@ void Editor::drawScriptView(Rectangle r) {
         bx -= 4;
         return hit;
     };
+    {
+        Rectangle nb{bx - 112, r.y + 3, 112, tabH - 6};
+        hint(nb, "Make a new script, or a base class for scripts to inherit from");
+        if (button(112, ICON_FILE_ADD, "New Script")) openNewScriptDialog(false, "NewScript");
+    }
     if (doc) {
+        hint({bx - 30, r.y + 3, 30, tabH - 6}, "Find and replace (Ctrl+F)");
         if (button(30, ICON_LENS, nullptr)) {
             find_.open = true;
             find_.findEdit = true;
             codeFocused_ = false;
         }
+        hint({bx - 74, r.y + 3, 74, tabH - 6}, "Save this file (Ctrl+S)");
         if (button(74, ICON_FILE_SAVE_CLASSIC, "Save")) saveDocument(*doc);
     }
 
@@ -3295,8 +3358,10 @@ void Editor::drawScriptView(Rectangle r) {
         float cy = std::floor(r.y + r.height / 2 - 30);
         const char* lines[] = {"No files open.",
                                "Open a script with the Edit button in the Inspector, or right-click",
-                               "a script or scene in the FileSystem dock. New scripts open here too."};
-        for (const char* line : lines) {
+                               "a script or scene in the FileSystem dock. New Script (above) makes one."};
+        std::string text;
+        for (const char* line : lines) text += std::string(text.empty() ? "" : text == "No files open." ? "\n" : " ") + line;
+        for (const std::string& line : wrapText(text, r.width - 40)) {  // centred, wrapped to the panel
             drawText(line, std::floor(r.x + (r.width - textWidth(line)) / 2), cy, kDim);
             cy += 22;
         }
@@ -3857,6 +3922,7 @@ void Editor::drawModal() {
     if (codeEditorDialog_.open) drawCodeEditorDialog();
     if (instancesDialog_.open) drawRunInstancesDialog();
     if (connectDialog_.open) drawConnectDialog();
+    if (newScript_.open) drawNewScriptDialog();
     bool picking = folderPick_.valid();
     if (picking) GuiLock();  // the folder window is open: everything here waits
     if (export_.open) drawExportDialog();
@@ -4339,19 +4405,209 @@ void Editor::createSpriteAt(const std::string& texture, Vector2 world) {
     log("Added Sprite2D '" + raw->name + "' using " + texture);
 }
 
-void Editor::createScript(const std::string& className) {
+std::vector<Editor::BaseClass> Editor::scriptBaseClasses() const {
+    // Classes in scripts/*.hpp that are scripts (inherit from Script, or from
+    // another of these): what a new script can inherit from.
+    static const std::regex classRe(R"(class\s+(\w+)\s*(?:final\s*)?:\s*(?:public\s+)?(?:s2d::)?(\w+))");
+    struct Found {
+        std::string name, base, header;
+    };
+    std::vector<Found> found;
+    std::error_code ec;
+    for (auto it = fs::directory_iterator(scriptsDir_, ec); !ec && it != fs::directory_iterator(); it.increment(ec)) {
+        auto ext = it->path().extension();
+        if (!it->is_regular_file(ec) || (ext != ".hpp" && ext != ".h")) continue;
+        std::ifstream in(it->path());
+        std::stringstream ss;
+        ss << in.rdbuf();
+        std::string text = ss.str();
+        for (auto m = std::sregex_iterator(text.begin(), text.end(), classRe); m != std::sregex_iterator(); ++m)
+            found.push_back({(*m)[1].str(), (*m)[2].str(), it->path().filename().string()});
+    }
+    std::vector<BaseClass> out;
+    auto known = [&](const std::string& n) {
+        return n == "Script" || std::any_of(out.begin(), out.end(), [&](auto& b) { return b.name == n; });
+    };
+    for (bool more = true; more;) {  // (a base of a base may come later in the list)
+        more = false;
+        for (const Found& f : found)
+            if (!known(f.name) && known(f.base)) {
+                out.push_back({f.name, f.header});
+                more = true;
+            }
+    }
+    std::sort(out.begin(), out.end(), [](auto& a, auto& b) { return a.name < b.name; });
+    return out;
+}
+
+void Editor::openNewScriptDialog(bool attach, const std::string& suggestedName) {
+    activeField_.clear();
+    newScript_ = NewScriptDialog{};
+    newScript_.open = true;
+    newScript_.attach = attach;
+    newScript_.bases = scriptBaseClasses();
+    std::snprintf(newScript_.name, sizeof newScript_.name, "%s", suggestedName.c_str());
+    moveTextCursorToEnd();
+}
+
+void Editor::drawNewScriptDialog() {
+    NewScriptDialog& d = newScript_;
+    float sw = screenW(), sh = screenH();
+    DrawRectangle(0, 0, static_cast<int>(sw), static_cast<int>(sh), Fade(BLACK, 0.5f));
+    float w = std::min(620.0f, sw - 20), h = std::min(500.0f, sh - 20);
+    Rectangle box{std::floor(sw / 2 - w / 2), std::floor(sh / 2 - h / 2), w, h};
+    bool cancel = GuiWindowBox(box, "New Script") != 0;
+    float x = box.x + 14, y = box.y + 38, iw = box.width - 28;
+    const float labelW = 110;
+
+    // What kind: a script to put on nodes, or a base class to inherit from
+    drawText("Make", x, y + 5, kDim);
+    float kx = x + labelW;
+    const char* kinds[] = {"A script", "A base class"};
+    for (int i = 0; i < 2; ++i) {
+        float kw = textWidth(kinds[i]) + 24;
+        bool on = d.baseClass == (i == 1);
+        if (on) GuiSetState(STATE_PRESSED);
+        hint({kx, y, kw, 26}, i == 0 ? "A script you attach to nodes (a .cpp file)"
+                                     : "Shared code other scripts inherit from (a .hpp file); not attached by itself");
+        if (GuiButton({kx, y, kw, 26}, kinds[i])) d.baseClass = i == 1;
+        if (on) GuiSetState(STATE_NORMAL);
+        kx += kw + 6;
+    }
+    y += 36;
+
+    drawText("Class name", x, y + 5, kDim);
+    if (GuiTextBox({x + labelW, y, iw - labelW, 28}, d.name, sizeof d.name, d.nameEdit)) d.nameEdit = !d.nameEdit;
+    y += 38;
+
+    // Inherits: Script, or one of the project's base classes
+    drawText("Inherits", x, y + 5, kDim);
+    Rectangle list{x + labelW, y, iw - labelW, std::max(60.0f, box.y + box.height - 150 - y)};
+    Rectangle content{0, 0, list.width - 16, (d.bases.size() + 1) * kRowH + 4};
+    Rectangle view{};
+    GuiScrollPanel(list, nullptr, content, &d.scroll, &view);
+    beginClip(view);
+    for (size_t i = 0; i <= d.bases.size(); ++i) {
+        Rectangle row{view.x, view.y + d.scroll.y + 2 + i * kRowH, view.width, kRowH};
+        bool chosen = d.base == static_cast<int>(i);
+        bool hover = !GuiIsLocked() && mouseIn(row) && mouseIn(view);
+        if (chosen) DrawRectangleRec(row, kSelect);
+        else if (hover) DrawRectangleRec(row, kHover);
+        std::string name = i == 0 ? "Script" : d.bases[i - 1].name;
+        std::string where = i == 0 ? "(the start: every script inherits from it)" : "scripts/" + d.bases[i - 1].header;
+        drawText(name, row.x + 8, row.y + 4, kText);
+        drawFit(where, row.x + 20 + textWidth(name), row.y + 4, row.width - 28 - textWidth(name), kDim, true);
+        if (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) d.base = static_cast<int>(i);
+    }
+    EndScissorMode();
+    y = list.y + list.height + 10;
+
+    // What will be made
+    static const std::regex identifier("[A-Za-z_][A-Za-z0-9_]*");
+    std::string name = d.name;
+    bool valid = std::regex_match(name, identifier);
+    std::string file = "scripts/" + snakeCase(name) + (d.baseClass ? ".hpp" : ".cpp");
+    std::string baseName = d.base == 0 ? "Script" : d.bases[d.base - 1].name;
+    std::string note;
+    Color noteColor = kDim;
+    if (!valid) {
+        note = "The class name needs to be a C++ name: letters, digits and _, not starting with a digit.";
+        noteColor = kOrange;
+    } else if (fs::exists(projectDir_ / file)) {
+        note = file + " already exists: pick another name.";
+        noteColor = kOrange;
+        valid = false;
+    } else if (d.baseClass) {
+        note = "Makes " + file + ": class " + name + " : public " + baseName +
+               ". Then make scripts that inherit from it (pick " + name + " under Inherits).";
+    } else {
+        note = "Makes " + file + ": class " + name + " : public " + baseName +
+               (d.attach && selected_ ? ", and attaches it to " + selected_->name + "." : ".");
+    }
+    drawWrapped(note, x, y, iw, noteColor);
+
+    if (!valid) GuiDisable();
+    bool ok = GuiButton({box.x + box.width - 214, box.y + box.height - 42, 104, 30}, "Create") ||
+              (valid && (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER)));
+    if (!valid) GuiEnable();
+    if (GuiButton({box.x + box.width - 104, box.y + box.height - 42, 90, 30}, "Cancel") || IsKeyPressed(KEY_ESCAPE))
+        cancel = true;
+    if (cancel) {
+        d.open = false;
+    } else if (ok && valid) {
+        d.open = false;
+        createScript(name, baseName, d.base == 0 ? "" : d.bases[d.base - 1].header, d.baseClass, d.attach);
+    }
+}
+
+void Editor::createScript(const std::string& className, const std::string& base, const std::string& baseHeader,
+                          bool baseClass, bool attach) {
     static const std::regex identifier("[A-Za-z_][A-Za-z0-9_]*");
     if (!std::regex_match(className, identifier)) {
         log("'" + className + "' isn't a valid C++ class name.", kBad);
         return;
     }
-    fs::path file = scriptsDir_ / (snakeCase(className) + ".cpp");
+    fs::path file = scriptsDir_ / (snakeCase(className) + (baseClass ? ".hpp" : ".cpp"));
     if (fs::exists(file)) {
         log(file.filename().string() + " already exists.", kBad);
         return;
     }
-    std::string code = kScriptTemplate;
-    for (size_t pos; (pos = code.find("$NAME")) != std::string::npos;) code.replace(pos, 5, className);
+    bool fromScript = base == "Script" || baseHeader.empty();
+    std::string code;
+    if (baseClass) {
+        code = kBaseClassTemplate;
+        auto put = [&](const std::string& key, const std::string& value) {
+            for (size_t pos; (pos = code.find(key)) != std::string::npos;) code.replace(pos, key.size(), value);
+        };
+        put("$EXPORTS", fromScript ? "    // Variables every script that inherits this gets (shown in the inspector):\n"
+                                     "    EXPORT(float, speed, 100);\n\n"
+                                   : "");
+        put("$SUPER_PROCESS", fromScript ? "" : base + "::process(delta);  // what " + base + " does first\n        ");
+        put("$INCLUDE", fromScript ? "script.hpp" : baseHeader);
+        put("$BASE", fromScript ? "Script" : base);
+        put("$NAME", className);
+    } else if (fromScript) {
+        code = kScriptTemplate;
+        for (size_t pos; (pos = code.find("$NAME")) != std::string::npos;) code.replace(pos, 5, className);
+    } else {
+        // The base's functions it leaves to fill in (= 0) are written out, ready
+        // to fill; the others it may change are listed.
+        std::string overrides;
+        {
+            std::ifstream in(scriptsDir_ / baseHeader);
+            std::stringstream ss;
+            ss << in.rdbuf();
+            std::string text = ss.str();
+            static const std::regex virtualRe(R"(virtual\s+([\w:<>\*& ]+?)\s+(\w+)\s*\(([^)]*)\)\s*(const)?\s*(=\s*0)?)");
+            std::string must, may;
+            for (auto m = std::sregex_iterator(text.begin(), text.end(), virtualRe); m != std::sregex_iterator(); ++m) {
+                std::string ret = (*m)[1].str(), fn = (*m)[2].str(), params = (*m)[3].str();
+                std::string cnst = (*m)[4].matched ? " const" : "";
+                std::string sig = ret + " " + fn + "(" + params + ")" + cnst + " override";
+                if ((*m)[5].matched) {
+                    must += "\n    // (" + base + " leaves this for you to write)\n    " + sig + " {\n        \n    }\n";
+                } else {
+                    may += "    //   " + ret + " " + fn + "(" + params + ")" + cnst + "\n";
+                }
+            }
+            if (must.empty() && may.empty()) {
+                overrides = "\n    // To change what " + base + " does every frame, write process(float delta)\n"
+                            "    // here (call " + base + "::process(delta) inside it to keep " + base + "'s part).\n";
+            } else {
+                if (!must.empty()) overrides += "\nprotected:" + must;
+                if (!may.empty())
+                    overrides += "\n    // " + base + " also lets you change these (write one here with override):\n" + may;
+            }
+        }
+        code = kDerivedTemplate;
+        auto put = [&](const std::string& key, const std::string& value) {
+            for (size_t pos; (pos = code.find(key)) != std::string::npos;) code.replace(pos, key.size(), value);
+        };
+        put("$OVERRIDES", overrides);
+        put("$INCLUDE", baseHeader);
+        put("$BASE", base);
+        put("$NAME", className);
+    }
     std::ofstream out(file);
     if (!out) {
         log("Couldn't write " + file.string(), kBad);
@@ -4359,7 +4615,7 @@ void Editor::createScript(const std::string& className) {
     }
     out << code;
     out.close();
-    if (selected_) {
+    if (attach && selected_ && !baseClass) {
         touch();
         selected_->scriptName = className;
     }
@@ -4367,7 +4623,9 @@ void Editor::createScript(const std::string& className) {
     rescanFiles();
     log("Created " + file.string(), kGood);
     openInCodeEditor(file);
-    if (ScriptReloader::supported()) {
+    if (baseClass) {
+        log("To use it: New Script, and pick " + className + " under Inherits.", kGood);
+    } else if (ScriptReloader::supported()) {
         log("It compiles and loads by itself; edit it and save to reload.", kGood);
     } else {
         log("Rebuild the editor (cmake --build build) to compile it, then press Play.", kOrange);
