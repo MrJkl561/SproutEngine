@@ -43,6 +43,7 @@ add_executable(game
     "${EDITOR_SRC}/scene_io.cpp"
     "${EDITOR_SRC}/scene_tree.cpp"
     "${EDITOR_SRC}/signals.cpp"
+    "${EDITOR_SRC}/shaders.cpp"
     ${GAME_SCRIPTS})
 target_include_directories(game PRIVATE "${EDITOR_SRC}")
 target_link_libraries(game PRIVATE raylib raylib_cpp nlohmann_json::nlohmann_json)

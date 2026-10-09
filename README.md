@@ -182,6 +182,7 @@ folder:
 | Test the editor's signals | `scripts\test-signals.bat` | `scripts/test-signals.sh` |
 | Test the Script tab's checks | `scripts\test-lint.bat` | `scripts/test-lint.sh` |
 | Test autoloads | `scripts\test-autoload.bat` | `scripts/test-autoload.sh` |
+| Test shaders | `scripts\test-shaders.bat` | `scripts/test-shaders.sh` |
 | Export a game | `scripts\export.bat windows,web [project] [folder]` | `scripts/export.sh linux,web [project] [folder]` |
 | Set up web exports (once) | `scripts\setup-web.bat [emsdk folder]` | `scripts/setup-web.sh [emsdk folder]` |
 

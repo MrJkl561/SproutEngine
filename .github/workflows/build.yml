@@ -74,6 +74,14 @@ jobs:
           if [ -f "$exe.exe" ]; then exe="$exe.exe"; fi
           SPROUT_EDITOR="$PWD/$exe" scripts/test-autoload.sh
 
+      # Custom shaders: plays a scene and checks the colours drawn (xvfb on Linux)
+      - name: Test shaders
+        shell: bash
+        run: |
+          exe=build/bin/sprout_editor/sprout_editor
+          if [ -f "$exe.exe" ]; then exe="$exe.exe"; fi
+          SPROUT_EDITOR="$PWD/$exe" scripts/test-shaders.sh
+
       # The Script tab's extra checks (findNode before ready()...)
       - name: Test script checks
         shell: bash

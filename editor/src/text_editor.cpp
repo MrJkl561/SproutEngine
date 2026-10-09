@@ -213,6 +213,7 @@ Language languageFor(const fs::path& file) {
     if (ext == ".cpp" || ext == ".hpp" || ext == ".h" || ext == ".cc" || ext == ".cxx" || ext == ".hh" || ext == ".inl")
         return Language::Cpp;
     if (ext == ".json") return Language::Json;
+    if (ext == ".shader" || ext == ".glsl" || ext == ".fs" || ext == ".vs") return Language::Shader;
     return Language::Text;
 }
 
@@ -664,7 +665,7 @@ void TextDocument::indentLines(bool outdent) {
 }
 
 void TextDocument::toggleComment() {
-    if (language != Language::Cpp) return;
+    if (language != Language::Cpp && language != Language::Shader) return;
     auto [a, b] = selection();
     int last = b.line;
     if (b.col == 0 && b.line > a.line) --last;
@@ -928,7 +929,7 @@ void TextDocument::updateHighlight() {
         colors_[i].assign(lines_[i].size(), Plain);
         widestLine_ = std::max(widestLine_, visualCol(static_cast<int>(i), static_cast<int>(lines_[i].size())));
     }
-    if (language == Language::Cpp) highlightCpp(lines_, colors_);
+    if (language == Language::Cpp || language == Language::Shader) highlightCpp(lines_, colors_);  // (C-like)
     if (language == Language::Json) highlightJson(lines_, colors_);
     // clangd's colors, on the lines that are still as they were
     for (const SemanticSpan& span : semantic_) {

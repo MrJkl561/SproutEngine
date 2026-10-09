@@ -13,7 +13,7 @@
 
 namespace s2d {
 
-enum class Language { Text, Cpp, Json };
+enum class Language { Text, Cpp, Json, Shader };
 
 // A compiler message about one line (1-based) of the file.
 struct Diagnostic {

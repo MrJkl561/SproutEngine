@@ -310,7 +310,7 @@ private:
     int dropZone_ = 0;  // -1 before, 0 inside, 1 after
 
     struct FileEntry {
-        enum Kind { Texture, Scene, Script } kind;
+        enum Kind { Texture, Scene, Shader, Script } kind;  // (the FileSystem dock's groups, in this order)
         std::string path;         // textures/scenes: relative to the project; scripts: full path
         std::string label;        // what the FileSystem dock shows
         std::string scriptClass;  // scripts: the class REGISTER_SCRIPT names
@@ -497,6 +497,9 @@ private:
     void openAutoloadsDialog(const std::string& script = "", const std::string& scene = "");
     void drawAutoloadsDialog();
     void deleteFile(size_t index);  // asks, then moves it to the Recycle Bin / Trash
+    // Shaders: make a new .shader file (for the selected node), show its errors
+    void newShader(Node2D* forNode);
+    void checkShader(TextDocument& doc);
 };
 
 }  // namespace s2d

@@ -43,6 +43,7 @@ be opened by the engine or the other way round. See
 - [Changing scenes while the game runs](#changing-scenes-while-the-game-runs)
 - [Autoloads (global scripts)](#autoloads-global-scripts): game state, music and services kept across scenes
 - [Animation](#animation)
+- [Shaders](#shaders): custom shaders for sprites, rectangles and text
 - [Multiplayer](#multiplayer): hosting, joining, synced nodes, RPCs, dedicated servers
 - [Nodes](#nodes): what each node type is for
 - [C++ scripts](#c-scripts): the script editor, script variables (`EXPORT`), signals, hot reloading
@@ -462,6 +463,71 @@ choosing the animation.
 
 A plain Sprite2D can show one frame of a sheet too (`hframes`, `vframes`,
 `frame`), e.g. to pick a tile or change `frame` from a script.
+
+## Shaders
+
+Like Godot's canvas shaders: a small program that decides the colour of each
+pixel of a node, for waves, outlines, flashes when hit, dissolves, colour
+effects... A `Sprite2D`, `AnimatedSprite2D`, `ColorRect` or `Label` can have one.
+
+**Make one:** select the node, find **Shader** in the Inspector, open the
+list and pick **New Shader...**. The editor writes `shaders/<name>.shader`
+from a template, gives it to the node and opens it in the Script tab:
+
+```glsl
+uniform vec4 tint : source_color = vec4(1.0, 1.0, 1.0, 1.0);
+uniform float wave_speed = 3.0;
+uniform float wave_size : hint_range(0.0, 0.1) = 0.0;
+
+void fragment() {
+    vec2 uv = UV;
+    uv.x += sin(uv.y * 20.0 + TIME * wave_speed) * wave_size;
+    COLOR = texture(TEXTURE, uv) * MODULATE * tint;
+}
+```
+
+Change it and save (**Ctrl+S**): the node changes straight away, in the 2D
+view and in the running game. A mistake is underlined on its line, and the
+Output panel says what's wrong; the node is drawn without the shader until
+it's fixed. Another node can use the same file: pick it from the list, or
+click the file in the FileSystem dock with the node selected.
+
+**What a shader can use** (it's GLSL, the language of graphics cards):
+
+| | |
+|---|---|
+| `fragment()` | Runs for every pixel of the node; set `COLOR` |
+| `COLOR` | Starts as the picture's colour times the node's modulate; what you set is drawn (`vec4`: red, green, blue, alpha, each 0 to 1) |
+| `UV` | Where in the picture this pixel is: `vec2(0.0, 0.0)` top left to `vec2(1.0, 1.0)` bottom right (across the whole rectangle, for a `ColorRect`) |
+| `TEXTURE` | The node's picture: `texture(TEXTURE, UV)` reads a colour from it |
+| `TEXTURE_PIXEL_SIZE` | One pixel of the picture in UV units (`1.0 / its size`), for outlines and blurs |
+| `TIME` | Seconds since the game started, for things that move |
+| `MODULATE` | The node's modulate (or a ColorRect's colour, a Label's colour) |
+
+**Parameters:** each `uniform` shows up in the Inspector under **Shader
+Parameters**, with its default from the file, and is saved with the node, so
+nodes sharing a shader can look different. `float`, `int`, `bool` and `vec2`
+show as numbers, `vec3`/`vec4` as a colour, and `sampler2D` as a picture
+(another texture to read). `: hint_range(min, max)` sets how fast dragging
+changes a number. Scripts can set them too:
+
+```cpp
+auto* sprite = self<Sprite2D>();
+sprite->setShaderParam("wave_size", 0.05f);
+sprite->setShaderParam("tint", Color{255, 80, 80, 255});
+sprite->setShaderTexture("noise", "assets/noise.png");
+sprite->shader = "shaders/flash.shader";   // or switch shaders
+```
+
+Things to know:
+
+- **Desktop and web from one file.** The editor adds what each needs around
+  your code (OpenGL 3.3 on Windows, macOS and Linux; WebGL for the web). Write
+  numbers with a dot (`1.0`, not `1`): the web is strict about it.
+- **One node at a time:** a node's shader draws only that node, not its
+  children.
+- Not there yet: `vertex()` (moving the corners), reading the screen behind the
+  node (`SCREEN_TEXTURE`), and lights.
 
 ## Multiplayer
 
@@ -1045,6 +1111,7 @@ editor/
 │   ├── scene_tree.*      <- runs a scene: scripts, process, queueFree, drawing
 │   ├── script.hpp        <- the Script base class, EXPORT, SIGNAL, CALLABLE, RPC, INPUT, REGISTER_SCRIPT
 │   ├── signals.*         <- signals: connections, sending, the values they carry
+│   ├── shaders.*         <- custom shaders: .shader files to GLSL, their parameters
 │   ├── multiplayer.*     <- hosting, joining, RPCs, synchronizers and spawners
 │   ├── net_transport.*   <- the network connection under it (ENet)
 │   ├── game_runner.*     <- runs a project as a game (exports, Run Instances, --server)
@@ -1073,6 +1140,7 @@ editor/
 ├── tests/signals/        <- the signals test (scripts/test-signals.sh)
 ├── tests/lint/           <- the script checks' test (scripts/test-lint.sh)
 ├── tests/autoload/       <- the autoloads test (scripts/test-autoload.sh)
+├── tests/shaders/        <- the shaders test (scripts/test-shaders.sh)
 ├── scripts_module/       <- builds a project's scripts into the hot reload library
 └── project/              <- the demo project
     ├── project.json      <- game name, main scene, window size, export settings

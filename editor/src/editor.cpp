@@ -25,6 +25,7 @@
 #include "platform.hpp"
 #include "projects.hpp"
 #include "scene_io.hpp"
+#include "shaders.hpp"
 #include "script_lint.hpp"
 #include "script.hpp"
 #include "theme.hpp"
@@ -302,6 +303,15 @@ void drawHeader(Rectangle r, const std::string& title) {
 
 bool mouseIn(Rectangle r) { return CheckCollisionPointRec(GetMousePosition(), r); }
 
+// The node, if it's one that can be drawn with a shader (nullptr if not)
+Node2D* takesShader(Node* n) {
+    if (!n) return nullptr;
+    if (auto* sp = n->as<Sprite2D>()) return sp;
+    if (auto* cr = n->as<ColorRect>()) return cr;
+    if (auto* lb = n->as<Label>()) return lb;
+    return nullptr;
+}
+
 bool ctrlDown() {
     return IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL) || IsKeyDown(KEY_LEFT_SUPER) ||
            IsKeyDown(KEY_RIGHT_SUPER);
@@ -551,6 +561,7 @@ Editor::~Editor() {
     inspectorScript_.reset();
     scripts_.reset();  // after the game: scripts' code lives in the library
     gameTexture_.reset();
+    Shaders::clear();
     Assets::clear();
     gThemeImages.clear();  // (textures must go before the window does)
 }
@@ -1264,6 +1275,7 @@ void Editor::rescanFiles() {
     };
     scanProject("assets", FileEntry::Texture, isImageFile);
     scanProject("scenes", FileEntry::Scene, [](const fs::path& p) { return p.extension() == ".json"; });
+    scanProject("shaders", FileEntry::Shader, [](const fs::path& p) { return p.extension() == ".shader"; });
 
     std::vector<FileEntry> scripts;
     static const std::regex registerRe(R"(REGISTER_SCRIPT\s*\(\s*(\w+)\s*\))");
@@ -1312,9 +1324,10 @@ void Editor::drawFileSystem(Rectangle r) {
     for (size_t i = 0; i < files_.size(); ++i) {
         if (files_[i].kind != lastKind) {
             lastKind = files_[i].kind;
-            const char* title = lastKind == FileEntry::Texture ? "res://assets"
-                                : lastKind == FileEntry::Scene ? "res://scenes"
-                                                               : "res://scripts (C++)";
+            const char* title = lastKind == FileEntry::Texture  ? "res://assets"
+                                : lastKind == FileEntry::Scene  ? "res://scenes"
+                                : lastKind == FileEntry::Shader ? "res://shaders"
+                                                                : "res://scripts (C++)";
             rows.push_back({true, title, 0});
         }
         rows.push_back({false, files_[i].label, i});
@@ -1351,9 +1364,9 @@ void Editor::drawFileSystem(Rectangle r) {
                                {0, 0}, 0, WHITE);
             }
         } else {
-            int icon = f.kind == FileEntry::Scene ? ICON_LAYERS : ICON_FILETYPE_TEXT;
+            int icon = f.kind == FileEntry::Scene ? ICON_LAYERS : f.kind == FileEntry::Shader ? ICON_FX : ICON_FILETYPE_TEXT;
             bool header = f.kind == FileEntry::Script && fs::path(f.path).extension() != ".cpp";
-            Color c = f.kind == FileEntry::Scene ? kAccent
+            Color c = f.kind == FileEntry::Scene || f.kind == FileEntry::Shader ? kAccent
                       : header                    ? kText  // a base class or helpers: nothing to load
                       : ScriptRegistry::has(f.scriptClass) ? kGood
                                                            : kOrange;
@@ -1386,6 +1399,15 @@ void Editor::activateFile(size_t index) {
             }
             break;
         case FileEntry::Scene: requestOpenScene(f.path); break;
+        case FileEntry::Shader:
+            if (auto* n2d = takesShader(selected_)) {
+                touch();
+                n2d->shader = f.path;
+                log("Set " + n2d->name + ".shader = " + f.path);
+            } else {
+                openInCodeEditor(projectDir_ / f.path);  // nothing selected that can use it: open it
+            }
+            break;
         case FileEntry::Script:
             if (fs::path(f.path).extension() != ".cpp") {
                 openInCodeEditor(f.path);  // a header (a base class...): nothing to attach, so open it
@@ -1860,7 +1882,7 @@ void Editor::propertyRow(Property& p, float x, float& y, float width, const std:
     const float labelW = 112;
     float fx = x + labelW, fw = width - labelW;
     std::string id = std::to_string(reinterpret_cast<uintptr_t>(selected_)) + "/" + idPrefix + p.name;
-    std::string label = p.name;
+    std::string label = p.name.substr(p.name.rfind('/') + 1);  // ("shader_params/speed" shows as "speed")
     std::replace(label.begin(), label.end(), '_', ' ');
 
     // Changed from the original scene (this node is part of an instance)? Show it, with a revert button.
@@ -1968,6 +1990,39 @@ void Editor::propertyRow(Property& p, float x, float& y, float width, const std:
                 });
             }
             hint({fx + fw - 24, y, 24, 24}, "Clear it");
+            if (GuiButton({fx + fw - 24, y, 24, 24}, GuiIconText(ICON_CROSS_SMALL, nullptr)) && !path->empty()) {
+                touch();
+                path->clear();
+            }
+            break;
+        }
+        case PropKind::Shader: {
+            auto* path = static_cast<std::string*>(p.ptr);
+            float bw = fw - (path->empty() ? 28 : 56);
+            hint({fx, y, bw, 24}, "The shader that draws this node: pick one, or make a new one");
+            std::string shown = path->empty() ? "<none>" : fs::path(*path).filename().string();  // (they're all in shaders/)
+            if (GuiButton({fx, y, bw, 24}, fitText(shown, bw - 12).c_str())) {
+                std::vector<std::string> items{"<none>"};
+                for (auto& f : files_)
+                    if (f.kind == FileEntry::Shader) items.push_back(f.path);
+                items.push_back("New Shader...");
+                Node* target = selected_;
+                openPopup({fx, y + 26}, items, [this, items, target, path](int i) {
+                    if (selected_ != target) return;
+                    if (i == static_cast<int>(items.size()) - 1) {
+                        newShader(takesShader(target));
+                        return;
+                    }
+                    touch();
+                    *path = i == 0 ? "" : items[i];
+                });
+            }
+            if (!path->empty()) {
+                hint({fx + fw - 52, y, 24, 24}, "Edit the shader (Script tab)");
+                if (GuiButton({fx + fw - 52, y, 24, 24}, GuiIconText(ICON_PENCIL, nullptr)))
+                    openInCodeEditor(projectDir_ / *path);
+            }
+            hint({fx + fw - 24, y, 24, 24}, "No shader");
             if (GuiButton({fx + fw - 24, y, 24, 24}, GuiIconText(ICON_CROSS_SMALL, nullptr)) && !path->empty()) {
                 touch();
                 path->clear();
@@ -2839,6 +2894,10 @@ void Editor::fileMenu(size_t index, Vector2 at) {
             add("Edit JSON in Script Tab", [this, full] { openDocument(full); });
             if (!external.empty()) add(external + " (JSON)", [this, full] { openInCodeEditor(full); });
             break;
+        case FileEntry::Shader:
+            add("Edit in Script Tab", [this, full] { openDocument(full); });
+            if (takesShader(selected_)) add("Use on " + selected_->name, [this, index] { activateFile(index); });
+            break;
         case FileEntry::Texture:
             add("Open in Image Viewer", [this, full] {
                 if (!platform::openWithSystem(full)) log("Couldn't open " + full.string(), kBad);
@@ -2985,6 +3044,42 @@ void Editor::drawAutoloadsDialog() {
         (!d.nameEdit && IsKeyPressed(KEY_ESCAPE)))
         close = true;
     if (close) d.open = false;
+}
+
+void Editor::newShader(Node2D* forNode) {
+    std::string suggested = snakeCase(forNode ? pascalCase(forNode->name) : std::string("NewShader")) + ".shader";
+    Node* target = forNode;
+    openTextDialog("New Shader", "File name (in shaders/):", suggested, [this, target](const std::string& typed) {
+        std::string name = typed;
+        if (name.empty()) return;
+        if (fs::path(name).extension() != ".shader") name += ".shader";
+        fs::path file = projectDir_ / "shaders" / fs::path(name).filename();
+        std::error_code ec;
+        if (fs::exists(file, ec)) {
+            log(file.filename().string() + " already exists in shaders/.", kBad);
+            return;
+        }
+        fs::create_directories(file.parent_path(), ec);
+        std::ofstream(file) << Shaders::templateText();
+        std::string rel = "shaders/" + file.filename().string();
+        if (Node2D* n = takesShader(target); n && n == takesShader(selected_)) {
+            touch();
+            n->shader = rel;
+        }
+        rescanFiles();
+        log("Created " + rel + ". Change it and save: the node updates straight away.", kGood);
+        openInCodeEditor(file);
+    });
+}
+
+void Editor::checkShader(TextDocument& doc) {
+    if (doc.language != Language::Shader) return;
+    std::error_code ec;
+    std::string rel = fs::relative(doc.path, projectDir_, ec).generic_string();
+    doc.diagnostics.clear();
+    for (const ShaderProblem& p : Shaders::check(rel)) doc.diagnostics.push_back({p.line, p.column, true, p.message});
+    if (doc.diagnostics.empty()) log("Shader " + rel + " compiles.", kGood);
+    else log("Shader " + rel + " has " + std::to_string(doc.diagnostics.size()) + " problem(s): see the Script tab.", kBad);
 }
 
 void Editor::askFirst(std::string title, std::string message, std::string yes, std::function<void()> onYes) {
@@ -3252,6 +3347,7 @@ bool Editor::saveDocument(TextDocument& doc) {
             else log("The scene in the 2D view has unsaved changes; saving it there will replace these edits.", kOrange);
         }
     }
+    if (doc.language == Language::Shader) checkShader(doc);  // its errors, on its lines
     return true;
 }
 
@@ -3645,7 +3741,10 @@ void Editor::drawScriptView(Rectangle r) {
     std::error_code ec;
     std::string rel = fs::relative(doc->path, projectDir_, ec).generic_string();
     if (ec || rel.empty() || rel.rfind("..", 0) == 0) rel = doc->path.string();
-    std::string right = std::string(doc->language == Language::Cpp ? "C++" : doc->language == Language::Json ? "JSON" : "Text") +
+    std::string right = std::string(doc->language == Language::Cpp      ? "C++"
+                                    : doc->language == Language::Json   ? "JSON"
+                                    : doc->language == Language::Shader ? "Shader"
+                                                                        : "Text") +
                         "   " + rel;
     if (statusEnd - sx < textWidth(right)) right = rel;
     if (statusEnd - sx >= 60) {

@@ -9,6 +9,7 @@
 #include "multiplayer.hpp"
 #include "scene_io.hpp"
 #include "script.hpp"
+#include "shaders.hpp"
 
 namespace s2d {
 
@@ -235,8 +236,11 @@ void SceneTree::switchScene() {
 
 void SceneTree::draw(const DrawOptions& options) {
     std::function<void(Node*)> drawNode = [&](Node* n) {
-        if (auto* n2d = dynamic_cast<Node2D*>(n); n2d && !n2d->visible) return;  // hides children too
+        auto* n2d = dynamic_cast<Node2D*>(n);
+        if (n2d && !n2d->visible) return;  // hides children too
+        bool shaded = n2d && !n2d->shader.empty() && Shaders::begin(*n2d);  // its own shader, if it has one
         n->draw(options);
+        if (shaded) Shaders::end();
         for (auto& c : n->children()) drawNode(c.get());
     };
     if (root_) drawNode(root_.get());

@@ -42,7 +42,8 @@ json propertyListToJson(const std::vector<Property>& props) {
             case PropKind::String:
             case PropKind::Texture:
             case PropKind::Scene:
-            case PropKind::AnimationName: out[p.name] = *static_cast<std::string*>(p.ptr); break;
+            case PropKind::AnimationName:
+            case PropKind::Shader: out[p.name] = *static_cast<std::string*>(p.ptr); break;
             case PropKind::Animations: {
                 json list = json::array();
                 for (auto& a : *static_cast<std::vector<SpriteAnimation>*>(p.ptr))
@@ -57,6 +58,11 @@ json propertyListToJson(const std::vector<Property>& props) {
 
 void applyProperties(Node& node, const json& in) {
     std::vector<Property> props;
+    node.getProperties(props);
+    applyPropertyList(props, in);
+    // Again: properties that depend on others (a shader's parameters appear
+    // once "shader" is set) are only listed now.
+    props.clear();
     node.getProperties(props);
     applyPropertyList(props, in);
 }
@@ -107,7 +113,8 @@ void applyPropertyList(const std::vector<Property>& props, const json& in) {
                 case PropKind::String:
                 case PropKind::Texture:
                 case PropKind::Scene:
-                case PropKind::AnimationName: *static_cast<std::string*>(p.ptr) = v.get<std::string>(); break;
+                case PropKind::AnimationName:
+                case PropKind::Shader: *static_cast<std::string*>(p.ptr) = v.get<std::string>(); break;
                 case PropKind::Animations: {
                     std::vector<SpriteAnimation> list;
                     for (const json& a : v) {

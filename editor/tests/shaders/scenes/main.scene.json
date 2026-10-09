@@ -1,0 +1,21 @@
+{
+  "format": "sprout-editor-scene",
+  "version": 1,
+  "root": {
+    "type": "Node2D",
+    "name": "Main",
+    "properties": {},
+    "children": [
+      {"type": "ColorRect", "name": "Solid", "properties": {"position": [0, 0], "size": [80, 90], "color": [255, 255, 255, 255],
+        "shader": "shaders/solid.shader", "shader_params/fill": [0, 0, 255, 255]}, "children": []},
+      {"type": "ColorRect", "name": "Gradient", "properties": {"position": [80, 0], "size": [80, 90], "color": [255, 255, 255, 255],
+        "shader": "shaders/uv.shader"}, "children": []},
+      {"type": "Sprite2D", "name": "Tinted", "script": "TintFromScript", "properties": {"position": [200, 45], "scale": [5, 5.625],
+        "texture": "assets/white.png", "shader": "shaders/tint.shader"}, "children": []},
+      {"type": "Sprite2D", "name": "DefaultTint", "properties": {"position": [280, 45], "scale": [5, 5.625],
+        "texture": "assets/white.png", "shader": "shaders/tint.shader"}, "children": []},
+      {"type": "ColorRect", "name": "Broken", "properties": {"position": [0, 200], "size": [10, 10],
+        "shader": "shaders/broken.shader"}, "children": []}
+    ]
+  }
+}
