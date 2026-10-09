@@ -66,6 +66,14 @@ jobs:
           if [ -f "$exe.exe" ]; then exe="$exe.exe"; fi
           SPROUT_EDITOR="$PWD/$exe" scripts/test-signals.sh
 
+      # Autoloads: made first, kept across a scene change, found by scripts
+      - name: Test autoloads
+        shell: bash
+        run: |
+          exe=build/bin/sprout_editor/sprout_editor
+          if [ -f "$exe.exe" ]; then exe="$exe.exe"; fi
+          SPROUT_EDITOR="$PWD/$exe" scripts/test-autoload.sh
+
       # The Script tab's extra checks (findNode before ready()...)
       - name: Test script checks
         shell: bash

@@ -151,6 +151,7 @@ int runGame(const GameOptions& o) {
         if (!o.headless) CloseWindow();
         return 1;
     }
+    game.tree.setAutoloads(settings.autoloads);  // (Project Settings > Autoloads)
     game.tree.setRoot(std::move(root));
     game.tree.setCurrentScene(scene);
     game.tree.start();

@@ -289,6 +289,18 @@ public:
     }
 
     SceneTree* tree() const { return node_ ? node_->tree() : nullptr; }
+    // An autoload (gear button > Autoloads...): a node kept for as long as
+    // the game runs, whatever scene is on. Ask for its script:
+    //     autoload<GameState>("GameState")->coins += 1;
+    // or, for a scene autoload, its root node: autoload<Node2D>("Music").
+    // nullptr if there's none by that name (the Output panel says so).
+    template <class T> T* autoload(const std::string& name) const {
+        Node* n = autoloadNode(name);
+        if (!n) return nullptr;
+        if constexpr (std::is_base_of_v<Script, T>) return dynamic_cast<T*>(n->script.get());
+        else return dynamic_cast<T*>(n);
+    }
+    Node* autoloadNode(const std::string& name) const;
     // Says (once per script and function) that self/getNode/findNode was used
     // before the script was put on its node: in a member variable's "= ..." or
     // the constructor. They find nothing then; ready() is the place.

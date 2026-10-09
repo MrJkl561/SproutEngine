@@ -41,6 +41,7 @@ be opened by the engine or the other way round. See
 - [Scenes inside scenes](#scenes-inside-scenes)
 - [Exporting your game](#exporting-your-game)
 - [Changing scenes while the game runs](#changing-scenes-while-the-game-runs)
+- [Autoloads (global scripts)](#autoloads-global-scripts): game state, music and services kept across scenes
 - [Animation](#animation)
 - [Multiplayer](#multiplayer): hosting, joining, synced nodes, RPCs, dedicated servers
 - [Nodes](#nodes): what each node type is for
@@ -201,7 +202,7 @@ in the Export window), **Play Scene** (F6) plays the scene you're editing, and
 how many copies of the game Play starts, for multiplayer
 ([Run Instances](#multiplayer)). Next to it, the scripts' build status, with a
 button to rebuild them. The **gear button** has **Code Editor...**, **Run
-Instances...** and **Reset Panel Layout**. In a narrow window the buttons show only their
+Instances...**, **Autoloads...** and **Reset Panel Layout**. In a narrow window the buttons show only their
 icons. Point at any button to see what it does. Text that's cut short with "..." (long
 names, paths) shows in full when you point at it too.
 
@@ -323,7 +324,8 @@ reloadScene();                             // start this scene again
 The switch happens at the end of the frame, so a script can safely call it on
 its own scene. The old scene and all its scripts are freed, then the new scene's
 scripts get `ready()`. To keep something from one scene to the next (a score,
-lives), put it in `tree()->values`, which lasts until the game stops:
+lives), use an [autoload](#autoloads-global-scripts), or, for a few numbers,
+`tree()->values`, which lasts until the game stops:
 
 ```cpp
 tree()->values["coins"] += 1;
@@ -332,6 +334,84 @@ tree()->values["coins"] += 1;
 The demo has two levels. `door.scene.json` uses the `LevelExit` script; each
 door's **next scene** is set in the inspector (under Script Variables). Coins
 carry over, and falling off the world restarts the level.
+
+## Autoloads (global scripts)
+
+Like Godot's autoloads: nodes the game makes when it starts and keeps until it
+stops, whatever scene is on. Use one for whatever the whole game shares: the
+score and inventory, settings, music that keeps playing between levels,
+saving, a global event bus.
+
+**1. Write the script.** Put the class in a header, so other scripts can use
+its functions, and register it in a `.cpp` next to it:
+
+```cpp
+// scripts/game_state.hpp
+#pragma once
+#include "script.hpp"
+using namespace s2d;
+
+class GameState : public Script {
+public:
+    EXPORT(int, coins, 0);
+    EXPORT(int, lives, 3);
+    SIGNAL(coins_changed, int);
+
+    void addCoin() {
+        ++coins;
+        emitSignal("coins_changed", coins);
+    }
+};
+```
+
+```cpp
+// scripts/game_state.cpp
+#include "game_state.hpp"
+REGISTER_SCRIPT(GameState)
+```
+
+**2. Add it:** the **gear button** on the toolbar > **Autoloads...**, pick
+`script GameState`, keep the name `GameState`, **Add**. (Or right-click the
+script, or a scene, in the FileSystem dock > **Add as Autoload...**.) It's
+saved in `project.json`; exported games have it too.
+
+**3. Use it** from any script, in `ready()` or later:
+
+```cpp
+#include "game_state.hpp"
+
+class Coin : public Script {
+public:
+    void ready() override {
+        connect(node(), "body_entered", [this](Node* body) {
+            if (body->name != "Player") return;
+            autoload<GameState>("GameState")->addCoin();
+            node()->queueFree();
+        });
+    }
+};
+```
+
+and listen to its signals: `connect(autoloadNode("GameState"), "coins_changed", ...)`.
+
+What to know:
+
+- **Made first, kept always.** Autoloads are made in the list's order, and get
+  `ready()` before the main scene's scripts, so the scene can use them in its
+  own `ready()`. `changeScene` leaves them alone; **Stop** ends them.
+- **A scene can be an autoload too** (a HUD, a music player): its nodes are
+  drawn on top of the scene. `autoload<Label>("Hud")` gives its root node.
+- **Beside the scene, not above it:** the scene's node paths don't change.
+  `findNode("GameState")` finds an autoload too, and an autoload's scripts can
+  `findNode` the scene's nodes.
+- **Hot reloading keeps their `EXPORT` variables** (the scene's scripts start
+  over, as before). Other member variables start over, so keep the state that
+  matters in `EXPORT`s.
+- **A name that isn't there** gives `nullptr`, and the Output panel says so.
+- **Not shared between players:** in multiplayer, each copy of the game has its
+  own. Send what others need with [RPCs](#multiplayer) or a
+  `MultiplayerSynchronizer`.
+- For a few numbers, `tree()->values["coins"]` still works without any setup.
 
 ## Animation
 
@@ -498,6 +578,7 @@ or one of your own base classes (see
 | `changeScene("scenes/level2.scene.json")`, `reloadScene()` | Switch scenes at the end of the frame ([more](#changing-scenes-while-the-game-runs)) |
 | `tree()->currentScene()` | The path of the scene that's running |
 | `tree()->values["coins"]` | Numbers that last from one scene to the next |
+| `autoload<GameState>("GameState")` | An [autoload](#autoloads-global-scripts): kept for the whole game |
 | `print("hello")` | Writes to the Output panel |
 | `connect(node, "body_entered", &Coin::onBody)` | Calls a function when a node sends a signal ([more](#signals)) |
 | `CALLABLE(onBody);` | Lets signals connected in the editor call that function ([more](#signals)) |
@@ -991,6 +1072,7 @@ editor/
 ├── tests/multiplayer/    <- the multiplayer test (scripts/test-multiplayer.sh)
 ├── tests/signals/        <- the signals test (scripts/test-signals.sh)
 ├── tests/lint/           <- the script checks' test (scripts/test-lint.sh)
+├── tests/autoload/       <- the autoloads test (scripts/test-autoload.sh)
 ├── scripts_module/       <- builds a project's scripts into the hot reload library
 └── project/              <- the demo project
     ├── project.json      <- game name, main scene, window size, export settings

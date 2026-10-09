@@ -18,7 +18,7 @@ project="$ROOT/editor/tests/lint"
 file="$project/scripts/lint_me.cpp"
 output="$("$editor" --project "$project" --check-file "$file" 2>&1)"
 want="$(grep -n '// warn' "$file" | cut -d: -f1 | sort -n | tr '\n' ' ')"
-got="$(echo "$output" | grep -E 'warning: (self|getNode|findNode)\(\)' | cut -d: -f2 | sort -n | uniq | tr '\n' ' ')"
+got="$(echo "$output" | grep -E 'warning: (self|getNode|findNode|autoload)\(\)' | cut -d: -f2 | sort -n | uniq | tr '\n' ' ')"
 echo "Lines that should warn: $want"
 echo "Lines that warned:      $got"
 if [ "$want" = "$got" ] && echo "$output" | grep -q " 0 error(s)"; then

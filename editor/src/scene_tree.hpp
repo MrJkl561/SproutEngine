@@ -6,8 +6,10 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "nodes.hpp"
+#include "project.hpp"
 
 namespace s2d {
 
@@ -39,6 +41,14 @@ public:
     const std::string& currentScene() const { return currentScene_; }
     void setCurrentScene(const std::string& scenePath) { currentScene_ = scenePath; }
 
+    // Autoloads (gear button > Autoloads..., saved in project.json): nodes made
+    // before the first scene and kept until the game stops, whatever scene is
+    // running. They sit beside the scene, not above it, so the scene's node
+    // paths don't change. Call before start(); they get ready() first.
+    void setAutoloads(const std::vector<Autoload>& autoloads);
+    Node* autoload(const std::string& name) const;  // nullptr if there's none by that name
+    const std::vector<std::unique_ptr<Node>>& autoloads() const { return autoloads_; }
+
     // Values kept while the game runs, across scene changes (score, lives...):
     //   tree()->values["coins"] += 1;
     std::map<std::string, double> values;
@@ -65,6 +75,7 @@ private:
     void switchScene();
 
     std::unique_ptr<Node> root_;
+    std::vector<std::unique_ptr<Node>> autoloads_;
     std::string currentScene_;
     std::string pendingScene_;  // set by changeScene(), done at the end of process()
     bool playing_ = false;

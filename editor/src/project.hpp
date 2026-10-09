@@ -9,6 +9,15 @@
 
 namespace s2d {
 
+// A node made when the game starts and kept for as long as it runs, across
+// scene changes (like Godot's autoloads): a script on a plain node, or a scene.
+// Scripts reach it with autoload<GameState>("GameState").
+struct Autoload {
+    std::string name;    // what scripts look it up by, e.g. "GameState"
+    std::string script;  // a script class (on a new Node)...
+    std::string scene;   // ...or a scene file, e.g. "scenes/music.scene.json"
+};
+
 struct ProjectSettings {
     std::string name = "Sprout Game";
     std::string mainScene = "scenes/main.scene.json";
@@ -25,6 +34,8 @@ struct ProjectSettings {
     static constexpr int kMaxInstances = 4;
     int runInstances = 1;
     std::vector<std::string> instanceArgs;  // one line per instance (may be shorter)
+
+    std::vector<Autoload> autoloads;  // made in this order, before the main scene
 
     static ProjectSettings load(const std::filesystem::path& projectDir);  // defaults if there's no file
     bool save(const std::filesystem::path& projectDir) const;

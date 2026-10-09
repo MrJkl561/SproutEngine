@@ -20,8 +20,37 @@ void forEachNode(Node* node, const std::function<void(Node*)>& fn) {
 }
 
 SceneTree::~SceneTree() {
-    // Scripts may look at the tree in their destructors, so free nodes first.
+    // Scripts may look at the tree in their destructors, so free nodes first
+    // (the scene, then the autoloads its scripts may still use).
     root_.reset();
+    while (!autoloads_.empty()) autoloads_.pop_back();
+}
+
+void SceneTree::setAutoloads(const std::vector<Autoload>& autoloads) {
+    autoloads_.clear();
+    for (const Autoload& a : autoloads) {
+        std::unique_ptr<Node> node;
+        if (!a.scene.empty()) {
+            std::string error;
+            node = loadScene(Assets::projectDir() / a.scene, &error);
+            if (!node) {
+                print("Autoload " + a.name + ": couldn't load " + a.scene + ": " + error);
+                continue;
+            }
+        } else {
+            node = createNode("Node");
+            node->scriptName = a.script;
+        }
+        node->name = a.name;
+        node->tree_ = this;
+        autoloads_.push_back(std::move(node));
+    }
+}
+
+Node* SceneTree::autoload(const std::string& name) const {
+    for (auto& a : autoloads_)
+        if (a->name == name) return a.get();
+    return nullptr;
 }
 
 void SceneTree::setRoot(std::unique_ptr<Node> root) {
@@ -82,6 +111,12 @@ void SceneTree::readyRecursive(Node* node) {
 
 void SceneTree::start() {
     playing_ = true;
+    // The autoloads first, so the scene's scripts can use them in ready()
+    for (auto& a : autoloads_) {
+        attachScripts(a.get());
+        connectSaved(a.get());
+    }
+    for (auto& a : autoloads_) readyRecursive(a.get());
     if (!root_) return;
     attachScripts(root_.get());
     connectSaved(root_.get());
@@ -89,11 +124,28 @@ void SceneTree::start() {
 }
 
 void SceneTree::dropScripts() {
+    // The scene's scripts start over after a reload; the autoloads keep their
+    // EXPORT variables (the game's state lives there: coins, lives...), since
+    // the new scripts get them back from scriptVars.
+    for (auto& a : autoloads_)
+        forEachNode(a.get(), [](Node* n) {
+            if (!n->script) return;
+            Exports e;
+            n->script->collectExports(e);
+            setScriptVars(*n, propertyListToJson(e.list));
+        });
     forEachNode(root_.get(), [](Node* n) { n->script.reset(); });
+    for (auto& a : autoloads_) forEachNode(a.get(), [](Node* n) { n->script.reset(); });
 }
 
 void SceneTree::restartScripts() {
-    if (!playing_ || !root_) return;
+    if (!playing_) return;
+    for (auto& a : autoloads_) {
+        attachScripts(a.get());
+        connectSaved(a.get());
+    }
+    for (auto& a : autoloads_) readyRecursive(a.get());
+    if (!root_) return;
     attachScripts(root_.get());
     connectSaved(root_.get());
     readyRecursive(root_.get());
@@ -114,7 +166,9 @@ void SceneTree::process(float delta) {
     if (!root_) return;
 
     // Collect first, so nodes added during this frame start next frame.
+    // (The autoloads run before the scene.)
     std::vector<Node*> nodes;
+    for (auto& a : autoloads_) forEachNode(a.get(), [&](Node* n) { nodes.push_back(n); });
     forEachNode(root_.get(), [&](Node* n) { nodes.push_back(n); });
     for (Node* n : nodes) n->update(delta);  // nodes that move by themselves (animations)
     multiplayer().simulate(*this, delta);    // scripts with INPUT: their fixed 60-a-second moves
@@ -142,6 +196,14 @@ void SceneTree::process(float delta) {
         }
     };
     sweep(root_.get());
+    for (size_t i = 0; i < autoloads_.size();) {
+        if (autoloads_[i]->isQueuedForDeletion()) {  // an autoload can free itself
+            forEachNode(autoloads_[i].get(), [](Node* x) { x->emitSignal("tree_exiting"); });
+            autoloads_.erase(autoloads_.begin() + static_cast<long>(i));
+        } else {
+            sweep(autoloads_[i++].get());
+        }
+    }
     multiplayer().flush(*this);  // synchronizers and spawners send what changed
 
     if (!pendingScene_.empty()) switchScene();
@@ -178,13 +240,16 @@ void SceneTree::draw(const DrawOptions& options) {
         for (auto& c : n->children()) drawNode(c.get());
     };
     if (root_) drawNode(root_.get());
+    for (auto& a : autoloads_) drawNode(a.get());  // on top of the scene (a HUD, a fade...)
 }
 
 Camera2D* SceneTree::currentCamera() const {
     Camera2D* found = nullptr;
-    forEachNode(root_.get(), [&](Node* n) {
+    auto look = [&](Node* n) {
         if (auto* cam = dynamic_cast<Camera2D*>(n); cam && cam->current && !found) found = cam;
-    });
+    };
+    forEachNode(root_.get(), look);  // the scene's camera first
+    for (auto& a : autoloads_) forEachNode(a.get(), look);
     return found;
 }
 
@@ -235,8 +300,33 @@ void print(const std::string& message) {
 void setPrintHandler(std::function<void(const std::string&)> handler) { printHandler() = std::move(handler); }
 
 Node* Script::findNode(const std::string& name) const {
-    if (!node_) notOnNodeYet("findNode");
-    return node_ ? node_->root()->findNode(name) : nullptr;
+    if (!node_) {
+        notOnNodeYet("findNode");
+        return nullptr;
+    }
+    if (Node* found = node_->root()->findNode(name)) return found;
+    // Not in this script's own tree: the scene (for an autoload's script), then the autoloads
+    SceneTree* t = node_->tree();
+    if (!t) return nullptr;
+    if (t->root() && t->root() != node_->root())
+        if (Node* found = t->root()->findNode(name)) return found;
+    for (auto& a : t->autoloads())
+        if (a.get() != node_->root())
+            if (Node* found = a->findNode(name)) return found;
+    return nullptr;
+}
+
+Node* Script::autoloadNode(const std::string& name) const {
+    if (!node_) {
+        notOnNodeYet("autoload");
+        return nullptr;
+    }
+    SceneTree* t = node_->tree();
+    Node* n = t ? t->autoload(name) : nullptr;
+    static std::set<std::string> told;
+    if (!n && t && told.insert(name).second)
+        print("There's no autoload called '" + name + "'. Add it with the gear button on the toolbar > Autoloads...");
+    return n;
 }
 
 void Script::notOnNodeYet(const char* what) const {

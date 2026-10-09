@@ -737,7 +737,7 @@ void Editor::frame() {
     updateSplitters(sw, sh, kLeftW, kRightW, kOutputH, sceneH);
     bool modal = popup_.open || dialog_.open || confirm_.open || export_.open || projects_.open ||
                  folderPick_.valid() || sheet_.open || codeEditorDialog_.open || instancesDialog_.open || connectDialog_.open ||
-                 newScript_.open || ask_.open || swallowMouse_ ||
+                 newScript_.open || ask_.open || autoloadsDialog_.open || swallowMouse_ ||
                  splitter_ != Splitter::None;
     if (modal) GuiLock();
     {
@@ -1091,10 +1091,12 @@ void Editor::drawToolbar(Rectangle r) {
     ux -= 42;
     hint({ux, y, 34, h}, "Settings");
     if (GuiButton({ux, y, 34, h}, GuiIconText(ICON_GEAR, nullptr))) {
-        openPopup({ux, y + h + 2}, {"Code Editor...", "Run Instances...", "Reset Panel Layout"}, [this](int i) {
+        openPopup({ux, y + h + 2}, {"Code Editor...", "Run Instances...", "Autoloads...", "Reset Panel Layout"},
+                  [this](int i) {
             if (i == 0) openCodeEditorDialog();
             if (i == 1) openRunInstancesDialog();
-            if (i == 2) {
+            if (i == 2) openAutoloadsDialog();
+            if (i == 3) {
                 resetLayout();
                 saveLayout();
             }
@@ -2828,9 +2830,12 @@ void Editor::fileMenu(size_t index, Vector2 at) {
             if (!external.empty()) add(external, [this, full] { openInCodeEditor(full); });
             if (selected_ && !f.scriptClass.empty())
                 add("Attach to " + selected_->name, [this, index] { activateFile(index); });
+            if (!f.scriptClass.empty())
+                add("Add as Autoload...", [this, cls = f.scriptClass] { openAutoloadsDialog(cls, ""); });
             break;
         case FileEntry::Scene:
             add("Open Scene", [this, path = f.path] { requestOpenScene(path); });
+            add("Add as Autoload...", [this, path = f.path] { openAutoloadsDialog("", path); });
             add("Edit JSON in Script Tab", [this, full] { openDocument(full); });
             if (!external.empty()) add(external + " (JSON)", [this, full] { openInCodeEditor(full); });
             break;
@@ -2846,6 +2851,140 @@ void Editor::fileMenu(size_t index, Vector2 at) {
     if (f.kind != FileEntry::Texture) add("Choose Code Editor...", [this] { openCodeEditorDialog(); });
     if (!playTree_) add("Delete...", [this, index] { deleteFile(index); });
     openPopup(at, items, [actions](int i) { actions[i](); });
+}
+
+void Editor::openAutoloadsDialog(const std::string& script, const std::string& scene) {
+    activeField_.clear();
+    autoloadsDialog_ = AutoloadsDialog{};
+    autoloadsDialog_.open = true;
+    autoloadsDialog_.script = script;
+    autoloadsDialog_.scene = scene;
+    // A name to start from: the script's, or the scene file's in PascalCase
+    std::string name = !script.empty() ? script : !scene.empty() ? pascalCase(fs::path(scene).stem().stem().string()) : "";
+    std::snprintf(autoloadsDialog_.name, sizeof autoloadsDialog_.name, "%s", name.c_str());
+    autoloadsDialog_.nameEdit = !name.empty();
+    if (autoloadsDialog_.nameEdit) moveTextCursorToEnd();
+}
+
+void Editor::drawAutoloadsDialog() {
+    AutoloadsDialog& d = autoloadsDialog_;
+    float sw = screenW(), sh = screenH();
+    DrawRectangle(0, 0, static_cast<int>(sw), static_cast<int>(sh), Fade(BLACK, 0.5f));
+    float w = std::min(660.0f, sw - 20), h = std::min(520.0f, sh - 20);
+    Rectangle box{std::floor(sw / 2 - w / 2), std::floor(sh / 2 - h / 2), w, h};
+    bool close = GuiWindowBox(box, "Autoloads") != 0;
+    float x = box.x + 14, y = box.y + 38, iw = box.width - 28;
+    y += drawWrapped("Nodes made when the game starts and kept until it stops, whatever scene is on: for the score, "
+                     "the inventory, music, saving... In a script: autoload<GameState>(\"GameState\"). They're made in "
+                     "this order, before the main scene.",
+                     x, y, iw, kDim) +
+         8;
+
+    // The list
+    auto& list = settings_.autoloads;
+    Rectangle area{x, y, iw, std::max(80.0f, box.y + box.height - 170 - y)};
+    Rectangle content{0, 0, area.width - 16, std::max(1.0f, list.size() * 30.0f + 4)};
+    Rectangle view{};
+    GuiScrollPanel(area, nullptr, content, &d.scroll, &view);
+    beginClip(view);
+    int moveUp = -1, moveDown = -1, remove = -1;
+    for (size_t i = 0; i < list.size(); ++i) {
+        float ry = view.y + d.scroll.y + 2 + i * 30;
+        const Autoload& a = list[i];
+        bool loaded = !a.script.empty() ? ScriptRegistry::has(a.script) : fs::exists(projectDir_ / a.scene);
+        drawText(std::to_string(i + 1) + ".", view.x + 8, ry + 5, kDim);
+        drawFit(a.name, view.x + 32, ry + 5, 170, kText);
+        std::string what = !a.script.empty() ? "script " + a.script + (loaded ? "" : "  (not loaded)")
+                                             : "scene " + a.scene + (loaded ? "" : "  (missing)");
+        drawFit(what, view.x + 210, ry + 5, view.width - 210 - 104, loaded ? kDim : kOrange, true);
+        float bx = view.x + view.width - 98;
+        hint({bx, ry, 30, 24}, "Earlier: made (and ready) before the ones below it");
+        if (GuiButton({bx, ry, 30, 24}, GuiIconText(ICON_ARROW_UP_FILL, nullptr))) moveUp = static_cast<int>(i);
+        hint({bx + 33, ry, 30, 24}, "Later");
+        if (GuiButton({bx + 33, ry, 30, 24}, GuiIconText(ICON_ARROW_DOWN_FILL, nullptr))) moveDown = static_cast<int>(i);
+        hint({bx + 66, ry, 30, 24}, "Remove this autoload (its file stays)");
+        if (GuiButton({bx + 66, ry, 30, 24}, GuiIconText(ICON_CROSS_SMALL, nullptr))) remove = static_cast<int>(i);
+    }
+    EndScissorMode();
+    if (list.empty()) drawText("None yet: add one below.", area.x + 10, area.y + 10, kDim);
+    bool changed = false;
+    if (moveUp > 0) {
+        std::swap(list[moveUp], list[moveUp - 1]);
+        changed = true;
+    }
+    if (moveDown >= 0 && moveDown + 1 < static_cast<int>(list.size())) {
+        std::swap(list[moveDown], list[moveDown + 1]);
+        changed = true;
+    }
+    if (remove >= 0) {
+        log("Removed autoload " + list[remove].name, kAccent);
+        list.erase(list.begin() + remove);
+        changed = true;
+    }
+    y = area.y + area.height + 12;
+
+    // Adding one: a script or a scene, and its name
+    drawText("Add", x, y + 5, kAccent);
+    std::string pick = !d.script.empty() ? "script " + d.script : !d.scene.empty() ? "scene " + d.scene : "Pick a script or scene...";
+    hint({x + 60, y, iw - 60, 26}, "A script (it goes on a plain node) or a scene file");
+    if (GuiButton({x + 60, y, iw - 60, 26}, fitText(pick, iw - 76, true).c_str())) {
+        std::vector<std::string> items;
+        std::vector<std::pair<std::string, std::string>> choices;  // (script, scene)
+        for (const std::string& n : ScriptRegistry::names()) {
+            items.push_back("script " + n);
+            choices.push_back({n, ""});
+        }
+        for (auto& f : files_)
+            if (f.kind == FileEntry::Scene) {
+                items.push_back("scene " + f.path);
+                choices.push_back({"", f.path});
+            }
+        if (items.empty()) {
+            d.error = "No scripts or scenes yet: make a script first (New Script).";
+        } else {
+            openPopup({x + 60, y + 28}, items, [this, choices](int i) {
+                autoloadsDialog_.script = choices[i].first;
+                autoloadsDialog_.scene = choices[i].second;
+                if (std::string(autoloadsDialog_.name).empty()) {
+                    std::string n = !choices[i].first.empty() ? choices[i].first
+                                                              : pascalCase(fs::path(choices[i].second).stem().stem().string());
+                    std::snprintf(autoloadsDialog_.name, sizeof autoloadsDialog_.name, "%s", n.c_str());
+                }
+            });
+        }
+    }
+    y += 34;
+    drawText("Name", x, y + 5, kDim);
+    if (GuiTextBox({x + 60, y, iw - 60 - 100, 26}, d.name, sizeof d.name, d.nameEdit)) d.nameEdit = !d.nameEdit;
+    static const std::regex identifier("[A-Za-z_][A-Za-z0-9_]*");
+    std::string name = d.name;
+    bool taken = std::any_of(list.begin(), list.end(), [&](const Autoload& a) { return a.name == name; });
+    bool ready = std::regex_match(name, identifier) && !taken && (!d.script.empty() || !d.scene.empty());
+    if (!ready) GuiDisable();
+    hint({x + iw - 96, y, 96, 26}, "Add it to the list (saved in project.json)");
+    bool add = GuiButton({x + iw - 96, y, 96, 26}, GuiIconText(ICON_CIRCLE_ADD, "Add"));
+    if (!ready) GuiEnable();
+    y += 34;
+    if (taken) d.error = "There's already an autoload called " + name + ".";
+    else if (!name.empty() && !std::regex_match(name, identifier)) d.error = "The name needs letters, digits and _ only.";
+    else if (d.error.rfind("There's already", 0) == 0 || d.error.rfind("The name needs", 0) == 0) d.error.clear();
+    if (add && ready) {
+        list.push_back({name, d.script, d.scene});
+        log("Added autoload " + name + " (" + (!d.script.empty() ? "script " + d.script : "scene " + d.scene) + ")",
+            kGood);
+        d.script.clear();
+        d.scene.clear();
+        d.name[0] = '\0';
+        d.error.clear();
+        changed = true;
+    }
+    if (!d.error.empty()) drawWrapped(d.error, x, y, iw - 110, kOrange);
+    if (changed && !settings_.save(projectDir_)) log("Couldn't save project.json.", kBad);
+
+    if (GuiButton({box.x + box.width - 104, box.y + box.height - 42, 90, 30}, "Close") ||
+        (!d.nameEdit && IsKeyPressed(KEY_ESCAPE)))
+        close = true;
+    if (close) d.open = false;
 }
 
 void Editor::askFirst(std::string title, std::string message, std::string yes, std::function<void()> onYes) {
@@ -3987,6 +4126,7 @@ void Editor::drawModal() {
     if (instancesDialog_.open) drawRunInstancesDialog();
     if (connectDialog_.open) drawConnectDialog();
     if (newScript_.open) drawNewScriptDialog();
+    if (autoloadsDialog_.open) drawAutoloadsDialog();
     bool picking = folderPick_.valid();
     if (picking) GuiLock();  // the folder window is open: everything here waits
     if (export_.open) drawExportDialog();
@@ -4213,6 +4353,7 @@ void Editor::play(bool mainScene) {
     playTree_ = std::make_unique<SceneTree>();
     playTree_->gameSize = editTree_.gameSize;
     playTree_->clearColor = editTree_.clearColor;
+    playTree_->setAutoloads(settings_.autoloads);  // (Project Settings > Autoloads)
     playTree_->setRoot(std::move(root));
     playTree_->setCurrentScene(scene);
     log("Playing " + scene + " ...", kAccent);

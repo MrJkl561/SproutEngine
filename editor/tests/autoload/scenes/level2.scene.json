@@ -1,0 +1,2 @@
+{"format":"sprout-editor-scene","version":1,"root":{"type":"Node2D","name":"Level2Root","script":"Level2","properties":{},"children":[
+ {"type":"Node2D","name":"Level2Marker","properties":{},"children":[]}]}}

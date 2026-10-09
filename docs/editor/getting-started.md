@@ -224,6 +224,9 @@ Ideas to try with what you know:
   `body_entered` and **Connect**: the editor writes the function for you. Fill
   it in with `if (body->name == "Player") node()->queueFree();`.
   [Signals, step by step](signals.md) walks through exactly this.
+- Keep a score across levels with an
+  [autoload](../../editor/README.md#autoloads-global-scripts): a script the whole
+  game shares, kept when the scene changes.
 - Open the demo project (**Projects** → **Open Folder...** → the `editor/project`
   folder inside the Sprout folder) and read its scripts: coins, a door to
   level 2, a spinning icon, and an animated player.

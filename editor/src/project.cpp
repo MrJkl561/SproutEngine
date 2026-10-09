@@ -27,6 +27,12 @@ ProjectSettings ProjectSettings::load(const std::filesystem::path& projectDir) {
             s.runInstances = std::clamp(r.value("count", 1), 1, kMaxInstances);
             if (r.contains("args") && r["args"].is_array()) s.instanceArgs = r["args"].get<std::vector<std::string>>();
         }
+        if (j.contains("autoloads") && j["autoloads"].is_array())
+            for (const json& a : j["autoloads"]) {
+                if (!a.is_object()) continue;
+                Autoload al{a.value("name", ""), a.value("script", ""), a.value("scene", "")};
+                if (!al.name.empty() && (!al.script.empty() || !al.scene.empty())) s.autoloads.push_back(al);
+            }
     } catch (const json::exception&) {
         // A broken file gives the defaults.
     }
@@ -43,6 +49,15 @@ bool ProjectSettings::save(const std::filesystem::path& projectDir) const {
     j["export_targets"] = exportTargets;
     bool anyArgs = std::any_of(instanceArgs.begin(), instanceArgs.end(), [](auto& a) { return !a.empty(); });
     if (runInstances > 1 || anyArgs) j["run_instances"] = {{"count", runInstances}, {"args", instanceArgs}};
+    if (!autoloads.empty()) {
+        j["autoloads"] = json::array();
+        for (const Autoload& a : autoloads) {
+            json one = {{"name", a.name}};
+            if (!a.script.empty()) one["script"] = a.script;
+            if (!a.scene.empty()) one["scene"] = a.scene;
+            j["autoloads"].push_back(one);
+        }
+    }
     std::ofstream out(projectDir / "project.json");
     if (!out) return false;
     out << j.dump(2) << '\n';

@@ -49,7 +49,7 @@ std::vector<Diagnostic> lintScript(const std::string& text) {
     std::vector<Diagnostic> out;
     const std::string code = codeOnly(text);
     static const std::regex classHead(R"((?:^|[^\w])(?:class|struct)\s+(\w+)[^()]*$)");
-    static const std::regex call(R"(\b(self|getNode|findNode)\s*(?:<[^;(){}]*>)?\s*\()");
+    static const std::regex call(R"(\b(self|getNode|findNode|autoload)\s*(?:<[^;(){}]*>)?\s*\()");
 
     auto where = [&](size_t offset, int& line, int& column) {
         line = 1;

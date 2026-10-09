@@ -172,7 +172,7 @@ private:
     bool isTyping() const {
         return !activeField_.empty() || dialog_.open || confirm_.open || export_.open || projects_.open ||
                folderPick_.valid() || sheet_.open || codeEditorDialog_.open || instancesDialog_.open ||
-               connectDialog_.open || newScript_.open || ask_.open || (mainView_ == MainView::Script && (codeFocused_ || find_.findEdit || find_.withEdit));
+               connectDialog_.open || newScript_.open || ask_.open || autoloadsDialog_.open || (mainView_ == MainView::Script && (codeFocused_ || find_.findEdit || find_.withEdit));
     }
 
     // --- code editor (VS Code, Visual Studio...) -----------------------------
@@ -195,7 +195,8 @@ private:
     void setDiagnostics(TextDocument& doc) const;  // the last build's messages for its file
     bool dialogOpen() const {
         return dialog_.open || confirm_.open || export_.open || projects_.open || folderPick_.valid() || sheet_.open ||
-               codeEditorDialog_.open || instancesDialog_.open || connectDialog_.open || newScript_.open || ask_.open;
+               codeEditorDialog_.open || instancesDialog_.open || connectDialog_.open || newScript_.open || ask_.open ||
+               autoloadsDialog_.open;
     }
 
     // --- Signals (the Inspector's Signals list and its Connect dialog) --------
@@ -483,6 +484,18 @@ private:
         std::function<void()> onYes;
     } ask_;
     void askFirst(std::string title, std::string message, std::string yes, std::function<void()> onYes);
+
+    // Autoloads (Project Settings): nodes kept for the whole game, across scenes
+    struct AutoloadsDialog {
+        bool open = false;
+        char name[64] = "";
+        bool nameEdit = false;
+        std::string script, scene;  // what the next one will be (one of them)
+        std::string error;
+        Vector2 scroll{0, 0};
+    } autoloadsDialog_;
+    void openAutoloadsDialog(const std::string& script = "", const std::string& scene = "");
+    void drawAutoloadsDialog();
     void deleteFile(size_t index);  // asks, then moves it to the Recycle Bin / Trash
 };
 

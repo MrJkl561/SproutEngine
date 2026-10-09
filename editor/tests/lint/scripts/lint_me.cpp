@@ -8,6 +8,7 @@ public:
     EXPORT(float, speed, 200);
     AnimatedSprite2D* f = findNode<AnimatedSprite2D>("yrd");     // warn
     Node* g{getNode("Child")};                                    // warn
+    Script* state = autoload<Script>("GameState");                 // warn
     Node2D* h = nullptr;                                          // fine
     std::function<void()> later = [this] { findNode("x"); };      // fine: runs later
     // AnimatedSprite2D* commented = findNode<AnimatedSprite2D>("c");  fine: comment
