@@ -56,7 +56,7 @@ endif()
 # Download Sprout (and, through it, raylib, raylib-cpp, raygui and nlohmann/json)
 include(FetchContent)
 FetchContent_Declare(sprout
-    GIT_REPOSITORY https://github.com/MrJkl561/Cpp-Game-engine-.git
+    GIT_REPOSITORY https://github.com/MrJkl561/SproutEngine.git
     GIT_TAG        main   # a branch name, a version tag or a commit id
     GIT_SHALLOW    TRUE
 )
@@ -113,7 +113,7 @@ You can copy the folder, or, if your project uses Git, add Sprout as a
 **submodule** (a Git repository inside another one):
 
 ```bash
-git submodule add https://github.com/MrJkl561/Cpp-Game-engine-.git external/sprout
+git submodule add https://github.com/MrJkl561/SproutEngine.git external/sprout
 ```
 
 Then `CMakeLists.txt` is the same as above, but with `add_subdirectory` instead

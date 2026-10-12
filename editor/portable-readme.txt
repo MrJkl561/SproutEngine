@@ -30,4 +30,4 @@ On another computer
 
 Games you export don't need any of this: they run on their own.
 
-More: https://github.com/MrJkl561/Cpp-Game-engine-  (editor/README.md)
+More: https://github.com/MrJkl561/SproutEngine  (editor/README.md)

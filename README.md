@@ -32,16 +32,16 @@ Windows, macOS and Linux.
 **Windows** (in the Developer PowerShell for VS):
 
 ```bat
-git clone https://github.com/MrJkl561/Cpp-Game-engine-.git
-cd Cpp-Game-engine-
+git clone https://github.com/MrJkl561/SproutEngine.git
+cd SproutEngine
 scripts\run-editor.bat
 ```
 
 **macOS / Linux:**
 
 ```bash
-git clone https://github.com/MrJkl561/Cpp-Game-engine-.git
-cd Cpp-Game-engine-
+git clone https://github.com/MrJkl561/SproutEngine.git
+cd SproutEngine
 scripts/run-editor.sh
 ```
 
@@ -133,7 +133,7 @@ Start at the top and work your way down:
 - **[Using Sprout in your own project](docs/using-sprout-in-your-own-project.md)**: your game in its own repository
 - **[The documentation index](docs/README.md)**
 - **[Contributing](CONTRIBUTING.md)**: how Sprout is organised, the tests and the house style
-- Found a bug or have a question? [Open an issue](https://github.com/MrJkl561/Cpp-Game-engine-/issues)
+- Found a bug or have a question? [Open an issue](https://github.com/MrJkl561/SproutEngine/issues)
 
 ## Engine or Editor?
 
@@ -397,7 +397,7 @@ universal apps (Apple Silicon and Intel).
 <summary><b>What's in this repository</b></summary>
 
 ```
-Cpp-Game-engine-/
+SproutEngine/
 ├── engine/             <- THE ENGINE (code-only)
 │   ├── include/sprout/ <- its headers (each starts with a how-to comment)
 │   └── src/            <- its code

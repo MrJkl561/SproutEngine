@@ -166,11 +166,11 @@ You can get Sprout with Git (recommended) or as a ZIP file.
 projects and type:
 
 ```bash
-git clone https://github.com/MrJkl561/Cpp-Game-engine-.git
-cd Cpp-Game-engine-
+git clone https://github.com/MrJkl561/SproutEngine.git
+cd SproutEngine
 ```
 
-`git clone` downloads Sprout into a new folder called `Cpp-Game-engine-`, and
+`git clone` downloads Sprout into a new folder called `SproutEngine`, and
 `cd` ("change directory") moves the terminal into that folder.
 
 **As a ZIP:** on the GitHub page, click the green **Code** button, then
