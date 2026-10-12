@@ -36,7 +36,9 @@ tests/                      doctest unit tests (built with -DSPROUT_BUILD_TESTS=
 editor/                     the Sprout Editor (separate from the engine; see below)
 scripts/                    build, run-editor, test, export, setup-web, test-signals, test-multiplayer
 docs/                       the beginner documentation (docs/editor/ for the editor)
+website/                    the sproutengine.dev web page (plain HTML and CSS; images/ has its screenshots)
 .github/workflows/build.yml CI: builds and tests on Windows, macOS and Linux (run by hand)
+.github/workflows/website.yml publishes website/ to GitHub Pages when main changes it
 ```
 
 A few things worth knowing about the engine's insides:

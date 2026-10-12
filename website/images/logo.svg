@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Sprout">
+  <path d="M32 58V30" stroke="#3a8f4c" stroke-width="5" stroke-linecap="round" fill="none"/>
+  <path d="M32 34C32 20 22 12 8 12c0 14 10 22 24 22z" fill="#56c26a"/>
+  <path d="M32 30c0-12 9-20 24-20 0 13-9 21-24 20z" fill="#7bd88a"/>
+</svg>
