@@ -135,6 +135,9 @@ target_include_directories(sprout_editor PRIVATE
     "${raylib_SOURCE_DIR}/src/external/glfw/include")  # GLFW, to read the display scale
 target_link_libraries(sprout_editor PRIVATE raylib_cpp nlohmann_json::nlohmann_json sprout_enet)
 
+# Visual Studio's folder, with / not \ (it goes into a C++ string, where
+# "\18" in "...\Microsoft Visual Studio\18\Community" would be a different character)
+string(REPLACE "\\" "/" _generator_instance "${CMAKE_GENERATOR_INSTANCE}")
 # The editor opens the project folder and writes new scripts straight into the
 # source tree, so "New Script" just works.
 target_compile_definitions(sprout_editor PRIVATE
@@ -151,7 +154,7 @@ target_compile_definitions(sprout_editor PRIVATE
     # use the same one; CMake on its own would pick the newest installed, even
     # one without the C++ tools)
     SPROUT_EDITOR_GENERATOR="${CMAKE_GENERATOR}"
-    SPROUT_EDITOR_GENERATOR_INSTANCE="${CMAKE_GENERATOR_INSTANCE}"
+    SPROUT_EDITOR_GENERATOR_INSTANCE="${_generator_instance}"
     # Live error checking in the Script tab: clangd, or else the compiler itself
     SPROUT_EDITOR_CLANGD="${_clangd}"
     SPROUT_EDITOR_CXX="${CMAKE_CXX_COMPILER}"
@@ -211,3 +214,33 @@ foreach(config Debug Release RelWithDebInfo MinSizeRel)
     string(TOUPPER "${config}" config)
     set_target_properties(sprout_editor PROPERTIES RUNTIME_OUTPUT_DIRECTORY_${config} "${_editor_out}")
 endforeach()
+
+# --- A portable copy ------------------------------------------------------------
+# Everything the editor needs, in one folder that can go anywhere (another
+# drive, another computer with the same tools):
+#     cmake --install <build folder> --config Release --component sprout_editor --prefix <folder>
+# (scripts/make-portable does this). The editor finds editor/, cmake/ and deps/
+# next to itself; see src/editor_paths.hpp.
+install(TARGETS sprout_editor RUNTIME DESTINATION . COMPONENT sprout_editor)
+if(WIN32 AND SPROUT_EDITOR_HOT_RELOAD)
+    install(FILES "$<TARGET_LINKER_FILE:sprout_editor>" DESTINATION . COMPONENT sprout_editor)  # scripts link to the editor through it
+endif()
+# Files the editor writes into projects for code editors (they hold this computer's paths)
+set(_not_ide_files PATTERN ".vscode" EXCLUDE PATTERN ".cache" EXCLUDE
+    PATTERN "compile_commands.json" EXCLUDE PATTERN "CppProperties.json" EXCLUDE PATTERN "exports" EXCLUDE)
+install(DIRECTORY src scripts_module player templates project DESTINATION editor COMPONENT sprout_editor ${_not_ide_files})
+install(DIRECTORY "${_theme_dir}/" DESTINATION editor/theme COMPONENT sprout_editor)
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/../cmake/SproutDependencies.cmake"
+              "${CMAKE_CURRENT_SOURCE_DIR}/../cmake/SproutEnet.cmake" DESTINATION cmake COMPONENT sprout_editor)
+# The libraries' sources (scripts are compiled against them; exports build them),
+# without their git history, examples, tests and docs.
+foreach(_dep raylib raylib_cpp raygui nlohmann_json enet)
+    install(DIRECTORY "${${_dep}_SOURCE_DIR}/" DESTINATION "deps/${_dep}-src" COMPONENT sprout_editor
+        PATTERN ".git" EXCLUDE PATTERN ".github" EXCLUDE PATTERN "examples" EXCLUDE
+        PATTERN "tests" EXCLUDE PATTERN "docs" EXCLUDE PATTERN "projects" EXCLUDE)
+endforeach()
+if(_clangd AND _clangd_dir AND _clangd STREQUAL _clangd_exe)
+    install(DIRECTORY "${_clangd_dir}/" DESTINATION "deps/clangd-${SPROUT_CLANGD_VERSION}" USE_SOURCE_PERMISSIONS COMPONENT sprout_editor)
+endif()
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/portable-readme.txt" DESTINATION . RENAME README.txt COMPONENT sprout_editor)
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/../LICENSE" DESTINATION . COMPONENT sprout_editor)

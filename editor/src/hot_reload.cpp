@@ -3,11 +3,14 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
 #include <set>
 #include <chrono>
 #include <mutex>
 #include <system_error>
+#include <vector>
 
+#include "editor_paths.hpp"
 #include "platform.hpp"
 #include "script.hpp"
 
@@ -59,46 +62,80 @@ fs::path ScriptReloader::libraryPath() const {
 
 bool ScriptReloader::runBuild(const fs::path& scriptsDir, const fs::path& workDir, std::string& output) {
     auto q = [](const fs::path& p) { return "\"" + p.generic_string() + "\""; };
-    std::string cmake = q(SPROUT_EDITOR_CMAKE);
+    const EditorPaths& paths = editorPaths();
+    if (paths.cmake.empty()) {
+        output += "CMake wasn't found, so the scripts can't be built. Install it from https://cmake.org/download/\n"
+                  "(tick \"Add CMake to the PATH\") and restart the editor.\n";
+        return false;
+    }
+    std::string cmake = q(paths.cmake);
     std::error_code ec;
+    // What the build folder is set up with: the editor's files. If they've
+    // moved since (a portable copy, a moved Sprout folder), set it up again.
+    std::string common = cmake + " -S " + q(paths.editorDir / "scripts_module") + " -B " + q(workDir);
+    std::string settings = std::string(" -DCMAKE_BUILD_TYPE=") + SPROUT_EDITOR_BUILD_CONFIG;
+    settings += " -DSPROUT_SCRIPTS_DIR=" + q(scriptsDir);
+    settings += " -DSPROUT_EDITOR_SRC=" + q(paths.srcDir);
+    settings += " -DSPROUT_DEPS_DIR=" + q(paths.depsDir);
+    if (!paths.implib.empty()) settings += " -DSPROUT_EDITOR_IMPLIB=" + q(paths.implib);
+    const fs::path stampFile = workDir / "sprout_setup.txt";
+    std::string stamp = common + settings, oldStamp;
+    {
+        std::ifstream in(stampFile);
+        std::getline(in, oldStamp);
+    }
+    if (oldStamp != stamp) fs::remove(workDir / "CMakeCache.txt", ec);
     if (!fs::exists(workDir / "CMakeCache.txt", ec)) {
-        std::string cmd;
         // First time for this project: set up its build folder.
-        cmd = cmake + " -S " + q(fs::path(SPROUT_EDITOR_DIR) / "scripts_module") + " -B " + q(workDir);
+        // The ways to try, best first: if one fails (say the Visual Studio that
+        // built the editor has moved or been updated), the next one gets a go.
+        std::vector<std::string> generators;
 #if !defined(_WIN32)
-        if (!platform::findProgram("ninja").empty()) cmd += " -G Ninja";
+        generators.push_back(platform::findProgram("ninja").empty() ? "" : " -G Ninja");
 #elif defined(_MSC_VER)
         // The DLL has to be built for the editor's own CPU (x64 or ARM64), not
         // whatever Visual Studio would pick for this PC.
-        const std::string editorGenerator = SPROUT_EDITOR_GENERATOR;
-        const std::string instance = SPROUT_EDITOR_GENERATOR_INSTANCE;
-        if (editorGenerator.find("Visual Studio") != std::string::npos) {
-            cmd += " -G \"" + editorGenerator + "\"";
-            if (!instance.empty()) cmd += " \"-DCMAKE_GENERATOR_INSTANCE=" + instance + "\"";
-        }
-        const char* generator = std::getenv("CMAKE_GENERATOR");
-        if (editorGenerator.find("Visual Studio") != std::string::npos ||
-            !generator || std::string(generator).find("Visual Studio") != std::string::npos) {
 #if defined(_M_ARM64)
-            cmd += " -A ARM64";
+        const std::string arch = " -A ARM64";
 #elif defined(_M_X64)
-            cmd += " -A x64";
+        const std::string arch = " -A x64";
 #elif defined(_M_IX86)
-            cmd += " -A Win32";
+        const std::string arch = " -A Win32";
+#else
+        const std::string arch;
 #endif
+        const std::string& editorGenerator = paths.generator;
+        const std::string& instance = paths.generatorInstance;
+        const char* env = std::getenv("CMAKE_GENERATOR");
+        bool envIsVs = !env || std::string(env).find("Visual Studio") != std::string::npos;
+        if (editorGenerator.find("Visual Studio") != std::string::npos) {
+            if (!instance.empty())
+                generators.push_back(" -G \"" + editorGenerator + "\"" + arch + " \"-DCMAKE_GENERATOR_INSTANCE=" + instance + "\"");
+            generators.push_back(" -G \"" + editorGenerator + "\"" + arch);
         }
+        generators.push_back(envIsVs ? arch : "");  // whatever CMake picks
+#else
+        generators.push_back("");
 #endif
-        cmd += std::string(" -DCMAKE_BUILD_TYPE=") + SPROUT_EDITOR_BUILD_CONFIG;
-        cmd += " -DSPROUT_SCRIPTS_DIR=" + q(scriptsDir);
-        cmd += " -DSPROUT_EDITOR_SRC=" + q(fs::path(SPROUT_EDITOR_DIR) / "src");
-        cmd += " -DSPROUT_DEPS_DIR=" + q(SPROUT_EDITOR_DEPS_DIR);
-#if defined(SPROUT_EDITOR_IMPLIB)
-        cmd += " -DSPROUT_EDITOR_IMPLIB=" + q(SPROUT_EDITOR_IMPLIB);
-#endif
-        if (platform::runCommand(cmd, output) != 0) {
+        bool configured = false;
+        std::string attempts;
+        for (const std::string& generator : generators) {
+            // A half-made build folder from a failed try would stop the next one
+            fs::remove(workDir / "CMakeCache.txt", ec);
+            fs::remove_all(workDir / "CMakeFiles", ec);
+            std::string out;
+            if (platform::runCommand(common + generator + settings, out) == 0) {
+                configured = true;
+                break;
+            }
+            attempts += out;
+        }
+        if (!configured) {
+            output += attempts;
             fs::remove(workDir / "CMakeCache.txt", ec);  // try setting it up again next time
             return false;
         }
+        std::ofstream(stampFile) << stamp << '\n';
     }
     // The same build type as the editor (on Windows the two must match).
     std::string build = cmake + " --build " + q(workDir) + " --config " + SPROUT_EDITOR_BUILD_CONFIG;
@@ -146,6 +183,15 @@ void ScriptReloader::update(double now) {
 void ScriptReloader::requestBuild() {
     pending_ = true;
     changedAt_ = -100;
+}
+
+bool ScriptReloader::busy(double now) {
+    if (auto files = scanScripts(); files != known_) {
+        known_ = std::move(files);
+        pending_ = true;
+        changedAt_ = now;
+    }
+    return pending_ || building_;
 }
 
 void ScriptReloader::startBuild() {
@@ -246,6 +292,7 @@ bool ScriptReloader::buildNow(std::string&) { return true; }
 ScriptReloader::~ScriptReloader() = default;
 std::map<std::string, fs::file_time_type> ScriptReloader::scanScripts() const { return {}; }
 void ScriptReloader::update(double) {}
+bool ScriptReloader::busy(double) { return false; }
 void ScriptReloader::requestBuild() {}
 void ScriptReloader::startBuild() {}
 bool ScriptReloader::pollBuild(bool&, std::string&) { return false; }

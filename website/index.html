@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sprout: make your first 2D games in C++</title>
+  <meta name="description" content="Sprout is a free, open-source 2D game editor and engine in C++, built on raylib. Place nodes like in Godot, write C++ scripts that reload while the game runs, and export to Windows, macOS, Linux and the web.">
+  <meta property="og:title" content="Sprout: make your first 2D games in C++">
+  <meta property="og:description" content="A free, open-source 2D game editor and engine in C++. Godot-style nodes, hot-reloaded C++ scripts, multiplayer, shaders, and exports to Windows, macOS, Linux and the web.">
+  <meta property="og:image" content="https://sproutengine.dev/images/editor.png">
+  <meta property="og:url" content="https://sproutengine.dev/">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="images/logo.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="brand" href="#top"><img src="images/logo.svg" alt="" width="28" height="28"> Sprout</a>
+    <nav aria-label="Main">
+      <a href="#features">Features</a>
+      <a href="#two-ways">Editor &amp; Engine</a>
+      <a href="#start">Get started</a>
+      <a href="#docs">Docs</a>
+      <a class="nav-github" href="https://github.com/MrJkl561/Cpp-Game-engine-">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+
+<section class="hero">
+  <div class="wrap">
+    <p class="eyebrow">Free and open source &middot; MIT licensed</p>
+    <h1>Make your first 2D games<br>in C++.</h1>
+    <p class="lead">Sprout is a friendly game editor and engine built on
+      <a href="https://www.raylib.com">raylib</a>. Place nodes with the mouse like in Godot,
+      write C++ scripts that reload while the game runs, and export to Windows, macOS,
+      Linux and the web with one button.</p>
+    <div class="actions">
+      <a class="button primary" href="#start">Get started</a>
+      <a class="button" href="https://github.com/MrJkl561/Cpp-Game-engine-">View on GitHub</a>
+    </div>
+    <figure class="shot hero-shot">
+      <img src="images/editor.png" width="1600" height="900"
+           alt="The Sprout Editor: the scene tree on the left, a platformer level in the middle, and the selected player's properties and script variables on the right.">
+    </figure>
+  </div>
+</section>
+
+<section id="features" class="band">
+  <div class="wrap">
+    <h2>Everything you need for a small 2D game</h2>
+    <p class="section-lead">No engine license, no account, nothing to install beyond a C++ compiler and CMake.</p>
+    <div class="grid features">
+      <article>
+        <h3>Nodes and scenes</h3>
+        <p>Sprites, animated sprites, labels, cameras, bodies that collide and areas that notice:
+          Godot-style nodes you build levels from. Put scenes inside scenes to reuse the player in every level.</p>
+      </article>
+      <article>
+        <h3>C++ that reloads live</h3>
+        <p>Attach a C++ script to a node and save: it compiles in the background and the running game
+          picks up the change. <code>EXPORT</code> variables show up in the Inspector.</p>
+      </article>
+      <article>
+        <h3>A script editor that helps</h3>
+        <p>Autocomplete, errors underlined as you type, brackets that close themselves, and warnings for
+          mistakes that compile but don't work. Or use VS Code, Visual Studio or CLion.</p>
+      </article>
+      <article>
+        <h3>Signals</h3>
+        <p>Like Godot's: <em>the body entered</em>, <em>the timer ran out</em>. Connect them in the Inspector
+          (the editor writes the function for you) or in code.</p>
+      </article>
+      <article>
+        <h3>Multiplayer</h3>
+        <p>Host or join, synced nodes, RPCs, dedicated servers, and the hard parts done for you:
+          smooth movement, client-side prediction and lag compensation.</p>
+      </article>
+      <article>
+        <h3>Export everywhere</h3>
+        <p>Windows (x64 and ARM64), macOS (universal), Linux and the web, each with one click.
+          Exported games run on their own, ready for itch.io.</p>
+      </article>
+      <article>
+        <h3>Custom shaders</h3>
+        <p>Waves, flashes, outlines: write a <code>fragment()</code> shader like in Godot, tweak its
+          parameters in the Inspector, and watch it change as you save.</p>
+      </article>
+      <article>
+        <h3>Autoloads</h3>
+        <p>Game-wide scripts that survive scene changes: the score, the inventory, music, saving.
+          Reach them from any script with <code>autoload&lt;GameState&gt;(...)</code>.</p>
+      </article>
+      <article>
+        <h3>Made for learning</h3>
+        <p>Step-by-step tutorials, a manual written for beginners, commented examples,
+          and friendly messages instead of crashes.</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section id="two-ways">
+  <div class="wrap">
+    <h2>Two ways to make games</h2>
+    <p class="section-lead">Sprout comes in two separate parts. Use whichever suits the way you like to work.</p>
+    <div class="grid two">
+      <article class="card">
+        <figure class="shot"><img src="images/editor-script.png" width="1600" height="900" loading="lazy"
+          alt="The Sprout Editor's Script tab with a C++ player script open, next to the Inspector."></figure>
+        <h3>The Sprout Editor</h3>
+        <p>A visual editor, like a small Godot. Build levels with the mouse, attach C++ scripts,
+          press Play. Hot reloading, signals, multiplayer and exports included.</p>
+<pre><code>class Hero : public Script {
+public:
+    EXPORT(float, speed, 250);   // tune it in the Inspector
+
+    void process(float delta) override {
+        auto* body = self&lt;CharacterBody2D&gt;();
+        body-&gt;velocity.x = 0;
+        if (IsKeyDown(KEY_LEFT))  body-&gt;velocity.x = -speed;
+        if (IsKeyDown(KEY_RIGHT)) body-&gt;velocity.x = speed;
+        body-&gt;moveAndSlide();
+    }
+};
+REGISTER_SCRIPT(Hero)</code></pre>
+        <a class="more" href="https://github.com/MrJkl561/Cpp-Game-engine-/blob/main/docs/editor/getting-started.md">Your first game in the editor &rarr;</a>
+      </article>
+      <article class="card">
+        <figure class="shot engine-shots">
+          <img src="images/engine-06_space_shooter.png" width="800" height="450" loading="lazy" alt="A space shooter made with the Sprout Engine.">
+          <img src="images/engine-07_platformer.png" width="800" height="450" loading="lazy" alt="A platformer made with the Sprout Engine.">
+        </figure>
+        <h3>The Sprout Engine</h3>
+        <p>A code-only game library: a game is one C++ file with <code>update()</code> and <code>draw()</code>.
+          Great for learning how games work from the ground up.</p>
+<pre><code>struct Hello : Scene {
+    Vec2 player{400, 225};
+
+    void update(float dt) override {
+        player += getVector("left", "right", "up", "down") * 300 * dt;
+    }
+    void draw() override { drawCircle(player, 30, Color::Gold); }
+};
+
+int main() {
+    Game game("Hello, Sprout!", 800, 450);
+    game.run&lt;Hello&gt;();
+}</code></pre>
+        <a class="more" href="https://github.com/MrJkl561/Cpp-Game-engine-/blob/main/docs/02-your-first-game.md">Your first game with the engine &rarr;</a>
+      </article>
+    </div>
+    <p class="note">Not sure which? Start with the engine tutorial: everything you learn there carries straight over to the editor.</p>
+  </div>
+</section>
+
+<section id="start" class="band">
+  <div class="wrap">
+    <h2>Get started</h2>
+    <p class="section-lead">Sprout builds from source in a few minutes. CMake downloads every library for you.</p>
+    <ol class="steps">
+      <li>
+        <h3>Install the tools</h3>
+        <p>A C++ compiler, <strong>CMake 3.25+</strong> and <strong>Git</strong>. On Windows that's Visual Studio
+          with "Desktop development with C++". The
+          <a href="https://github.com/MrJkl561/Cpp-Game-engine-/blob/main/docs/01-installing.md">installation guide</a>
+          walks you through it for Windows, macOS and Linux.</p>
+      </li>
+      <li>
+        <h3>Get Sprout and open the editor</h3>
+        <div class="tabs" data-tabs>
+          <div class="tab-buttons" role="tablist">
+            <button role="tab" aria-selected="true" data-tab="win">Windows</button>
+            <button role="tab" aria-selected="false" data-tab="unix">macOS / Linux</button>
+          </div>
+          <div class="tab" data-panel="win">
+<pre class="cmd"><code>git clone https://github.com/MrJkl561/Cpp-Game-engine-.git
+cd Cpp-Game-engine-
+scripts\run-editor.bat</code></pre>
+          </div>
+          <div class="tab" data-panel="unix" hidden>
+<pre class="cmd"><code>git clone https://github.com/MrJkl561/Cpp-Game-engine-.git
+cd Cpp-Game-engine-
+scripts/run-editor.sh</code></pre>
+          </div>
+        </div>
+        <p>The first build takes a few minutes. The editor opens with a demo platformer: press <strong>Play</strong> (F5).</p>
+      </li>
+      <li>
+        <h3>Make your first game</h3>
+        <p>Follow <a href="https://github.com/MrJkl561/Cpp-Game-engine-/blob/main/docs/editor/getting-started.md">Your first game in the editor</a>
+          (about 15 minutes), or <a href="https://github.com/MrJkl561/Cpp-Game-engine-/blob/main/docs/02-your-first-game.md">Your first game</a>
+          with the engine.</p>
+      </li>
+    </ol>
+    <figure class="shot game-shot"><img src="images/editor-game.png" width="800" height="450" loading="lazy"
+      alt="The editor's demo game: a blue character, coins, crates and a door on a green floor."></figure>
+  </div>
+</section>
+
+<section id="docs">
+  <div class="wrap">
+    <h2>Documentation</h2>
+    <p class="section-lead">Written for beginners, all of it free on GitHub.</p>
+    <div class="grid docs">
+      <div>
+        <h3>The Editor</h3>
+        <ul>
+          <li><a href="https://github.com/MrJkl561/Cpp-Game-engine-/blob/main/docs/editor/getting-started.md">Your first game in the editor</a></li>
+          <li><a href="https://github.com/MrJkl561/Cpp-Game-engine-/blob/main/docs/editor/signals.md">Signals, step by step</a></li>
+          <li><a href="https://github.com/MrJkl561/Cpp-Game-engine-/blob/main/docs/editor/multiplayer.md">Multiplayer</a></li>
+          <li><a href="https://github.com/MrJkl561/Cpp-Game-engine-/blob/main/editor/README.md">The Sprout Editor manual</a></li>
+          <li><a href="https://github.com/MrJkl561/Cpp-Game-engine-/blob/main/editor/README.md#shaders">Shaders</a> &middot;
+              <a href="https://github.com/MrJkl561/Cpp-Game-engine-/blob/main/editor/README.md#autoloads-global-scripts">Autoloads</a> &middot;
+              <a href="https://github.com/MrJkl561/Cpp-Game-engine-/blob/main/editor/README.md#exporting-your-game">Exporting</a></li>
+        </ul>
+      </div>
+      <div>
+        <h3>The Engine</h3>
+        <ul>
+          <li><a href="https://github.com/MrJkl561/Cpp-Game-engine-/blob/main/docs/02-your-first-game.md">Your first game</a></li>
+          <li><a href="https://github.com/MrJkl561/Cpp-Game-engine-/blob/main/docs/03-how-a-game-works.md">How a game works</a></li>
+          <li><a href="https://github.com/MrJkl561/Cpp-Game-engine-/blob/main/docs/README.md">All the engine guides</a> (scenes, input, drawing, sound, physics...)</li>
+          <li><a href="https://github.com/MrJkl561/Cpp-Game-engine-/blob/main/docs/cheat-sheet.md">Cheat sheet</a></li>
+          <li><a href="https://github.com/MrJkl561/Cpp-Game-engine-/tree/main/examples">Ten example games</a></li>
+        </ul>
+      </div>
+      <div>
+        <h3>Help</h3>
+        <ul>
+          <li><a href="https://github.com/MrJkl561/Cpp-Game-engine-/blob/main/docs/01-installing.md">Installing and building</a></li>
+          <li><a href="https://github.com/MrJkl561/Cpp-Game-engine-/blob/main/docs/troubleshooting.md">Troubleshooting</a></li>
+          <li><a href="https://github.com/MrJkl561/Cpp-Game-engine-/issues">Report a bug or ask a question</a></li>
+          <li><a href="https://github.com/MrJkl561/Cpp-Game-engine-/blob/main/CONTRIBUTING.md">Contributing</a></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <p><img src="images/logo.svg" alt="" width="20" height="20"> Sprout is free software under the
+      <a href="https://github.com/MrJkl561/Cpp-Game-engine-/blob/main/LICENSE">MIT License</a>:
+      use it for anything, including games you sell.</p>
+    <p>Built on <a href="https://www.raylib.com">raylib</a>, <a href="https://github.com/RobLoach/raylib-cpp">raylib-cpp</a>,
+      <a href="https://github.com/raysan5/raygui">raygui</a>, <a href="https://github.com/nlohmann/json">nlohmann/json</a>
+      and <a href="https://github.com/lsalzman/enet">ENet</a>. Inspired by <a href="https://godotengine.org">Godot</a>.</p>
+  </div>
+</footer>
+
+<script>
+  // The Windows / macOS-Linux tabs (it shows the Windows commands without this)
+  document.querySelectorAll('[data-tabs]').forEach(function (tabs) {
+    var buttons = tabs.querySelectorAll('[data-tab]');
+    function show(name) {
+      buttons.forEach(function (b) { b.setAttribute('aria-selected', String(b.dataset.tab === name)); });
+      tabs.querySelectorAll('[data-panel]').forEach(function (p) { p.hidden = p.dataset.panel !== name; });
+    }
+    buttons.forEach(function (b) { b.addEventListener('click', function () { show(b.dataset.tab); }); });
+    if (/Mac|Linux|X11/.test(navigator.userAgent) && !/Windows/.test(navigator.userAgent)) show('unix');
+  });
+</script>
+</body>
+</html>

@@ -80,6 +80,15 @@ private:
     void drawGameView(Rectangle r);
     void drawPopup();
     void drawModal();
+    // A short explanation shown next to the mouse when it rests on r (for
+    // buttons that show only an icon, and text that had to be cut short).
+    void hint(Rectangle r, const std::string& text);
+    // Text cut short with "..." to fit maxWidth; the whole of it shows as a
+    // hint when the mouse is on it. fromLeft keeps the end (for paths).
+    void drawFit(const std::string& text, float x, float y, float maxWidth, Color c, bool fromLeft = false);
+    void drawHint();
+    std::string hintText_, shownHint_;
+    double hintSince_ = 0;
     void handleShortcuts();
     // Dragging the borders between panels (the sizes are kept per user).
     void updateSplitters(float sw, float sh, float leftW, float rightW, float bottomH, float sceneH);
@@ -124,7 +133,18 @@ private:
     void duplicateSelected();
     void moveSelected(int direction);
     void createSpriteAt(const std::string& texture, Vector2 world);
-    void createScript(const std::string& className);
+    // New Script: a script to attach, or a base class other scripts inherit
+    // from; either can inherit from Script or from one of the project's base
+    // classes. attach: give it to the selected node once it's made.
+    void openNewScriptDialog(bool attach, const std::string& suggestedName);
+    void drawNewScriptDialog();
+    void createScript(const std::string& className, const std::string& base = "Script",
+                      const std::string& baseHeader = "", bool baseClass = false, bool attach = true);
+    struct BaseClass {
+        std::string name;    // e.g. AI
+        std::string header;  // e.g. ai.hpp (in scripts/)
+    };
+    std::vector<BaseClass> scriptBaseClasses() const;  // the project's classes scripts can inherit from
     void activateFile(size_t index);
     void reparent(Node* node, Node* target, int zone);
     void renderGame();
@@ -152,7 +172,7 @@ private:
     bool isTyping() const {
         return !activeField_.empty() || dialog_.open || confirm_.open || export_.open || projects_.open ||
                folderPick_.valid() || sheet_.open || codeEditorDialog_.open || instancesDialog_.open ||
-               connectDialog_.open || (mainView_ == MainView::Script && (codeFocused_ || find_.findEdit || find_.withEdit));
+               connectDialog_.open || newScript_.open || ask_.open || autoloadsDialog_.open || (mainView_ == MainView::Script && (codeFocused_ || find_.findEdit || find_.withEdit));
     }
 
     // --- code editor (VS Code, Visual Studio...) -----------------------------
@@ -169,13 +189,14 @@ private:
     void drawScriptView(Rectangle r);
     void drawFindBar(Rectangle r, TextDocument& doc);
     bool saveDocument(TextDocument& doc);
-    void closeDocument(TextDocument* doc);  // asks first if it has unsaved changes
+    void closeDocument(TextDocument* doc, bool discard = false);  // asks first if it has unsaved changes (unless discard)
     void checkDocumentsOnDisk();
     void handleScriptShortcuts();
     void setDiagnostics(TextDocument& doc) const;  // the last build's messages for its file
     bool dialogOpen() const {
         return dialog_.open || confirm_.open || export_.open || projects_.open || folderPick_.valid() || sheet_.open ||
-               codeEditorDialog_.open || instancesDialog_.open || connectDialog_.open;
+               codeEditorDialog_.open || instancesDialog_.open || connectDialog_.open || newScript_.open || ask_.open ||
+               autoloadsDialog_.open;
     }
 
     // --- Signals (the Inspector's Signals list and its Connect dialog) --------
@@ -289,7 +310,7 @@ private:
     int dropZone_ = 0;  // -1 before, 0 inside, 1 after
 
     struct FileEntry {
-        enum Kind { Texture, Scene, Script } kind;
+        enum Kind { Texture, Scene, Shader, Script } kind;  // (the FileSystem dock's groups, in this order)
         std::string path;         // textures/scenes: relative to the project; scripts: full path
         std::string label;        // what the FileSystem dock shows
         std::string scriptClass;  // scripts: the class REGISTER_SCRIPT names
@@ -302,6 +323,8 @@ private:
         Color color;
         std::string file;  // a compiler message's file and line: clicking it opens them
         int line = 0, column = 0;
+        std::vector<std::string> rows;  // the text wrapped to the panel's width...
+        float rowsWidth = -1;           // ...for this width
     };
     std::vector<LogLine> logLines_;
     bool scrollLogToBottom_ = false;
@@ -336,6 +359,9 @@ private:
 
     std::filesystem::path workDir_;  // this project's builds (scripts, exports)
     std::optional<std::filesystem::path> switchTo_;
+    // Play was pressed while the scripts were compiling: it starts when they're
+    // done (true: the main scene, false: the scene being edited).
+    std::optional<bool> playWhenBuilt_;
     std::future<std::optional<std::filesystem::path>> folderPick_;
     std::function<void(const std::filesystem::path&)> folderPicked_;
     struct ProjectManagerDialog {
@@ -421,6 +447,17 @@ private:
         char args[ProjectSettings::kMaxInstances][256] = {};
         int editing = -1;  // the text box being typed in
     } instancesDialog_;
+
+    struct NewScriptDialog {
+        bool open = false;
+        char name[64] = "";
+        bool nameEdit = true;
+        int base = 0;  // 0: Script, else bases[base - 1]
+        std::vector<BaseClass> bases;
+        bool baseClass = false;  // make a base class (a .hpp) instead of a script to attach
+        bool attach = false;     // attach the new script to the selected node
+        Vector2 scroll{0, 0};
+    } newScript_;
     // Copies of the game running in windows of their own (sprout_editor --play)
     struct InstanceOutput {
         std::mutex mutex;
@@ -440,6 +477,29 @@ private:
         std::function<void()> then;
         std::function<bool()> save;  // what Save does ("" = save the scene); false = it failed
     } confirm_;
+    // A question with one action ("Delete X?"): Yes runs onYes, Cancel nothing.
+    struct AskDialog {
+        bool open = false;
+        std::string title, message, yes;
+        std::function<void()> onYes;
+    } ask_;
+    void askFirst(std::string title, std::string message, std::string yes, std::function<void()> onYes);
+
+    // Autoloads (Project Settings): nodes kept for the whole game, across scenes
+    struct AutoloadsDialog {
+        bool open = false;
+        char name[64] = "";
+        bool nameEdit = false;
+        std::string script, scene;  // what the next one will be (one of them)
+        std::string error;
+        Vector2 scroll{0, 0};
+    } autoloadsDialog_;
+    void openAutoloadsDialog(const std::string& script = "", const std::string& scene = "");
+    void drawAutoloadsDialog();
+    void deleteFile(size_t index);  // asks, then moves it to the Recycle Bin / Trash
+    // Shaders: make a new .shader file (for the selected node), show its errors
+    void newShader(Node2D* forNode);
+    void checkShader(TextDocument& doc);
 };
 
 }  // namespace s2d

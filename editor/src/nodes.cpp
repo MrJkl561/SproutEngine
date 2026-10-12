@@ -5,10 +5,13 @@
 #include <functional>
 #include <map>
 
+#include <rlgl.h>
+
 #include "assets.hpp"
 #include "multiplayer.hpp"
 #include "scene_tree.hpp"
 #include "script.hpp"
+#include "shaders.hpp"
 
 namespace s2d {
 
@@ -158,6 +161,66 @@ void Node2D::getProperties(std::vector<Property>& out) {
     out.push_back({"visible", PropKind::Bool, &visible});
 }
 
+void Node2D::addShaderProperties(std::vector<Property>& out) {
+    out.push_back({"Shader", PropKind::Section});
+    out.push_back({"shader", PropKind::Shader, &shader});
+    const std::vector<ShaderUniform>* uniforms = shader.empty() ? nullptr : Shaders::uniforms(shader);
+    if (!uniforms || uniforms->empty()) return;
+    out.push_back({"Shader Parameters", PropKind::Section});
+    for (const ShaderUniform& u : *uniforms) {
+        // A value for each (the shader's default, the first time)
+        auto [it, added] = shaderParams.try_emplace(u.name);
+        ShaderParam& p = it->second;
+        if (added) {
+            p.f = u.value[0];
+            p.i = static_cast<int>(u.value[0]);
+            p.b = u.value[0] != 0;
+            p.v = raylib::Vector2(u.value[0], u.value[1]);
+            p.c = ::Color{static_cast<unsigned char>(std::clamp(u.value[0], 0.0f, 1.0f) * 255 + 0.5f),
+                   static_cast<unsigned char>(std::clamp(u.value[1], 0.0f, 1.0f) * 255 + 0.5f),
+                   static_cast<unsigned char>(std::clamp(u.value[2], 0.0f, 1.0f) * 255 + 0.5f),
+                   static_cast<unsigned char>(std::clamp(u.value[3], 0.0f, 1.0f) * 255 + 0.5f)};
+            p.texture = u.texture;
+        }
+        std::string name = "shader_params/" + u.name;  // (saved under this name; the Inspector shows just u.name)
+        switch (u.kind) {
+            case ShaderUniform::Float: out.push_back({name, PropKind::Float, &p.f, u.step}); break;
+            case ShaderUniform::Int: out.push_back({name, PropKind::Int, &p.i, u.step}); break;
+            case ShaderUniform::Bool: out.push_back({name, PropKind::Bool, &p.b}); break;
+            case ShaderUniform::Vec2: out.push_back({name, PropKind::Vec2, &p.v, u.step}); break;
+            case ShaderUniform::Color: out.push_back({name, PropKind::Color, &p.c}); break;
+            case ShaderUniform::Texture: out.push_back({name, PropKind::Texture, &p.texture}); break;
+        }
+    }
+}
+
+void Node2D::setShaderParam(const std::string& name, float value) {
+    ShaderParam& p = shaderParams[name];
+    p.f = value;
+    p.i = static_cast<int>(value);
+    p.b = value != 0;
+}
+
+void Node2D::setShaderParam(const std::string& name, int value) {
+    ShaderParam& p = shaderParams[name];
+    p.f = static_cast<float>(value);
+    p.i = value;
+    p.b = value != 0;
+}
+
+void Node2D::setShaderParam(const std::string& name, bool value) {
+    ShaderParam& p = shaderParams[name];
+    p.f = value ? 1.0f : 0.0f;
+    p.i = value ? 1 : 0;
+    p.b = value;
+}
+
+void Node2D::setShaderParam(const std::string& name, ::Vector2 value) { shaderParams[name].v = value; }
+void Node2D::setShaderParam(const std::string& name, ::Color value) { shaderParams[name].c = value; }
+void Node2D::setShaderTexture(const std::string& name, const std::string& texturePath) {
+    shaderParams[name].texture = texturePath;
+}
+
 Node2D* Node2D::parent2D() const {
     for (Node* p = parent(); p; p = p->parent())
         if (auto* n = dynamic_cast<Node2D*>(p)) return n;
@@ -235,6 +298,7 @@ void Sprite2D::getProperties(std::vector<Property>& out) {
     out.push_back({"flip_h", PropKind::Bool, &flipH});
     out.push_back({"flip_v", PropKind::Bool, &flipV});
     out.push_back({"modulate", PropKind::Color, &modulate});
+    if (!dynamic_cast<AnimatedSprite2D*>(this)) addShaderProperties(out);  // (an AnimatedSprite2D adds them last)
 }
 
 Rectangle Sprite2D::frameRect(int index) const {
@@ -335,6 +399,7 @@ void AnimatedSprite2D::getProperties(std::vector<Property>& out) {
     out.push_back({"autoplay", PropKind::Bool, &autoplay});
     out.push_back({"speed_scale", PropKind::Float, &speedScale, 0.01f});
     out.push_back({"animations", PropKind::Animations, &animations});
+    addShaderProperties(out);
 }
 
 const SpriteAnimation* AnimatedSprite2D::findAnimation(const std::string& name) const {
@@ -440,9 +505,30 @@ void ColorRect::getProperties(std::vector<Property>& out) {
     out.push_back({"ColorRect", PropKind::Section});
     out.push_back({"size", PropKind::Vec2, &size, 1.0f});
     out.push_back({"color", PropKind::Color, &color});
+    addShaderProperties(out);
 }
 
-void ColorRect::draw(const DrawOptions&) { drawLocalRect(*this, localRect(), color, BLANK, 0); }
+void ColorRect::draw(const DrawOptions&) {
+    if (shader.empty()) {
+        drawLocalRect(*this, localRect(), color, BLANK, 0);
+        return;
+    }
+    // With a shader: a quad whose UV goes from 0 to 1 across the rectangle
+    // (a plain rectangle's UV is a single point of raylib's white texture).
+    Rectangle r = localRect();
+    raylib::Vector2 c[4] = {toGlobal({r.x, r.y}), toGlobal({r.x + r.width, r.y}),
+                            toGlobal({r.x + r.width, r.y + r.height}), toGlobal({r.x, r.y + r.height})};
+    float uv[4][2] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
+    rlSetTexture(rlGetTextureIdDefault());
+    rlBegin(RL_QUADS);
+    rlColor4ub(color.r, color.g, color.b, color.a);
+    for (int order : {0, 3, 2, 1, 0, 1, 2, 3}) {  // both windings, so a mirrored one shows too
+        rlTexCoord2f(uv[order][0], uv[order][1]);
+        rlVertex2f(c[order].x, c[order].y);
+    }
+    rlEnd();
+    rlSetTexture(0);
+}
 
 // ---------------------------------------------------------------------------
 // Label
@@ -453,6 +539,7 @@ void Label::getProperties(std::vector<Property>& out) {
     out.push_back({"text", PropKind::String, &text});
     out.push_back({"font_size", PropKind::Int, &fontSize, 0.2f});
     out.push_back({"color", PropKind::Color, &color});
+    addShaderProperties(out);
 }
 
 Rectangle Label::localRect() const {

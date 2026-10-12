@@ -96,6 +96,11 @@ run `cmake -S . -B build` again. Deleting `build` is always safe: it only
 contains generated files. (Save files your games wrote are in there too,
 though.)
 
+The editor you already built keeps working after a move: it finds its files
+again. It's only *building* in the old `build` folder that needs it deleted
+first. To have an editor that can go anywhere, make a
+[portable copy](../editor/README.md#moving-the-editor-or-a-portable-copy).
+
 ### My new game doesn't show up
 
 - The file must be directly inside its folder: `games/my_game/main.cpp`, not
@@ -439,6 +444,14 @@ A script has a mistake. The compiler's messages are in the **Output** panel:
 click one to jump to the line. Scripts open in the Script tab show mistakes as
 you type, with a wavy underline. The last version that worked keeps running
 until you fix it and save.
+
+If the messages start with **"CMake Error"** (for example *"CMake Error at
+CMakeLists.txt:13 (project): Generator ..."*), it's not your script: CMake
+couldn't set up the scripts' build. The lines after it say why, usually that
+the compiler or Visual Studio the editor was built with isn't there any more.
+Install it again (Windows: Visual Studio with "Desktop development with C++"),
+or rebuild the editor with `scripts\run-editor.bat` so it uses the one you
+have now, then reopen the project.
 
 ### My script doesn't show up in Attach (or "Script 'X' ... isn't loaded")
 

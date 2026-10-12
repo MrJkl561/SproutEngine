@@ -36,7 +36,9 @@ tests/                      doctest unit tests (built with -DSPROUT_BUILD_TESTS=
 editor/                     the Sprout Editor (separate from the engine; see below)
 scripts/                    build, run-editor, test, export, setup-web, test-signals, test-multiplayer
 docs/                       the beginner documentation (docs/editor/ for the editor)
-.github/workflows/build.yml CI: builds and tests on Windows, macOS and Linux
+website/                    the sproutengine.dev web page (plain HTML and CSS; images/ has its screenshots)
+.github/workflows/build.yml CI: builds and tests on Windows, macOS and Linux (run by hand)
+.github/workflows/website.yml publishes website/ to GitHub Pages when main changes it
 ```
 
 A few things worth knowing about the engine's insides:
@@ -209,6 +211,12 @@ Things worth knowing:
   `.cpp` that games need at run time (nodes, scenes, scripts, signals,
   multiplayer...) must be added to `editor/player/CMakeLists.txt` too, or
   exports fail to link. Check with an export (below).
+- **Don't use build-time paths directly.** Where the editor's sources, the
+  libraries, CMake and the theme are comes from `editorPaths()`
+  (`editor_paths.hpp`), which also finds them in a portable copy or a moved
+  Sprout folder. A new folder the editor needs at run time also needs an
+  `install(...)` line at the end of `editor/CMakeLists.txt`, or portable
+  copies (`scripts/make-portable.sh`) won't have it.
 - **Scripts are a separate library** loaded by the editor (hot reloading).
   Whatever they call must be defined in the editor's `.cpp` files, not
   `inline` in a header with its own static state (a script library would get a
@@ -235,7 +243,8 @@ build/bin/sprout_editor/sprout_editor --project editor/project --play --headless
 window). `SPROUT_TEST_FRAMES=120` makes the editor itself quit after 120 frames,
 and with it `SPROUT_EDITOR_SCREENSHOT=out.png` saves the last frame (use `xvfb-run` on
 Linux without a display). CI runs all of the above on every OS (see
-`.github/workflows/build.yml`). When you change what the editor can do, update
+`.github/workflows/build.yml`). It only runs when started by hand: on GitHub,
+**Actions** > **Build** > **Run workflow**. When you change what the editor can do, update
 [editor/README.md](editor/README.md) and, for multiplayer,
 [docs/editor/multiplayer.md](docs/editor/multiplayer.md).
 

@@ -170,8 +170,9 @@ What it does, line by line:
   [raylib](https://www.raylib.com/cheatsheet/cheatsheet.html), which the editor
   is built on. You can use any raylib function in a script.
 
-**Typos are caught as you type.** Mistakes get a red wavy underline with the
-message at the end of the line, before you even save. Start typing
+**Typos are caught as you type.** Mistakes get a red wavy underline, before
+you even save. Click the line (or point at it) and the whole message shows in
+a strip under the code. Start typing
 `body->` and a list of everything a `CharacterBody2D` has pops up; press
 **Enter** to pick one.
 
@@ -221,8 +222,11 @@ Ideas to try with what you know:
   `Sprite2D` (`coin.png`) and a `CollisionShape2D` inside. Give the Area2D a
   script, then in the Inspector under **Signals** press **Connect...** next to
   `body_entered` and **Connect**: the editor writes the function for you. Fill
-  it in with `if (body->name == "Player") node()->queueFree();`. See
-  [Signals](../../editor/README.md#signals).
+  it in with `if (body->name == "Player") node()->queueFree();`.
+  [Signals, step by step](signals.md) walks through exactly this.
+- Keep a score across levels with an
+  [autoload](../../editor/README.md#autoloads-global-scripts): a script the whole
+  game shares, kept when the scene changes.
 - Open the demo project (**Projects** → **Open Folder...** → the `editor/project`
   folder inside the Sprout folder) and read its scripts: coins, a door to
   level 2, a spinning icon, and an animated player.
@@ -239,5 +243,6 @@ Everything the editor can do is in the **[Sprout Editor manual](../../editor/REA
 - [Changing scenes while the game runs](../../editor/README.md#changing-scenes-while-the-game-runs)
 - [Animation](../../editor/README.md#animation)
 - [Exporting your game](../../editor/README.md#exporting-your-game)
+- [Signals, step by step](signals.md): making one part of your game react to another
 - [Multiplayer](multiplayer.md): playing together over a network
 - [Customizing the editor](../../editor/README.md#customizing-the-editor): themes and layout

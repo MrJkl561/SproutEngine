@@ -41,7 +41,9 @@ be opened by the engine or the other way round. See
 - [Scenes inside scenes](#scenes-inside-scenes)
 - [Exporting your game](#exporting-your-game)
 - [Changing scenes while the game runs](#changing-scenes-while-the-game-runs)
+- [Autoloads (global scripts)](#autoloads-global-scripts): game state, music and services kept across scenes
 - [Animation](#animation)
+- [Shaders](#shaders): custom shaders for sprites, rectangles and text
 - [Multiplayer](#multiplayer): hosting, joining, synced nodes, RPCs, dedicated servers
 - [Nodes](#nodes): what each node type is for
 - [C++ scripts](#c-scripts): the script editor, script variables (`EXPORT`), signals, hot reloading
@@ -75,6 +77,47 @@ platformer. Press **Play** (F5), run with the arrow keys, jump with Space and
 collect the coins, then walk into the door to reach level 2. Press **Stop** (F8
 or Esc) to go back to editing. Its scripts (in `editor/project/scripts/`) are
 good examples to read.
+
+### Moving the editor, or a portable copy
+
+The editor you build stays connected to the Sprout folder: it compiles your
+scripts against the editor's sources and the libraries in there. If you **move
+the whole Sprout folder**, it still works (it finds everything again from where
+the program is now), no rebuilding needed. Don't copy `sprout_editor.exe` out
+of the build folder on its own, though: it needs the rest.
+
+To have an editor you can put anywhere (another drive, a USB stick, another
+computer), make a **portable copy**: one folder with the program and
+everything it needs.
+
+| Windows | macOS / Linux |
+|---|---|
+| `scripts\make-portable.bat [folder]` | `scripts/make-portable.sh [folder]` |
+
+It builds the editor and fills `dist/SproutEditor/` (or the folder you give
+it) with:
+
+```
+SproutEditor/
+├── sprout_editor(.exe)   <- start this (Windows: plus sprout_editor.lib, which scripts link to)
+├── editor/               <- the editor's sources, templates, demo project, theme
+├── cmake/, deps/         <- the libraries (raylib, raylib-cpp, raygui, json, ENet) and clangd
+├── README.txt
+└── LICENSE
+```
+
+About 180 MB. Move or copy that folder wherever you like, as long as its
+contents stay together. Your projects aren't stored in it, and each project's
+builds go in your user cache folder (`%LOCALAPPDATA%\SproutEditor` on Windows,
+`~/Library/Caches/SproutEditor` on macOS, `~/.cache/sprout-editor` on Linux), so
+it can even be read-only.
+
+The editor compiles your C++ scripts while it runs, so the computer it runs on
+needs the same tools that built it: on Windows, Visual Studio with "Desktop
+development with C++" and CMake (Visual Studio's own copy of CMake is found
+too); on macOS, Xcode's command line tools and CMake; on Linux, g++ and CMake.
+It also has to be the same kind of computer (an editor built on Windows x64
+runs on Windows x64). Games you export don't need any of this.
 
 ## Projects
 
@@ -140,10 +183,14 @@ window (800 x 450).
 - Drop picture files from your desktop onto the window to import them into
   the project's `assets/` folder.
 - Click a scene to open it. Click (or drag onto a node) a script to attach it.
+- Right-click a file for more: open it, show it in its folder, or **Delete...**
+  (it asks first, then moves the file to the Recycle Bin / Trash, where you can
+  get it back from).
 
 **Inspector (right)** - the selected node's fields.
 - Drag left/right on a number to change it, or click it to type a value.
-- **Attach** picks a loaded script, **New** writes a new script file, **Edit**
+- **Attach** picks a loaded script, **New** makes a new script (see
+  [New Script](#c-scripts)), **Edit**
   opens it, **Detach** removes the script. Its `EXPORT` variables show under
   **Script Variables**.
 - **Signals** lists what the node can announce, with **Connect...** to make a
@@ -156,7 +203,9 @@ in the Export window), **Play Scene** (F6) plays the scene you're editing, and
 how many copies of the game Play starts, for multiplayer
 ([Run Instances](#multiplayer)). Next to it, the scripts' build status, with a
 button to rebuild them. The **gear button** has **Code Editor...**, **Run
-Instances...** and **Reset Panel Layout**.
+Instances...**, **Autoloads...** and **Reset Panel Layout**. In a narrow window the buttons show only their
+icons. Point at any button to see what it does. Text that's cut short with "..." (long
+names, paths) shows in full when you point at it too.
 
 **UI size** - the editor follows your display scaling (for example 150% on
 many Windows laptops), and the window opens sized to fit your screen. Change it
@@ -276,7 +325,8 @@ reloadScene();                             // start this scene again
 The switch happens at the end of the frame, so a script can safely call it on
 its own scene. The old scene and all its scripts are freed, then the new scene's
 scripts get `ready()`. To keep something from one scene to the next (a score,
-lives), put it in `tree()->values`, which lasts until the game stops:
+lives), use an [autoload](#autoloads-global-scripts), or, for a few numbers,
+`tree()->values`, which lasts until the game stops:
 
 ```cpp
 tree()->values["coins"] += 1;
@@ -285,6 +335,84 @@ tree()->values["coins"] += 1;
 The demo has two levels. `door.scene.json` uses the `LevelExit` script; each
 door's **next scene** is set in the inspector (under Script Variables). Coins
 carry over, and falling off the world restarts the level.
+
+## Autoloads (global scripts)
+
+Like Godot's autoloads: nodes the game makes when it starts and keeps until it
+stops, whatever scene is on. Use one for whatever the whole game shares: the
+score and inventory, settings, music that keeps playing between levels,
+saving, a global event bus.
+
+**1. Write the script.** Put the class in a header, so other scripts can use
+its functions, and register it in a `.cpp` next to it:
+
+```cpp
+// scripts/game_state.hpp
+#pragma once
+#include "script.hpp"
+using namespace s2d;
+
+class GameState : public Script {
+public:
+    EXPORT(int, coins, 0);
+    EXPORT(int, lives, 3);
+    SIGNAL(coins_changed, int);
+
+    void addCoin() {
+        ++coins;
+        emitSignal("coins_changed", coins);
+    }
+};
+```
+
+```cpp
+// scripts/game_state.cpp
+#include "game_state.hpp"
+REGISTER_SCRIPT(GameState)
+```
+
+**2. Add it:** the **gear button** on the toolbar > **Autoloads...**, pick
+`script GameState`, keep the name `GameState`, **Add**. (Or right-click the
+script, or a scene, in the FileSystem dock > **Add as Autoload...**.) It's
+saved in `project.json`; exported games have it too.
+
+**3. Use it** from any script, in `ready()` or later:
+
+```cpp
+#include "game_state.hpp"
+
+class Coin : public Script {
+public:
+    void ready() override {
+        connect(node(), "body_entered", [this](Node* body) {
+            if (body->name != "Player") return;
+            autoload<GameState>("GameState")->addCoin();
+            node()->queueFree();
+        });
+    }
+};
+```
+
+and listen to its signals: `connect(autoloadNode("GameState"), "coins_changed", ...)`.
+
+What to know:
+
+- **Made first, kept always.** Autoloads are made in the list's order, and get
+  `ready()` before the main scene's scripts, so the scene can use them in its
+  own `ready()`. `changeScene` leaves them alone; **Stop** ends them.
+- **A scene can be an autoload too** (a HUD, a music player): its nodes are
+  drawn on top of the scene. `autoload<Label>("Hud")` gives its root node.
+- **Beside the scene, not above it:** the scene's node paths don't change.
+  `findNode("GameState")` finds an autoload too, and an autoload's scripts can
+  `findNode` the scene's nodes.
+- **Hot reloading keeps their `EXPORT` variables** (the scene's scripts start
+  over, as before). Other member variables start over, so keep the state that
+  matters in `EXPORT`s.
+- **A name that isn't there** gives `nullptr`, and the Output panel says so.
+- **Not shared between players:** in multiplayer, each copy of the game has its
+  own. Send what others need with [RPCs](#multiplayer) or a
+  `MultiplayerSynchronizer`.
+- For a few numbers, `tree()->values["coins"]` still works without any setup.
 
 ## Animation
 
@@ -335,6 +463,71 @@ choosing the animation.
 
 A plain Sprite2D can show one frame of a sheet too (`hframes`, `vframes`,
 `frame`), e.g. to pick a tile or change `frame` from a script.
+
+## Shaders
+
+Like Godot's canvas shaders: a small program that decides the colour of each
+pixel of a node, for waves, outlines, flashes when hit, dissolves, colour
+effects... A `Sprite2D`, `AnimatedSprite2D`, `ColorRect` or `Label` can have one.
+
+**Make one:** select the node, find **Shader** in the Inspector, open the
+list and pick **New Shader...**. The editor writes `shaders/<name>.shader`
+from a template, gives it to the node and opens it in the Script tab:
+
+```glsl
+uniform vec4 tint : source_color = vec4(1.0, 1.0, 1.0, 1.0);
+uniform float wave_speed = 3.0;
+uniform float wave_size : hint_range(0.0, 0.1) = 0.0;
+
+void fragment() {
+    vec2 uv = UV;
+    uv.x += sin(uv.y * 20.0 + TIME * wave_speed) * wave_size;
+    COLOR = texture(TEXTURE, uv) * MODULATE * tint;
+}
+```
+
+Change it and save (**Ctrl+S**): the node changes straight away, in the 2D
+view and in the running game. A mistake is underlined on its line, and the
+Output panel says what's wrong; the node is drawn without the shader until
+it's fixed. Another node can use the same file: pick it from the list, or
+click the file in the FileSystem dock with the node selected.
+
+**What a shader can use** (it's GLSL, the language of graphics cards):
+
+| | |
+|---|---|
+| `fragment()` | Runs for every pixel of the node; set `COLOR` |
+| `COLOR` | Starts as the picture's colour times the node's modulate; what you set is drawn (`vec4`: red, green, blue, alpha, each 0 to 1) |
+| `UV` | Where in the picture this pixel is: `vec2(0.0, 0.0)` top left to `vec2(1.0, 1.0)` bottom right (across the whole rectangle, for a `ColorRect`) |
+| `TEXTURE` | The node's picture: `texture(TEXTURE, UV)` reads a colour from it |
+| `TEXTURE_PIXEL_SIZE` | One pixel of the picture in UV units (`1.0 / its size`), for outlines and blurs |
+| `TIME` | Seconds since the game started, for things that move |
+| `MODULATE` | The node's modulate (or a ColorRect's colour, a Label's colour) |
+
+**Parameters:** each `uniform` shows up in the Inspector under **Shader
+Parameters**, with its default from the file, and is saved with the node, so
+nodes sharing a shader can look different. `float`, `int`, `bool` and `vec2`
+show as numbers, `vec3`/`vec4` as a colour, and `sampler2D` as a picture
+(another texture to read). `: hint_range(min, max)` sets how fast dragging
+changes a number. Scripts can set them too:
+
+```cpp
+auto* sprite = self<Sprite2D>();
+sprite->setShaderParam("wave_size", 0.05f);
+sprite->setShaderParam("tint", Color{255, 80, 80, 255});
+sprite->setShaderTexture("noise", "assets/noise.png");
+sprite->shader = "shaders/flash.shader";   // or switch shaders
+```
+
+Things to know:
+
+- **Desktop and web from one file.** The editor adds what each needs around
+  your code (OpenGL 3.3 on Windows, macOS and Linux; WebGL for the web). Write
+  numbers with a dot (`1.0`, not `1`): the web is strict about it.
+- **One node at a time:** a node's shader draws only that node, not its
+  children.
+- Not there yet: `vertex()` (moving the corners), reading the screen behind the
+  node (`SCREEN_TEXTURE`), and lights.
 
 ## Multiplayer
 
@@ -422,12 +615,18 @@ public:
 REGISTER_SCRIPT(Spinner)
 ```
 
-To add one: select a node, press **New** under *Script* in the inspector and
-type a class name. The editor writes the file in the project's `scripts/`
-folder, named after the class in snake_case (`PlayerController` is
-`player_controller.cpp`), from a template, attaches it and opens it (in the
-Script tab, or [your code editor](#using-another-code-editor-vs-code-visual-studio)).
-Save it (Ctrl+S) and it's compiled in the background, ready for Play.
+To add one: select a node, press **New** under *Script* in the inspector,
+type a class name and press **Create**. (Or press **New Script** in the Script
+tab, which makes one without attaching it.) The editor writes the file in the
+project's `scripts/` folder, named after the class in snake_case
+(`PlayerController` is `player_controller.cpp`), from a template, attaches it
+and opens it (in the Script tab, or
+[your code editor](#using-another-code-editor-vs-code-visual-studio)). Save it
+(Ctrl+S) and it's compiled in the background, ready for Play.
+
+The New Script window also asks what the class **inherits** from: `Script`,
+or one of your own base classes (see
+[Sharing code between scripts](#sharing-code-between-scripts-inheritance)).
 
 **What a script can use** (see `editor/src/script.hpp` for the details):
 
@@ -445,6 +644,7 @@ Save it (Ctrl+S) and it's compiled in the background, ready for Play.
 | `changeScene("scenes/level2.scene.json")`, `reloadScene()` | Switch scenes at the end of the frame ([more](#changing-scenes-while-the-game-runs)) |
 | `tree()->currentScene()` | The path of the scene that's running |
 | `tree()->values["coins"]` | Numbers that last from one scene to the next |
+| `autoload<GameState>("GameState")` | An [autoload](#autoloads-global-scripts): kept for the whole game |
 | `print("hello")` | Writes to the Output panel |
 | `connect(node, "body_entered", &Coin::onBody)` | Calls a function when a node sends a signal ([more](#signals)) |
 | `CALLABLE(onBody);` | Lets signals connected in the editor call that function ([more](#signals)) |
@@ -452,6 +652,19 @@ Save it (Ctrl+S) and it's compiled in the background, ready for Play.
 | `EXPORT(float, speed, 200);` | A variable shown in the inspector ([more](#script-variables-shown-in-the-inspector)) |
 | `multiplayer()`, `RPC(name);`, `rpc(...)`, `INPUT(...)` | Networking ([Multiplayer](#multiplayer)) |
 | `hasArg("--host")`, `argValue("--join")` | The game's command line |
+
+**Find nodes in `ready()`, not where a variable is declared.** A member
+variable's `= ...` runs when the script is made, before it's on its node, so
+`AnimatedSprite2D* sprite = findNode<AnimatedSprite2D>("Hero");` always gets
+`nullptr`. Declare it `= nullptr` and set it in `ready()`:
+
+```cpp
+AnimatedSprite2D* sprite = nullptr;
+void ready() override { sprite = findNode<AnimatedSprite2D>("Hero"); }
+```
+
+The Script tab underlines the mistake as you type, and the Output panel says
+so if it runs.
 
 Scripts can also call any [raylib](https://www.raylib.com/cheatsheet/cheatsheet.html)
 function: `IsKeyDown(KEY_LEFT)`, `IsKeyPressed(KEY_SPACE)`, `GetMousePosition()`,
@@ -462,7 +675,8 @@ function: `IsKeyDown(KEY_LEFT)`, `IsKeyPressed(KEY_SPACE)`, `GetMousePosition()`
 Sprout has its own script editor, like Godot's: the **2D | Script** switch above
 the viewport. Open a file with the **Edit** button next to a node's script in
 the Inspector, by right-clicking a script or scene in the FileSystem dock, or by
-making a **New** script (it opens straight away). Each open file gets a tab.
+making a new one with **New Script** at the top right (it opens straight away).
+Each open file gets a tab.
 
 - C++ and JSON syntax colors, line numbers, auto-indent, undo/redo
 - **Autocomplete** as you type (or **Ctrl+Space**): the engine's classes and
@@ -475,10 +689,17 @@ making a **New** script (it opens straight away). Each open file gets a tab.
   saves every open file
 - **Ctrl+F** find, **Ctrl+H** replace, **F3** next match, **Ctrl+G** go to line,
   **Ctrl+/** comment lines, **Ctrl+D** duplicate line, **Tab/Shift+Tab** indent
+- **Brackets and quotes close themselves**: typing `(`, `[`, `{`, `"` or `'`
+  adds the closing one after the cursor, and `<` does too after a template
+  name (`std::vector<`, `self<`, `template<`) or `#include` (not in `a < b`).
+  Typing the closer steps over it, Backspace between an empty pair deletes
+  both, and typing one with text selected puts the pair around the selection.
+  Not in comments.
 - **Errors as you type**: scripts are checked live with
   [clangd](https://clangd.llvm.org/) while you type, before saving. Problems get
-  a wavy underline and their message on the line, and the status bar counts
-  them. clangd also tells the editor what every name is, so members,
+  a wavy underline and their message after the line; the whole message, wrapped
+  to fit, shows in a strip under the code for the line you're on (or the one
+  the mouse is over), and the status bar counts them. clangd also tells the editor what every name is, so members,
   parameters, types, functions, macros and enum values each get their own
   color. Nothing to install: building the editor downloads clangd once (20-90
   MB, into the build folder). Where there's no ready-made clangd (Linux on
@@ -545,6 +766,80 @@ Still seeing "cannot open source file script.hpp"? Open the project in the
 Sprout Editor once (that writes the files), then reload your editor's window
 (in VS Code: Ctrl+Shift+P, **Developer: Reload Window**).
 
+### Sharing code between scripts (inheritance)
+
+Like `extends` in Godot, a script can inherit from another class, getting
+everything it has (its `EXPORT` variables, signals and functions) and changing
+or adding to it. Say every enemy sees the player and chases it, but each kind
+chases in its own way:
+
+1. **New Script** (Script tab or Inspector), choose **A base class**, name it
+   `AI`, **Create**. That makes `scripts/ai.hpp`: shared code, in a header so
+   other scripts can include it. It has no `REGISTER_SCRIPT`, so it isn't
+   attached to nodes by itself.
+2. Write what every enemy does, and leave the parts that differ to a
+   `virtual` function:
+
+   ```cpp
+   #pragma once
+   #include "script.hpp"
+   using namespace s2d;
+
+   class AI : public Script {
+   public:
+       EXPORT(float, speed, 100);
+       EXPORT(float, sightRange, 200);
+       SIGNAL(spotted, Node*);
+
+       void process(float delta) override {
+           auto* me = self<Node2D>();
+           auto* player = findNode<Node2D>("Player");
+           if (!me || !player) return;
+           if (me->position.Distance(player->position) < sightRange) chase(player, delta);
+           else wander(delta);
+       }
+
+   protected:
+       virtual void chase(Node2D* target, float delta) = 0;  // = 0: each enemy must write it
+       virtual void wander(float delta) {}                   // optional
+   };
+   ```
+
+3. **New Script** again, leave **A script**, name it `Slime`, pick **AI**
+   under **Inherits**, **Create**. The editor writes `scripts/slime.cpp`
+   with `#include "ai.hpp"`, `class Slime : public AI`, and `chase` ready to
+   fill in (it lists the functions `AI` lets you change, too):
+
+   ```cpp
+   #include "ai.hpp"
+
+   class Slime : public AI {
+   public:
+       EXPORT(int, damage, 1);  // its own, on top of AI's
+
+   protected:
+       void chase(Node2D* target, float delta) override {
+           auto* me = self<Node2D>();
+           me->position.x += (target->position.x > me->position.x ? 1 : -1) * speed * delta;
+       }
+   };
+
+   REGISTER_SCRIPT(Slime)
+   ```
+
+Attach `Slime` to a node: the Inspector shows `speed` and `sight range` (from
+`AI`) and `damage`, and the node has `AI`'s `spotted` signal. A `Bat` can
+inherit from `AI` too and chase differently; change `ai.hpp` and every enemy
+gets it (they're all rebuilt when you save it).
+
+- Base classes go in `.hpp` files in `scripts/` (they show in the FileSystem
+  dock: click one to open it). A base can inherit from another base.
+- Only scripts you attach have `REGISTER_SCRIPT`. To attach `AI` itself too,
+  add `scripts/ai.cpp` with just `#include "ai.hpp"` and `REGISTER_SCRIPT(AI)`
+  (not in the header: every script that includes it would register it again).
+- A script that writes its own `ready()` or `process()` replaces the base's;
+  call `AI::process(delta);` inside it to keep the base's part too.
+
 ### Script variables (shown in the inspector)
 
 Like Godot's `@export`, a script can show some of its variables in the
@@ -604,9 +899,15 @@ level, also with `body_entered`) and `spinner.cpp`.
 
 ### Signals
 
+> **New to signals?** Start with **[Signals, step by step](../docs/editor/signals.md)**:
+> what they are, connecting one in the editor and in code, signals of your
+> own, and the common mistakes. This section is the reference.
+
 Signals work like Godot's: a node announces that something happened, and
 every script that **connected** to it gets a call. The node doesn't need to
-know who's listening. Connect in `ready()`:
+know who's listening. `connect(sender, "signal", function)` goes in the
+**listening** script, and its first argument is always the node that
+**sends** the signal. Connect in `ready()`:
 
 ```cpp
 class Coin : public Script {
@@ -713,6 +1014,10 @@ and it works while the game is playing too:
 
 - The toolbar shows *Scripts: compiling...*, then *Scripts: N loaded*. The
   Output panel lists the scripts that were reloaded.
+- Pressing **Play** while the scripts are compiling (say, right after saving
+  one) waits for them, then plays, so the game always starts with the code you
+  just wrote. If they don't compile, it doesn't play and says so; **Stop**
+  (F8) cancels the wait.
 - If the code doesn't compile, the compiler's errors appear in the Output panel
   and the last working version keeps running. Fix the error, save, and it
   reloads.
@@ -806,6 +1111,7 @@ editor/
 │   ├── scene_tree.*      <- runs a scene: scripts, process, queueFree, drawing
 │   ├── script.hpp        <- the Script base class, EXPORT, SIGNAL, CALLABLE, RPC, INPUT, REGISTER_SCRIPT
 │   ├── signals.*         <- signals: connections, sending, the values they carry
+│   ├── shaders.*         <- custom shaders: .shader files to GLSL, their parameters
 │   ├── multiplayer.*     <- hosting, joining, RPCs, synchronizers and spawners
 │   ├── net_transport.*   <- the network connection under it (ENet)
 │   ├── game_runner.*     <- runs a project as a game (exports, Run Instances, --server)
@@ -822,7 +1128,9 @@ editor/
 │   ├── text_editor.*     <- the Script tab's text editor
 │   ├── autocomplete.*    <- its suggestions (reads the engine and raylib headers)
 │   ├── script_checker.*  <- live error checking and coloring (clangd)
+│   ├── script_lint.*     <- mistakes that compile but don't work (findNode before ready())
 │   ├── platform.*        <- operating system calls: libraries, programs, folder windows
+│   ├── editor_paths.*    <- finds the editor's own files (also when moved or portable)
 │   ├── ui_scale.*        <- the editor's UI size (display scaling)
 │   └── raygui_*          <- raygui and its widget styles
 ├── theme/                <- theme files (default_theme.cpp, light_theme.cpp) and their pictures
@@ -830,6 +1138,9 @@ editor/
 ├── templates/            <- New Project templates (multiplayer/)
 ├── tests/multiplayer/    <- the multiplayer test (scripts/test-multiplayer.sh)
 ├── tests/signals/        <- the signals test (scripts/test-signals.sh)
+├── tests/lint/           <- the script checks' test (scripts/test-lint.sh)
+├── tests/autoload/       <- the autoloads test (scripts/test-autoload.sh)
+├── tests/shaders/        <- the shaders test (scripts/test-shaders.sh)
 ├── scripts_module/       <- builds a project's scripts into the hot reload library
 └── project/              <- the demo project
     ├── project.json      <- game name, main scene, window size, export settings

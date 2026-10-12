@@ -38,7 +38,7 @@ class Script;
 // Properties: each node lists its editable fields, which is all the inspector
 // and the scene files need to know about it.
 // ---------------------------------------------------------------------------
-enum class PropKind { Section, Bool, Int, Float, Vec2, Color, String, Texture, Scene, Animations, AnimationName };
+enum class PropKind { Section, Bool, Int, Float, Vec2, Color, String, Texture, Scene, Animations, AnimationName, Shader };
 
 struct Property {
     std::string name;
@@ -171,12 +171,37 @@ private:
 };
 
 // ---------------------------------------------------------------------------
+// The value of one of a node's shader parameters (see shaders.hpp); the
+// field that's used depends on the uniform's type.
+struct ShaderParam {
+    float f = 0;
+    int i = 0;
+    bool b = false;
+    raylib::Vector2 v{0, 0};
+    raylib::Color c{255, 255, 255, 255};  // vec3 / vec4
+    std::string texture;                  // sampler2D: a picture in the project
+};
+
 class Node2D : public Node {
 public:
     raylib::Vector2 position{0, 0};
     float rotation = 0;  // degrees, clockwise (y points down, like Godot)
     raylib::Vector2 scale{1, 1};
     bool visible = true;
+
+    // A custom shader (a .shader file, e.g. "shaders/wave.shader") that draws
+    // this node, and its parameters' values (Sprite2D, AnimatedSprite2D,
+    // ColorRect and Label use it). From a script:
+    //     self<Sprite2D>()->setShaderParam("wave_size", 0.05f);
+    std::string shader;
+    std::map<std::string, ShaderParam> shaderParams;
+    void setShaderParam(const std::string& name, float value);
+    void setShaderParam(const std::string& name, double value) { setShaderParam(name, static_cast<float>(value)); }
+    void setShaderParam(const std::string& name, int value);
+    void setShaderParam(const std::string& name, bool value);
+    void setShaderParam(const std::string& name, ::Vector2 value);
+    void setShaderParam(const std::string& name, ::Color value);
+    void setShaderTexture(const std::string& name, const std::string& texturePath);
 
     const char* typeName() const override { return "Node2D"; }
     void getProperties(std::vector<Property>& out) override;
@@ -193,6 +218,10 @@ public:
 
     // The node's clickable area in its own space (width 0 = just a point).
     virtual Rectangle localRect() const { return {0, 0, 0, 0}; }
+
+protected:
+    // "shader" and its parameters, for the nodes that draw something
+    void addShaderProperties(std::vector<Property>& out);
 };
 
 class Sprite2D : public Node2D {

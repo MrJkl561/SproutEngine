@@ -1,6 +1,7 @@
 #include "text_editor.hpp"
 
 #include <algorithm>
+#include <cstring>
 #include <cctype>
 #include <cmath>
 #include <fstream>
@@ -212,6 +213,7 @@ Language languageFor(const fs::path& file) {
     if (ext == ".cpp" || ext == ".hpp" || ext == ".h" || ext == ".cc" || ext == ".cxx" || ext == ".hh" || ext == ".inl")
         return Language::Cpp;
     if (ext == ".json") return Language::Json;
+    if (ext == ".shader" || ext == ".glsl" || ext == ".fs" || ext == ".vs") return Language::Shader;
     return Language::Text;
 }
 
@@ -416,7 +418,109 @@ void TextDocument::insert(const std::string& text) {
     wantedCol_ = -1;
 }
 
+namespace {
+bool isWordChar(char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; }
+
+// Is `<` typed at col (in line) the start of a template's <...> or an
+// #include <...>, rather than "less than"?
+bool opensAngle(const std::string& line, int col) {
+    std::string before = line.substr(0, col);
+    size_t end = before.find_last_not_of(' ');
+    if (end == std::string::npos) return false;
+    std::string head = before.substr(0, end + 1);
+    if (head.size() >= 8 && head.compare(head.size() - 8, 8, "#include") == 0) return true;
+    if (end + 1 != before.size()) return false;  // "a <": a comparison
+    size_t start = end + 1;
+    while (start > 0 && (isWordChar(before[start - 1]) || before[start - 1] == ':')) --start;
+    std::string word = before.substr(start);
+    if (word.rfind("std::", 0) == 0) return true;
+    static const char* templates[] = {"template", "vector", "map", "unordered_map", "set", "unordered_set", "array",
+                                      "pair", "tuple", "optional", "variant", "unique_ptr", "shared_ptr", "weak_ptr",
+                                      "function", "static_cast", "dynamic_cast", "reinterpret_cast", "const_cast",
+                                      "make_unique", "make_shared", "numeric_limits", "self", "findNode", "getChild",
+                                      "as", "createNode"};
+    for (const char* t : templates)
+        if (word == t) return true;
+    return false;
+}
+}  // namespace
+
+bool TextDocument::autoPair(int codepoint) {
+    if (language == Language::Text || codepoint > 127) return false;
+    char ch = static_cast<char>(codepoint);
+    if (cursor_.line != autoCloseLine_) autoClosed_ = 0;
+    const std::string& line = lines_[cursor_.line];
+    char next = cursor_.col < static_cast<int>(line.size()) ? line[cursor_.col] : '\0';
+    char prev = cursor_.col > 0 ? line[cursor_.col - 1] : '\0';
+    bool inComment = line.substr(0, cursor_.col).find("//") != std::string::npos;
+
+    // A closer that was typed for you: step over it
+    if (!hasSelection() && autoClosed_ > 0 && next == ch && std::strchr(")]}>\"'", ch)) {
+        int left = autoClosed_ - 1;
+        moveTo({cursor_.line, cursor_.col + 1}, false);
+        autoClosed_ = left;
+        return true;
+    }
+    char close = ch == '(' ? ')' : ch == '[' ? ']' : ch == '{' ? '}' : ch == '"' ? '"' : ch == '\'' ? '\'' : ch == '<' ? '>' : 0;
+    if (!close || inComment) return false;
+    bool quote = ch == '"' || ch == '\'';
+    if (ch == '<' && (language != Language::Cpp || hasSelection() || !opensAngle(line, cursor_.col))) return false;
+    if (quote && language == Language::Json && ch == '\'') return false;
+    if (hasSelection()) {
+        // Wrap what's selected
+        if (cursor_.line != anchor_.line) return false;
+        auto [a, b] = selection();
+        std::string inner = selectedText();
+        beginEdit(EditKind::Other);
+        insert(std::string(1, ch) + inner + close);
+        anchor_ = {a.line, a.col + 1};
+        cursor_ = {b.line, b.col + 1};
+        return true;
+    }
+    // Only where nothing would be in the way: at the end of the line, before a
+    // space or a closer. Quotes: not right after a letter (it's an apostrophe
+    // or the end of a string), and not inside a string.
+    bool roomy = next == '\0' || next == ' ' || next == '\t' || std::strchr(")]};,>", next);
+    if (!roomy) return false;
+    if (quote) {
+        if (isWordChar(prev) || prev == '\\') return false;
+        int quotes = 0;
+        for (int i = 0; i < cursor_.col; ++i)
+            if (line[i] == ch && (i == 0 || line[i - 1] != '\\')) ++quotes;
+        if (quotes % 2 == 1) return false;
+    }
+    beginEdit(EditKind::Typing);
+    int closed = cursor_.line == autoCloseLine_ ? autoClosed_ : 0;
+    insert(std::string(1, ch) + close);
+    cursor_.col -= 1;  // between the two
+    anchor_ = cursor_;
+    lastEdit_ = EditKind::Typing;
+    autoCloseLine_ = cursor_.line;
+    autoClosed_ = closed + 1;
+    return true;
+}
+
+bool TextDocument::deletePair() {
+    if (hasSelection() || language == Language::Text) return false;
+    const std::string& line = lines_[cursor_.line];
+    if (cursor_.col <= 0 || cursor_.col >= static_cast<int>(line.size())) return false;
+    char a = line[cursor_.col - 1], b = line[cursor_.col];
+    bool pair = (a == '(' && b == ')') || (a == '[' && b == ']') || (a == '{' && b == '}') || (a == '"' && b == '"') ||
+                (a == '\'' && b == '\'') || (a == '<' && b == '>' && autoClosed_ > 0 && cursor_.line == autoCloseLine_);
+    if (!pair) return false;
+    beginEdit(EditKind::Deleting);
+    anchor_ = {cursor_.line, cursor_.col - 1};
+    cursor_ = {cursor_.line, cursor_.col + 1};
+    eraseSelection();
+    if (autoClosed_ > 0 && cursor_.line == autoCloseLine_) --autoClosed_;
+    return true;
+}
+
 void TextDocument::typeChar(int codepoint) {
+    if (autoPair(codepoint)) {
+        if (acOpen_) acOpen_ = false;
+        return;
+    }
     int size = 0;
     const char* utf8 = CodepointToUTF8(codepoint, &size);
     beginEdit(EditKind::Typing);
@@ -561,7 +665,7 @@ void TextDocument::indentLines(bool outdent) {
 }
 
 void TextDocument::toggleComment() {
-    if (language != Language::Cpp) return;
+    if (language != Language::Cpp && language != Language::Shader) return;
     auto [a, b] = selection();
     int last = b.line;
     if (b.col == 0 && b.line > a.line) --last;
@@ -666,6 +770,7 @@ void TextDocument::moveTo(Pos p, bool select, bool keepColumn) {
     lastEdit_ = EditKind::Other;
     keepCursorVisible_ = true;
     blinkStart_ = GetTime();
+    autoClosed_ = 0;  // moved away: closers typed for you are just text now
 }
 
 void TextDocument::moveVertical(int lines, bool select) {
@@ -824,7 +929,7 @@ void TextDocument::updateHighlight() {
         colors_[i].assign(lines_[i].size(), Plain);
         widestLine_ = std::max(widestLine_, visualCol(static_cast<int>(i), static_cast<int>(lines_[i].size())));
     }
-    if (language == Language::Cpp) highlightCpp(lines_, colors_);
+    if (language == Language::Cpp || language == Language::Shader) highlightCpp(lines_, colors_);  // (C-like)
     if (language == Language::Json) highlightJson(lines_, colors_);
     // clangd's colors, on the lines that are still as they were
     for (const SemanticSpan& span : semantic_) {
@@ -906,7 +1011,9 @@ void TextDocument::handleKeys() {
         else moveTo({cursor_.line, static_cast<int>(lines_[cursor_.line].size())}, shift);
     }
 
-    if (pressed(KEY_BACKSPACE)) {
+    if (pressed(KEY_BACKSPACE) && !ctrl && deletePair()) {
+        acOpen_ = false;
+    } else if (pressed(KEY_BACKSPACE)) {
         if (!hasSelection()) {
             Pos from = left(cursor_, ctrl);
             // In the indent, delete back to the previous tab stop.
@@ -1005,6 +1112,64 @@ void TextDocument::draw(Rectangle r, bool focused, bool mouse, const TextStyle& 
     const float bar = 12;
     area_ = {r.x + gutterW_, r.y, r.width - gutterW_ - bar, r.height - bar};
 
+    // The problems on the line the mouse is over (or else the cursor's line)
+    // are shown in full in a strip under the text, wrapped to fit: the
+    // message after the line itself is often too long to see.
+    std::vector<const Diagnostic*> shown;
+    {
+        Vector2 mp = GetMousePosition();
+        int hovered = -1;
+        if (mouse && CheckCollisionPointRec(mp, {area_.x, area_.y, area_.width, area_.height}))
+            hovered = static_cast<int>((mp.y - area_.y + scroll_.y) / std::max(1.0f, lineH_));
+        auto collect = [&](int line) {
+            shown.clear();
+            for (const Diagnostic& d : diagnostics)
+                if (d.line == line + 1) shown.push_back(&d);
+            std::stable_sort(shown.begin(), shown.end(), [](auto* a, auto* b) { return a->error && !b->error; });
+        };
+        collect(hovered);
+        if (shown.empty()) collect(cursor_.line);
+    }
+    std::vector<std::pair<std::string, bool>> strip;  // (text, error)
+    if (!shown.empty()) {
+        float maxW = r.width - bar - 24;
+        auto width = [&](const std::string& t) { return MeasureTextEx(font, t.c_str(), size, 1).x; };
+        for (const Diagnostic* d : shown) {
+            std::string text = std::string(d->error ? "Error" : "Warning") + " (line " + std::to_string(d->line) + "): " +
+                               d->message;
+            // Word wrap (cutting inside a word only when it doesn't fit a line by itself)
+            std::string line;
+            size_t i = 0;
+            while (i <= text.size()) {
+                size_t sp = text.find(' ', i);
+                if (sp == std::string::npos) sp = text.size();
+                std::string word = text.substr(i, sp - i);
+                std::string tried = line.empty() ? word : line + " " + word;
+                if (width(tried) <= maxW) {
+                    line = tried;
+                } else {
+                    if (!line.empty()) strip.push_back({line, d->error});
+                    while (width(word) > maxW && word.size() > 1) {
+                        size_t n = word.size();
+                        while (n > 1 && width(word.substr(0, n)) > maxW) --n;
+                        strip.push_back({word.substr(0, n), d->error});
+                        word.erase(0, n);
+                    }
+                    line = word;
+                }
+                i = sp + 1;
+            }
+            if (!line.empty()) strip.push_back({line, d->error});
+        }
+        size_t maxRows = static_cast<size_t>(std::max(1.0f, (r.height - bar) / 3 / lineH_));
+        if (strip.size() > maxRows) {
+            strip.resize(maxRows);
+            strip.back().first += " ...";
+        }
+    }
+    float stripH = strip.empty() ? 0 : strip.size() * lineH_ + 8;
+    area_.height -= stripH;
+
     // --- input ---------------------------------------------------------------
     if (focused) handleKeys();
     updateHighlight();
@@ -1012,7 +1177,16 @@ void TextDocument::draw(Rectangle r, bool focused, bool mouse, const TextStyle& 
     bool inside = mouse && CheckCollisionPointRec(m, r);
     float contentH = lines_.size() * lineH_ + area_.height * 0.5f;
     float maxY = std::max(0.0f, contentH - area_.height);
-    float maxX = std::max(0.0f, (widestLine_ + 4) * charW_ - area_.width);
+    // Wide enough to scroll to the end of the longest line, and of the messages after lines
+    float widest = (widestLine_ + 4) * charW_;
+    for (const Diagnostic& d : diagnostics) {
+        int l = d.line - 1;
+        if (l < 0 || l >= static_cast<int>(lines_.size())) continue;
+        std::string msg = d.message.size() > 160 ? d.message.substr(0, 157) + "..." : d.message;
+        widest = std::max(widest, (visualCol(l, static_cast<int>(lines_[l].size())) + 3) * charW_ +
+                                      MeasureTextEx(font, msg.c_str(), size, 1).x + 2 * charW_);
+    }
+    float maxX = std::max(0.0f, widest - area_.width);
     Rectangle vbar{r.x + r.width - bar, r.y, bar, r.height - bar};
     float thumbH = std::max(24.0f, vbar.height * std::min(1.0f, area_.height / contentH));
     auto thumbY = [&] { return vbar.y + (maxY > 0 ? scroll_.y / maxY : 0) * (vbar.height - thumbH); };
@@ -1231,6 +1405,18 @@ void TextDocument::draw(Rectangle r, bool focused, bool mouse, const TextStyle& 
     }
     EndScissorMode();
     DrawLineEx({r.x + gutterW_ - 0.5f, r.y}, {r.x + gutterW_ - 0.5f, r.y + area_.height}, 1, Fade(c.lineNumbers, 0.3f));
+
+    // The problems strip
+    if (stripH > 0) {
+        Rectangle sr{r.x, area_.y + area_.height, r.width - bar, stripH};
+        DrawRectangleRec(sr, c.background);
+        bool anyError = !shown.empty() && shown.front()->error;
+        DrawRectangleRec(sr, Fade(anyError ? c.error : c.warning, 0.10f));
+        DrawLineEx({sr.x, sr.y + 0.5f}, {sr.x + sr.width, sr.y + 0.5f}, 1, Fade(anyError ? c.error : c.warning, 0.6f));
+        for (size_t i = 0; i < strip.size(); ++i)
+            DrawTextEx(font, strip[i].first.c_str(), {snap(sr.x + 12), snap(sr.y + 4 + i * lineH_ + textY)}, size, 1,
+                       strip[i].second ? c.error : c.warning);
+    }
 
     // Scroll bars (with marks where the errors are)
     DrawRectangleRec(vbar, Fade(c.lineNumbers, 0.08f));

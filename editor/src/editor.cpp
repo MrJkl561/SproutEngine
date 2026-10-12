@@ -17,6 +17,7 @@
 #include <rlgl.h>
 
 #include "assets.hpp"
+#include "editor_paths.hpp"
 #include "raygui_include.hpp"
 #include "export.hpp"
 #include "ide_files.hpp"
@@ -24,6 +25,8 @@
 #include "platform.hpp"
 #include "projects.hpp"
 #include "scene_io.hpp"
+#include "shaders.hpp"
+#include "script_lint.hpp"
 #include "script.hpp"
 #include "theme.hpp"
 #include "ui_scale.hpp"
@@ -111,9 +114,8 @@ std::string pascalWords(const std::string& text) {
 // ide_files.hpp). Returns what went wrong, if anything.
 std::string refreshIdeFiles(const fs::path& project) {
     std::string error;
-    writeIdeFiles({project, fs::path(SPROUT_EDITOR_DIR) / "src", SPROUT_EDITOR_DEPS_DIR, SPROUT_EDITOR_CXX,
-                   SPROUT_EDITOR_CXX_ID, SPROUT_EDITOR_CLANGD},
-                  error);
+    const EditorPaths& paths = editorPaths();
+    writeIdeFiles({project, paths.srcDir, paths.depsDir, paths.cxx, paths.cxxId, paths.clangd}, error);
     return error;
 }
 
@@ -235,6 +237,61 @@ void drawText(const std::string& s, float x, float y, Color c) {
 
 float textWidth(const std::string& s) { return static_cast<float>(GuiGetTextWidth(s.c_str())); }
 
+// Text broken into lines that fit maxWidth: at spaces where it can, inside a
+// word (a long path) where it must.
+std::vector<std::string> wrapText(const std::string& text, float maxWidth) {
+    std::vector<std::string> lines;
+    std::stringstream paragraphs(text);
+    std::string paragraph;
+    while (std::getline(paragraphs, paragraph)) {
+        std::string line;
+        size_t i = 0;
+        while (i <= paragraph.size()) {
+            size_t space = paragraph.find(' ', i);
+            if (space == std::string::npos) space = paragraph.size();
+            std::string word = paragraph.substr(i, space - i);
+            std::string tried = line.empty() ? word : line + " " + word;
+            if (textWidth(tried) <= maxWidth) {
+                line = tried;
+            } else {
+                if (!line.empty()) lines.push_back(line);
+                line.clear();
+                // A word too long for a line of its own: cut it up
+                while (textWidth(word) > maxWidth && word.size() > 1) {
+                    size_t n = word.size();
+                    while (n > 1 && textWidth(word.substr(0, n)) > maxWidth) --n;
+                    lines.push_back(word.substr(0, n));
+                    word.erase(0, n);
+                }
+                line = word;
+            }
+            i = space + 1;
+        }
+        lines.push_back(line);
+    }
+    if (lines.empty()) lines.push_back("");
+    return lines;
+}
+
+// Draws text wrapped to maxWidth; returns the height it took.
+float drawWrapped(const std::string& text, float x, float y, float maxWidth, Color c, float lineH = 20) {
+    std::vector<std::string> lines = wrapText(text, maxWidth);
+    for (size_t i = 0; i < lines.size(); ++i) drawText(lines[i], x, y + i * lineH, c);
+    return lines.size() * lineH;
+}
+
+// Text cut short with "..." so it fits maxWidth (fromLeft: keeps the end,
+// for paths).
+std::string fitText(const std::string& text, float maxWidth, bool fromLeft = false) {
+    if (textWidth(text) <= maxWidth) return text;
+    std::string s = text;
+    while (!s.empty() && textWidth(fromLeft ? "..." + s : s + "...") > maxWidth) {
+        if (fromLeft) s.erase(0, 1);
+        else s.pop_back();
+    }
+    return fromLeft ? "..." + s : s + "...";
+}
+
 void drawHeader(Rectangle r, const std::string& title) {
     DrawRectangleRec(r, kPanel);
     const Theme& t = theme();
@@ -245,6 +302,15 @@ void drawHeader(Rectangle r, const std::string& title) {
 }
 
 bool mouseIn(Rectangle r) { return CheckCollisionPointRec(GetMousePosition(), r); }
+
+// The node, if it's one that can be drawn with a shader (nullptr if not)
+Node2D* takesShader(Node* n) {
+    if (!n) return nullptr;
+    if (auto* sp = n->as<Sprite2D>()) return sp;
+    if (auto* cr = n->as<ColorRect>()) return cr;
+    if (auto* lb = n->as<Label>()) return lb;
+    return nullptr;
+}
 
 bool ctrlDown() {
     return IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL) || IsKeyDown(KEY_LEFT_SUPER) ||
@@ -300,15 +366,25 @@ Node* nodeAt(Node* root, const std::vector<int>& path) {
 }
 
 std::string snakeCase(const std::string& name) {
+    // PlayerController -> player_controller; acronyms and numbers stay together:
+    // AI -> ai, PlayerAI -> player_ai, HTTPServer -> http_server,
+    // CharacterBody2DScript -> character_body_2d_script, Enemy2 -> enemy_2
+    auto up = [](char c) { return std::isupper(static_cast<unsigned char>(c)) != 0; };
+    auto low = [](char c) { return std::islower(static_cast<unsigned char>(c)) != 0; };
+    auto digit = [](char c) { return std::isdigit(static_cast<unsigned char>(c)) != 0; };
     std::string out;
     for (size_t i = 0; i < name.size(); ++i) {
-        char c = name[i];
-        if (std::isupper(static_cast<unsigned char>(c))) {
-            if (i > 0 && !out.empty() && out.back() != '_') out += '_';
-            out += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        } else {
-            out += c;
+        char c = name[i], prev = i > 0 ? name[i - 1] : '\0', next = i + 1 < name.size() ? name[i + 1] : '\0';
+        bool split = false;
+        if (up(c)) {
+            if (low(prev)) split = true;                         // playerController
+            else if (up(prev) && low(next)) split = true;        // HTTPServer: the S
+            else if (digit(prev) && low(next)) split = true;     // Enemy2Boss: the B (2D stays together)
+        } else if (digit(c)) {
+            split = std::isalpha(static_cast<unsigned char>(prev)) != 0;  // Body2D: before the 2
         }
+        if (split && !out.empty() && out.back() != '_') out += '_';
+        out += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     }
     return out;
 }
@@ -362,6 +438,48 @@ public:
 REGISTER_SCRIPT($NAME)
 )";
 
+// A base class: shared code other scripts inherit from (New Script, Inherits).
+const char* kBaseClassTemplate = R"(// $NAME: shared code for other scripts. It isn't attached to nodes itself
+// (so it has no REGISTER_SCRIPT): make scripts that inherit from it instead,
+// with New Script and $NAME under "Inherits". They get its variables, signals
+// and functions, and fill in the parts that differ.
+#pragma once
+
+#include "$INCLUDE"
+
+using namespace s2d;
+
+class $NAME : public $BASE {
+public:
+$EXPORTS    void process(float delta) override {
+        $SUPER_PROCESS// What every script that inherits this does each frame. Here: it calls
+        // act(), which each of them writes its own version of.
+        act(delta);
+    }
+
+protected:
+    // Each script that inherits from $NAME can write its own act().
+    virtual void act(float delta) { (void)delta; }
+};
+)";
+
+// A script that inherits from one of the project's base classes.
+const char* kDerivedTemplate = R"(// $NAME inherits from $BASE ($INCLUDE): it has all of $BASE's variables,
+// signals and functions, and changes or adds what it needs.
+// Save this file and the editor reloads it, even while the game is running.
+#include "$INCLUDE"
+
+class $NAME : public $BASE {
+public:
+    void ready() override {
+        $BASE::ready();  // keep what $BASE does when it starts
+        print("$NAME is ready on " + node()->name);
+    }
+$OVERRIDES};
+
+REGISTER_SCRIPT($NAME)
+)";
+
 // Locks the GUI while the mouse is outside a scroll area, so widgets that are
 // scrolled out of sight can't be clicked through the panel's edges.
 struct ClipLock {
@@ -389,13 +507,13 @@ struct ClipLock {
 // ===========================================================================
 Editor::Editor(fs::path projectDir)
     : projectDir_(std::move(projectDir)), scriptsDir_(projectDir_ / "scripts"),
-      workDir_(projects::workDir(projectDir_, SPROUT_EDITOR_BUILD_DIR)) {
+      workDir_(projects::workDir(projectDir_, editorPaths().buildDir)) {
     Assets::setProjectDir(projectDir_);
     loadTheme();
     loadEditorStyle();
     loadLayout();
     codeEditor_ = loadCodeEditor();
-    completions_.setFolders(fs::path(SPROUT_EDITOR_DIR) / "src", SPROUT_EDITOR_DEPS_DIR, scriptsDir_);
+    completions_.setFolders(editorPaths().srcDir, editorPaths().depsDir, scriptsDir_);
     setUiScale(systemUiScale());
     setPrintHandler([this](const std::string& msg) { log(msg, theme().colors.scriptPrint); });
 
@@ -422,8 +540,8 @@ Editor::Editor(fs::path projectDir)
     }
     editTree_.gameSize = raylib::Vector2{static_cast<float>(settings_.width), static_cast<float>(settings_.height)};
     exporter_ = std::make_unique<Exporter>(Exporter::Paths{
-        SPROUT_EDITOR_DIR, projectDir_, scriptsDir_, workDir_ / "exports",
-        SPROUT_EDITOR_DEPS_DIR, SPROUT_EDITOR_CMAKE, SPROUT_EDITOR_GENERATOR, SPROUT_EDITOR_GENERATOR_INSTANCE});
+        editorPaths().editorDir, projectDir_, scriptsDir_, workDir_ / "exports", editorPaths().depsDir,
+        editorPaths().cmake.string(), editorPaths().generator, editorPaths().generatorInstance});
     scenePath_ = settings_.mainScene;
     if (!openScene(scenePath_)) newScene();
     undoStack_.clear();
@@ -443,6 +561,7 @@ Editor::~Editor() {
     inspectorScript_.reset();
     scripts_.reset();  // after the game: scripts' code lives in the library
     gameTexture_.reset();
+    Shaders::clear();
     Assets::clear();
     gThemeImages.clear();  // (textures must go before the window does)
 }
@@ -451,6 +570,9 @@ void Editor::ensureDefaultAssets() {
     fs::path dir = projectDir_ / "assets";
     std::error_code ec;
     fs::create_directories(dir, ec);
+    // Only for a new project (nothing in assets/ yet): pictures deleted later stay deleted.
+    for (auto it = fs::directory_iterator(dir, ec); !ec && it != fs::directory_iterator(); it.increment(ec))
+        if (it->path().filename().string().rfind('.', 0) != 0) return;
 
     auto make = [&](const char* file, int w, int h, const std::function<void(Image&)>& paint) {
         fs::path p = dir / file;
@@ -626,7 +748,7 @@ void Editor::frame() {
     updateSplitters(sw, sh, kLeftW, kRightW, kOutputH, sceneH);
     bool modal = popup_.open || dialog_.open || confirm_.open || export_.open || projects_.open ||
                  folderPick_.valid() || sheet_.open || codeEditorDialog_.open || instancesDialog_.open || connectDialog_.open ||
-                 swallowMouse_ ||
+                 newScript_.open || ask_.open || autoloadsDialog_.open || swallowMouse_ ||
                  splitter_ != Splitter::None;
     if (modal) GuiLock();
     {
@@ -649,6 +771,7 @@ void Editor::frame() {
     drawModal();
     if (popup_.open) GuiUnlock();
     drawPopup();
+    drawHint();
 
     if (!screenshotPath.empty()) {
         rlDrawRenderBatchActive();  // flush pending drawing so it's in the picture
@@ -681,9 +804,7 @@ void Editor::setUiScale(float scale) {
     Font old = uiFont_;
     uiFont_ = Font{};
     std::string fontFile = themePath(theme().font);
-#if defined(SPROUT_EDITOR_FONT)
-    if (fontFile.empty()) fontFile = SPROUT_EDITOR_FONT;
-#endif
+    if (fontFile.empty()) fontFile = editorPaths().font.string();
     if (!fontFile.empty() && FileExists(fontFile.c_str())) {
         uiFont_ = LoadFontEx(fontFile.c_str(), static_cast<int>(std::lround(theme().fontSize * scale)), nullptr, 0);
         if (uiFont_.texture.id != 0) {
@@ -804,6 +925,7 @@ void Editor::updateSplitters(float sw, float sh, float leftW, float rightW, floa
 
 void Editor::handleShortcuts() {
     bool scriptView = mainView_ == MainView::Script;
+    if (playWhenBuilt_ && !playTree_ && IsKeyPressed(KEY_F8)) stop();  // cancel a Play that's waiting
     if (playTree_) {
         bool typing = scriptView && (codeFocused_ || find_.findEdit || find_.withEdit);
         if (IsKeyPressed(KEY_F8) || (IsKeyPressed(KEY_ESCAPE) && !typing && !find_.open)) stop();
@@ -840,70 +962,112 @@ void Editor::drawToolbar(Rectangle r) {
     drawThemeImage(theme().images.toolbar, r, false, WHITE);
     DrawLineEx({r.x, r.y + r.height - 1}, {r.x + r.width, r.y + r.height - 1}, 1, kBorder);
 
-    float x = 8, y = 6, h = 28;
+    const float y = 6, h = 28, gap = 4, iconW = 34;
+    // When the window is too narrow for every button's name, buttons show only
+    // their icon (the name appears when the mouse is over one): first the file
+    // buttons, then Play / Play Scene / Stop, then the "UI size" label goes.
+    struct Btn { int icon; const char* label; float width; const char* what; };
+    const Btn fileBtns[] = {
+        {ICON_FILETYPE_HOME, "Projects", 100, "Projects: open another project or make a new one"},
+        {ICON_FILE_NEW, "New", 76, "New: start a new, empty scene"},
+        {ICON_FOLDER_FILE_OPEN, "Open", 80, "Open: open another scene of this project"},
+        {ICON_FILE_SAVE_CLASSIC, "Save", 76, "Save the scene (Ctrl+S)"},
+        {ICON_FILE_SAVE, "Save As", 92, "Save As: save the scene under another name"},
+        {ICON_FILE_EXPORT, "Export", 84, "Export: turn the project into a game for Windows, macOS, Linux or the web"}};
+    const Btn playBtns[] = {{ICON_PLAYER_PLAY, "Play", 84, "Play the game from its main scene (F5)"},
+                            {ICON_FILETYPE_PLAY, "Play Scene", 120, "Play the scene you're editing (F6)"},
+                            {ICON_PLAYER_STOP, "Stop", 84, "Stop the game and go back to editing (F8)"}};
+    auto groupW = [&](const Btn* b, int n, bool compact) {
+        float w = 0;
+        for (int i = 0; i < n; ++i) w += (compact ? iconW : b[i].width) + gap;
+        return w;
+    };
+    const float pctW = textWidth("300%") + 8, labelW = textWidth("UI size") + 8;
+    auto leftW = [&](bool compact) { return 8 + groupW(fileBtns, 6, compact) + 2 * (iconW + 2) + 8; };
+    auto midW = [&](bool compact) { return groupW(playBtns, 3, compact) + 50; };
+    auto rightW = [&](bool label) { return 8 + 30 + pctW + 34 + (label ? labelW : 0) + 42; };
+    const float reloadW = ScriptReloader::supported() ? 16 + iconW + 8 : 16;
+    bool compactFiles = false, compactPlay = false, showLabel = true;
+    for (int level = 0; level < 4; ++level) {
+        compactFiles = level >= 1;
+        compactPlay = level >= 2;
+        showLabel = level < 3;
+        if (leftW(compactFiles) + 10 + midW(compactPlay) + reloadW + rightW(showLabel) <= r.width) break;
+    }
+    auto button = [&](float& bx, const Btn& b, bool compact) {
+        Rectangle rc{bx, y, compact ? iconW : b.width, h};
+        bool pressed = GuiButton(rc, GuiIconText(b.icon, compact ? nullptr : b.label));
+        hint(rc, b.what);
+        bx += rc.width + gap;
+        return pressed;
+    };
+
+    float x = 8;
     bool playing = playTree_ != nullptr;
     if (playing) GuiDisable();
-    if (GuiButton({x, y, 100, h}, GuiIconText(ICON_FILETYPE_HOME, "Projects"))) openProjectManager();
-    x += 108;
-    if (GuiButton({x, y, 76, h}, GuiIconText(ICON_FILE_NEW, "New"))) confirmUnsaved([this] { newScene(); });
-    x += 80;
-    if (GuiButton({x, y, 80, h}, GuiIconText(ICON_FOLDER_FILE_OPEN, "Open"))) {
+    if (button(x, fileBtns[0], compactFiles)) openProjectManager();
+    if (button(x, fileBtns[1], compactFiles)) confirmUnsaved([this] { newScene(); });
+    float openX = x;
+    if (button(x, fileBtns[2], compactFiles)) {
         std::vector<std::string> scenes;
         for (auto& f : files_)
             if (f.kind == FileEntry::Scene) scenes.push_back(f.path);
         if (scenes.empty()) {
             log("No scenes in " + (projectDir_ / "scenes").string() + " yet.", kDim);
         } else {
-            openPopup({x, y + h + 2}, scenes, [this, scenes](int i) { requestOpenScene(scenes[i]); });
+            openPopup({openX, y + h + 2}, scenes, [this, scenes](int i) { requestOpenScene(scenes[i]); });
         }
     }
-    x += 84;
-    if (GuiButton({x, y, 76, h}, GuiIconText(ICON_FILE_SAVE_CLASSIC, "Save"))) saveScene();
-    x += 80;
-    if (GuiButton({x, y, 92, h}, GuiIconText(ICON_FILE_SAVE, "Save As"))) {
+    if (button(x, fileBtns[3], compactFiles)) saveScene();
+    if (button(x, fileBtns[4], compactFiles)) {
         openTextDialog("Save Scene As", "Path inside the project folder:", scenePath_, [this](const std::string& p) {
             if (p.empty()) return;
             scenePath_ = p;
             saveScene();
         });
     }
-    x += 96;
-    if (GuiButton({x, y, 84, h}, GuiIconText(ICON_FILE_EXPORT, "Export"))) openExportDialog();
-    x += 88;
-    if (GuiButton({x, y, 34, h}, GuiIconText(ICON_UNDO, nullptr))) undo();
-    x += 36;
-    if (GuiButton({x, y, 34, h}, GuiIconText(ICON_REDO, nullptr))) redo();
-    x += 44;
+    if (button(x, fileBtns[5], compactFiles)) openExportDialog();
+    if (GuiButton({x, y, iconW, h}, GuiIconText(ICON_UNDO, nullptr))) undo();
+    hint({x, y, iconW, h}, "Undo (Ctrl+Z)");
+    x += iconW + 2;
+    if (GuiButton({x, y, iconW, h}, GuiIconText(ICON_REDO, nullptr))) redo();
+    hint({x, y, iconW, h}, "Redo (Ctrl+Y)");
+    x += iconW + 8;
     if (playing) GuiEnable();
 
-    // Play / Stop in the middle, like Godot (but never on top of the buttons)
+    // Play / Stop in the middle, like Godot (but never on top of the other buttons)
     // Play runs the game from its main scene (F5); Play Scene runs the one being edited (F6).
-    float px = std::max(std::floor(r.width / 2 - 150), x);
+    float rightStart = r.width - rightW(showLabel);
+    float px = std::floor(r.width / 2 - midW(compactPlay) / 2);
+    px = std::max(std::min(px, rightStart - reloadW - midW(compactPlay)), x + 2);
     if (playing) GuiDisable();
-    if (GuiButton({px, y, 84, h}, GuiIconText(ICON_PLAYER_PLAY, "Play"))) play(true);
-    if (GuiButton({px + 88, y, 120, h}, GuiIconText(ICON_FILETYPE_PLAY, "Play Scene"))) play(false);
+    if (button(px, playBtns[0], compactPlay)) play(true);
+    if (button(px, playBtns[1], compactPlay)) play(false);
     if (playing) GuiEnable();
-    if (!playing) GuiDisable();
-    if (GuiButton({px + 212, y, 84, h}, GuiIconText(ICON_PLAYER_STOP, "Stop"))) stop();
-    if (!playing) GuiEnable();
+    bool canStop = playing || playWhenBuilt_.has_value();  // (Stop also cancels a Play that's waiting)
+    if (!canStop) GuiDisable();
+    if (button(px, playBtns[2], compactPlay)) stop();
+    if (!canStop) GuiEnable();
     // Run Instances: how many copies of the game Play starts (multiplayer)
     if (playing) GuiDisable();
     std::string copies = settings_.runInstances > 1 ? "x" + std::to_string(settings_.runInstances) : "";
-    if (GuiButton({px + 300, y, 50, h}, GuiIconText(ICON_WINDOW, copies.empty() ? nullptr : copies.c_str())))
+    if (GuiButton({px, y, 50, h}, GuiIconText(ICON_WINDOW, copies.empty() ? nullptr : copies.c_str())))
         openRunInstancesDialog();
+    hint({px, y, 50, h}, "Run Instances: how many copies of the game Play starts");
     if (playing) GuiEnable();
-    x = px + 366;
+    x = px + 50 + 16;
 
     // Script hot reload status
     if (ScriptReloader::supported()) {
         if (GuiButton({x, y, 34, h}, GuiIconText(ICON_ROTATE_FILL, nullptr))) scripts_->requestBuild();
+        hint({x, y, 34, h}, "Rebuild the scripts");
         std::string status = scripts_->isBuilding()        ? "Scripts: compiling..."
                              : scripts_->lastBuildFailed() ? "Scripts: build failed"
                                                            : "Scripts: " + std::to_string(scripts_->scriptNames().size()) +
                                                                  " loaded";
         Color c = scripts_->isBuilding() ? kOrange : scripts_->lastBuildFailed() ? kBad : kDim;
         // Only as much as fits before the controls on the right (gear, UI size)
-        float rightControls = r.width - 8 - 30 - 8 - textWidth("300%") - 34 - textWidth("UI size") - 8 - 42 - 12;
+        float rightControls = rightStart - 12;
         if (x + 42 + textWidth(status) > rightControls) status = "Scripts";
         if (x + 42 + textWidth(status) <= rightControls) {
             drawText(status, x + 42, y + 6, c);
@@ -914,26 +1078,36 @@ void Editor::drawToolbar(Rectangle r) {
     }
     if (exporter_ && exporter_->busy()) {
         std::string status = "Exporting " + exporter_->currentLabel() + "...";
-        drawText(status, x, y + 6, kOrange);
-        x += textWidth(status) + 16;
+        if (x + textWidth(status) > rightStart - 12) status = "Exporting...";
+        if (x + textWidth(status) <= rightStart - 12) {
+            drawText(status, x, y + 6, kOrange);
+            x += textWidth(status) + 16;
+        }
     }
 
     // Interface size, on the right (Ctrl + / Ctrl - / Ctrl 0 do the same)
     float ux = r.width - 8 - 30;
     if (GuiButton({ux, y, 30, h}, "+")) setUiScale(uiScale_ + 0.25f);
+    hint({ux, y, 30, h}, "Bigger interface (Ctrl +)");
     std::string pct = std::to_string(static_cast<int>(std::lround(uiScale_ * 100))) + "%";
-    ux -= 4 + textWidth("300%") + 4;
+    ux -= pctW;
     drawText(pct, ux + 4 + (textWidth("300%") - textWidth(pct)) / 2, y + 6, kText);
     ux -= 34;
     if (GuiButton({ux, y, 30, h}, "-")) setUiScale(uiScale_ - 0.25f);
-    ux -= textWidth("UI size") + 8;
-    drawText("UI size", ux, y + 6, kDim);
+    hint({ux, y, 30, h}, "Smaller interface (Ctrl -)");
+    if (showLabel) {
+        ux -= labelW;
+        drawText("UI size", ux, y + 6, kDim);
+    }
     ux -= 42;
+    hint({ux, y, 34, h}, "Settings");
     if (GuiButton({ux, y, 34, h}, GuiIconText(ICON_GEAR, nullptr))) {
-        openPopup({ux, y + h + 2}, {"Code Editor...", "Run Instances...", "Reset Panel Layout"}, [this](int i) {
+        openPopup({ux, y + h + 2}, {"Code Editor...", "Run Instances...", "Autoloads...", "Reset Panel Layout"},
+                  [this](int i) {
             if (i == 0) openCodeEditorDialog();
             if (i == 1) openRunInstancesDialog();
-            if (i == 2) {
+            if (i == 2) openAutoloadsDialog();
+            if (i == 3) {
                 resetLayout();
                 saveLayout();
             }
@@ -962,11 +1136,13 @@ void Editor::drawSceneDock(Rectangle r) {
 
     float y = r.y + kHeaderH + 4, x = r.x + 6;
     float addW = std::min(88.0f, r.width - 12 - 5 * 33 - 4);  // the other five buttons are 30 wide
+    hint({x, y, addW, 26}, "Add a node inside the selected one");
     if (GuiButton({x, y, addW, 26}, GuiIconText(ICON_CIRCLE_ADD, addW >= 64 ? "Add" : nullptr))) {
         openPopup({x, y + 28}, nodeTypeNames(), [this](int i) { addNode(nodeTypeNames()[i]); });
     }
     x += addW + 4;
     // Instance a scene (like Godot's chain-link button)
+    hint({x, y, 30, 26}, "Add a scene: put a copy of another scene file here");
     if (GuiButton({x, y, 30, 26}, GuiIconText(ICON_LAYERS, nullptr))) {
         std::vector<std::string> scenes;
         for (auto& f : files_)
@@ -981,12 +1157,16 @@ void Editor::drawSceneDock(Rectangle r) {
         }
     }
     x += 33;
+    hint({x, y, 30, 26}, "Duplicate the selected node (Ctrl+D)");
     if (GuiButton({x, y, 30, 26}, GuiIconText(ICON_FILE_COPY, nullptr))) duplicateSelected();
     x += 33;
+    hint({x, y, 30, 26}, "Delete the selected node (Delete)");
     if (GuiButton({x, y, 30, 26}, GuiIconText(ICON_BIN, nullptr))) deleteSelected();
     x += 33;
+    hint({x, y, 30, 26}, "Move the selected node up (drawn earlier, behind)");
     if (GuiButton({x, y, 30, 26}, GuiIconText(ICON_ARROW_UP_FILL, nullptr))) moveSelected(-1);
     x += 33;
+    hint({x, y, 30, 26}, "Move the selected node down (drawn later, in front)");
     if (GuiButton({x, y, 30, 26}, GuiIconText(ICON_ARROW_DOWN_FILL, nullptr))) moveSelected(1);
 
     Rectangle area{r.x, y + 32, r.width, r.y + r.height - (y + 32)};
@@ -1036,8 +1216,9 @@ void Editor::drawSceneDock(Rectangle r) {
         }
         drawNodeIcon(n, ix + 18, row.y + (kRowH - 16) / 2);
         // Nodes that come from an instanced scene are drawn in a softer colour.
-        drawText(n->name + (n->instanceMissing ? "  (missing scene)" : ""), ix + 40, row.y + 4,
-                 n->instanceMissing ? kBad : n->inInstance ? theme().colors.instancedText : kText);
+        float iconsW = (!n->sceneFile.empty() ? 50.0f : !n->scriptName.empty() ? 28.0f : 4.0f);
+        drawFit(n->name + (n->instanceMissing ? "  (missing scene)" : ""), ix + 40, row.y + 4,
+                row.x + row.width - iconsW - (ix + 40), n->instanceMissing ? kBad : n->inInstance ? theme().colors.instancedText : kText);
         if (!n->sceneFile.empty()) {  // instanced scene: a scene icon at the right
             GuiDrawIcon(ICON_LAYERS, static_cast<int>(row.x + row.width - 46), static_cast<int>(row.y + 4), 1,
                         n->instanceMissing ? kBad : kAccent);
@@ -1094,13 +1275,15 @@ void Editor::rescanFiles() {
     };
     scanProject("assets", FileEntry::Texture, isImageFile);
     scanProject("scenes", FileEntry::Scene, [](const fs::path& p) { return p.extension() == ".json"; });
+    scanProject("shaders", FileEntry::Shader, [](const fs::path& p) { return p.extension() == ".shader"; });
 
     std::vector<FileEntry> scripts;
     static const std::regex registerRe(R"(REGISTER_SCRIPT\s*\(\s*(\w+)\s*\))");
     if (fs::is_directory(scriptsDir_, ec)) {
         for (auto it = fs::directory_iterator(scriptsDir_, ec); !ec && it != fs::directory_iterator();
              it.increment(ec)) {
-            if (!it->is_regular_file(ec) || it->path().extension() != ".cpp") continue;
+            auto ext = it->path().extension();
+            if (!it->is_regular_file(ec) || (ext != ".cpp" && ext != ".hpp" && ext != ".h")) continue;
             std::ifstream in(it->path());
             std::stringstream ss;
             ss << in.rdbuf();
@@ -1128,6 +1311,7 @@ void Editor::rescanFiles() {
 
 void Editor::drawFileSystem(Rectangle r) {
     drawHeader(r, "FileSystem");
+    hint({r.x + r.width - 34, r.y + 2, 28, 24}, "Look for new or changed files in the project folder");
     if (GuiButton({r.x + r.width - 34, r.y + 2, 28, 24}, GuiIconText(ICON_ROTATE_FILL, nullptr))) rescanFiles();
 
     struct Row {
@@ -1140,9 +1324,10 @@ void Editor::drawFileSystem(Rectangle r) {
     for (size_t i = 0; i < files_.size(); ++i) {
         if (files_[i].kind != lastKind) {
             lastKind = files_[i].kind;
-            const char* title = lastKind == FileEntry::Texture ? "res://assets"
-                                : lastKind == FileEntry::Scene ? "res://scenes"
-                                                               : "res://scripts (C++)";
+            const char* title = lastKind == FileEntry::Texture  ? "res://assets"
+                                : lastKind == FileEntry::Scene  ? "res://scenes"
+                                : lastKind == FileEntry::Shader ? "res://shaders"
+                                                                : "res://scripts (C++)";
             rows.push_back({true, title, 0});
         }
         rows.push_back({false, files_[i].label, i});
@@ -1179,8 +1364,10 @@ void Editor::drawFileSystem(Rectangle r) {
                                {0, 0}, 0, WHITE);
             }
         } else {
-            int icon = f.kind == FileEntry::Scene ? ICON_LAYERS : ICON_FILETYPE_TEXT;
-            Color c = f.kind == FileEntry::Scene ? kAccent
+            int icon = f.kind == FileEntry::Scene ? ICON_LAYERS : f.kind == FileEntry::Shader ? ICON_FX : ICON_FILETYPE_TEXT;
+            bool header = f.kind == FileEntry::Script && fs::path(f.path).extension() != ".cpp";
+            Color c = f.kind == FileEntry::Scene || f.kind == FileEntry::Shader ? kAccent
+                      : header                    ? kText  // a base class or helpers: nothing to load
                       : ScriptRegistry::has(f.scriptClass) ? kGood
                                                            : kOrange;
             GuiDrawIcon(icon, static_cast<int>(ix), static_cast<int>(row.y + 4), 1, c);
@@ -1188,7 +1375,8 @@ void Editor::drawFileSystem(Rectangle r) {
         std::string label = f.label;
         if (f.kind == FileEntry::Script && !f.scriptClass.empty() && !ScriptRegistry::has(f.scriptClass))
             label += ScriptReloader::supported() ? "  (not loaded)" : "  (rebuild)";
-        drawText(label, ix + 26, row.y + 4, f.kind == FileEntry::Scene && f.path == scenePath_ ? kAccent : kText);
+        drawFit(label, ix + 26, row.y + 4, row.x + row.width - ix - 30,
+                f.kind == FileEntry::Scene && f.path == scenePath_ ? kAccent : kText);
 
         if (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
             drag_ = DragState{DragKind::File, nullptr, rows[i].file, mouse, false};
@@ -1211,8 +1399,19 @@ void Editor::activateFile(size_t index) {
             }
             break;
         case FileEntry::Scene: requestOpenScene(f.path); break;
+        case FileEntry::Shader:
+            if (auto* n2d = takesShader(selected_)) {
+                touch();
+                n2d->shader = f.path;
+                log("Set " + n2d->name + ".shader = " + f.path);
+            } else {
+                openInCodeEditor(projectDir_ / f.path);  // nothing selected that can use it: open it
+            }
+            break;
         case FileEntry::Script:
-            if (f.scriptClass.empty()) {
+            if (fs::path(f.path).extension() != ".cpp") {
+                openInCodeEditor(f.path);  // a header (a base class...): nothing to attach, so open it
+            } else if (f.scriptClass.empty()) {
                 log(f.label + " has no REGISTER_SCRIPT(...) line, so it can't be attached.", kBad);
             } else if (selected_) {
                 touch();
@@ -1532,8 +1731,15 @@ void Editor::drawViewport(Rectangle r) {
     std::snprintf(info, sizeof info, "Zoom %d%%   Mouse %.0f, %.0f", static_cast<int>(viewCam_.zoom * 100 + 0.5f),
                   world.x, world.y);
     drawText(info, r.x + 10, r.y + 8, kDim);
-    drawText("Drag: move  Handle: rotate (Shift snaps)  Ctrl: grid snap  Wheel: zoom  Right/Middle drag: pan  Home: show all",
-             r.x + 10, r.y + r.height - 24, Fade(kDim, 0.8f));
+    // The controls, as many as fit
+    std::string controls;
+    for (const char* c : {"Drag: move", "Handle: rotate (Shift snaps)", "Ctrl: grid snap", "Wheel: zoom",
+                          "Right/Middle drag: pan", "Home: show all"}) {
+        std::string more = controls.empty() ? c : controls + "  " + c;
+        if (textWidth(more) > r.width - 20) break;
+        controls = more;
+    }
+    drawText(controls, r.x + 10, r.y + r.height - 24, Fade(kDim, 0.8f));
     EndScissorMode();
     DrawRectangleLinesEx(r, 1, kBorder);
 }
@@ -1676,14 +1882,15 @@ void Editor::propertyRow(Property& p, float x, float& y, float width, const std:
     const float labelW = 112;
     float fx = x + labelW, fw = width - labelW;
     std::string id = std::to_string(reinterpret_cast<uintptr_t>(selected_)) + "/" + idPrefix + p.name;
-    std::string label = p.name;
+    std::string label = p.name.substr(p.name.rfind('/') + 1);  // ("shader_params/speed" shows as "speed")
     std::replace(label.begin(), label.end(), '_', ' ');
 
     // Changed from the original scene (this node is part of an instance)? Show it, with a revert button.
     if (inspectorOriginal_.is_object() && inspectorOriginal_.contains(p.name) && inspectorCurrent_.contains(p.name) &&
         inspectorOriginal_[p.name] != inspectorCurrent_[p.name]) {
         DrawRectangleRec({x - 6, y + 4, 3, 16}, kOrange);
-        drawText(label, x, y + 4, kOrange);
+        drawFit(label, x, y + 4, labelW - 30, kOrange);
+        hint({x + labelW - 26, y + 2, 22, 20}, "Back to the value in the original scene");
         if (GuiButton({x + labelW - 26, y + 2, 22, 20}, GuiIconText(ICON_UNDO, nullptr))) {
             touch();
             nlohmann::json one;
@@ -1691,7 +1898,7 @@ void Editor::propertyRow(Property& p, float x, float& y, float width, const std:
             applyPropertyList({p}, one);
         }
     } else {
-        drawText(label, x, y + 4, kDim);
+        drawFit(label, x, y + 4, labelW - 6, kDim);  // a long name is cut short (all of it shows on hover)
     }
 
     switch (p.kind) {
@@ -1782,6 +1989,40 @@ void Editor::propertyRow(Property& p, float x, float& y, float width, const std:
                     storeScriptVars();  // (if this is a script variable, keep it before the next frame)
                 });
             }
+            hint({fx + fw - 24, y, 24, 24}, "Clear it");
+            if (GuiButton({fx + fw - 24, y, 24, 24}, GuiIconText(ICON_CROSS_SMALL, nullptr)) && !path->empty()) {
+                touch();
+                path->clear();
+            }
+            break;
+        }
+        case PropKind::Shader: {
+            auto* path = static_cast<std::string*>(p.ptr);
+            float bw = fw - (path->empty() ? 28 : 56);
+            hint({fx, y, bw, 24}, "The shader that draws this node: pick one, or make a new one");
+            std::string shown = path->empty() ? "<none>" : fs::path(*path).filename().string();  // (they're all in shaders/)
+            if (GuiButton({fx, y, bw, 24}, fitText(shown, bw - 12).c_str())) {
+                std::vector<std::string> items{"<none>"};
+                for (auto& f : files_)
+                    if (f.kind == FileEntry::Shader) items.push_back(f.path);
+                items.push_back("New Shader...");
+                Node* target = selected_;
+                openPopup({fx, y + 26}, items, [this, items, target, path](int i) {
+                    if (selected_ != target) return;
+                    if (i == static_cast<int>(items.size()) - 1) {
+                        newShader(takesShader(target));
+                        return;
+                    }
+                    touch();
+                    *path = i == 0 ? "" : items[i];
+                });
+            }
+            if (!path->empty()) {
+                hint({fx + fw - 52, y, 24, 24}, "Edit the shader (Script tab)");
+                if (GuiButton({fx + fw - 52, y, 24, 24}, GuiIconText(ICON_PENCIL, nullptr)))
+                    openInCodeEditor(projectDir_ / *path);
+            }
+            hint({fx + fw - 24, y, 24, 24}, "No shader");
             if (GuiButton({fx + fw - 24, y, 24, 24}, GuiIconText(ICON_CROSS_SMALL, nullptr)) && !path->empty()) {
                 touch();
                 path->clear();
@@ -1802,6 +2043,7 @@ void Editor::propertyRow(Property& p, float x, float& y, float width, const std:
                     storeScriptVars();  // (if this is a script variable, keep it before the next frame)
                 });
             }
+            hint({fx + fw - 24, y, 24, 24}, "Clear it");
             if (GuiButton({fx + fw - 24, y, 24, 24}, GuiIconText(ICON_CROSS_SMALL, nullptr)) && !path->empty()) {
                 touch();
                 path->clear();
@@ -1857,6 +2099,7 @@ void Editor::animationsEditor(std::vector<SpriteAnimation>& list, const std::str
             touch();
             a.loop = loop;
         }
+        hint({x + width - 24, y, 24, 24}, "Delete this animation");
         if (GuiButton({x + width - 24, y, 24, 24}, GuiIconText(ICON_BIN, nullptr))) remove = static_cast<int>(i);
         y += 28;
         drawText("frames", x, y + 4, kDim);
@@ -2006,8 +2249,10 @@ void Editor::drawInspector(Rectangle r) {
     Color statusColor = selected_->scriptName.empty() ? kDim
                         : ScriptRegistry::has(selected_->scriptName) ? kGood
                                                                      : kOrange;
-    drawText(status, x, y + 4, statusColor);
-    if (fs::path file = scriptFileOf(selected_->scriptName); !file.empty()) {
+    fs::path scriptFile = scriptFileOf(selected_->scriptName);
+    drawFit(status, x, y + 4, w - (scriptFile.empty() ? 0 : 84), statusColor);
+    if (fs::path file = scriptFile; !file.empty()) {
+        hint({x + w - 76, y, 76, 24}, "Open the script in the Script tab (or your code editor)");
         if (GuiButton({x + w - 76, y, 76, 24}, GuiIconText(ICON_PENCIL, "Edit"))) openInCodeEditor(file);
     }
     if (!selected_->scriptName.empty() && !ScriptRegistry::has(selected_->scriptName)) {
@@ -2017,6 +2262,7 @@ void Editor::drawInspector(Rectangle r) {
     }
     y += 30;
     float bw = (w - 8) / 3;
+    hint({x, y, bw, 26}, "Attach a script that already exists to this node");
     if (GuiButton({x, y, bw, 26}, GuiIconText(ICON_LINK_BOXES, "Attach"))) {
         std::vector<std::string> names = ScriptRegistry::names();
         if (names.empty()) {
@@ -2031,10 +2277,11 @@ void Editor::drawInspector(Rectangle r) {
             });
         }
     }
+    hint({x + bw + 4, y, bw, 26}, "Make a new script file and attach it to this node");
     if (GuiButton({x + bw + 4, y, bw, 26}, GuiIconText(ICON_FILE_ADD, "New"))) {
-        openTextDialog("New C++ Script", "Class name (e.g. PlayerController):",
-                       pascalCase(selected_->name) + "Script", [this](const std::string& n) { createScript(n); });
+        openNewScriptDialog(true, pascalCase(selected_->name) + "Script");
     }
+    hint({x + 2 * (bw + 4), y, bw, 26}, "Take the script off this node (the file stays)");
     if (GuiButton({x + 2 * (bw + 4), y, bw, 26}, GuiIconText(ICON_CROSS, "Detach")) && !selected_->scriptName.empty()) {
         touch();
         selected_->scriptName.clear();
@@ -2075,13 +2322,16 @@ void Editor::drawInspector(Rectangle r) {
                 !selected_->instanceMissing)
                 requestOpenScene(selected_->sceneFile);
             y += 30;
+            hint({x, y, hw, 26}, "Undo every change made to this copy, back to the original scene");
             if (GuiButton({x, y, hw, 26}, GuiIconText(ICON_UNDO, "Reset Copy")) && !selected_->instanceMissing)
                 resetInstance(selected_);
+            hint({x + hw + 4, y, hw, 26}, "Turn this copy into ordinary nodes of this scene (no longer linked)");
             if (GuiButton({x + hw + 4, y, hw, 26}, GuiIconText(ICON_LINK_BOXES, "Make Local"))) makeLocal(selected_);
         } else {
             drawText("Move this node and its children", x, y + 4, kDim);
             drawText("into their own scene file:", x, y + 24, kDim);
             y += 48;
+            hint({x, y, w, 26}, "Save this node and its children as their own scene file, to reuse anywhere");
             if (GuiButton({x, y, w, 26}, GuiIconText(ICON_FILE_SAVE, "Save Branch as Scene"))) {
                 Node* target = selected_;
                 openTextDialog("Save Branch as Scene", "New scene file (inside the project):",
@@ -2109,7 +2359,9 @@ void Editor::log(const std::string& message, Color color) {
             for (size_t p; (p = line.find(curly)) != std::string::npos;) line.replace(p, 3, "'");
         for (const char* curly : {"\xE2\x80\x9C", "\xE2\x80\x9D"})
             for (size_t p; (p = line.find(curly)) != std::string::npos;) line.replace(p, 3, "\"");
-        LogLine entry{line, color, {}, 0, 0};
+        LogLine entry;
+        entry.text = line;
+        entry.color = color;
         if (auto m = parseCompilerLine(line)) {
             // Compiler messages can be clicked to open the file at that line.
             std::error_code ec;
@@ -2149,11 +2401,22 @@ void Editor::drawOutput(Rectangle r) {
         drawAnimationPanel({r.x, r.y + kHeaderH, r.width, r.height - kHeaderH}, *sprite);
         return;
     }
+    hint({r.x + r.width - 64, r.y + 2, 58, 24}, "Clear the Output panel");
     if (GuiButton({r.x + r.width - 64, r.y + 2, 58, 24}, "Clear")) logLines_.clear();
 
     Rectangle area{r.x, r.y + kHeaderH, r.width, r.height - kHeaderH};
     const float lineH = 20;
-    Rectangle content{0, 0, area.width - 16, logLines_.size() * lineH + 8};
+    // Long lines wrap to the panel's width (kept until the width changes)
+    float textW = std::max(40.0f, area.width - 16 - 16);
+    size_t rows = 0;
+    for (LogLine& l : logLines_) {
+        if (l.rowsWidth != textW) {
+            l.rows = wrapText(l.text, textW);
+            l.rowsWidth = textW;
+        }
+        rows += l.rows.size();
+    }
+    Rectangle content{0, 0, area.width - 16, rows * lineH + 8};
     if (scrollLogToBottom_) {
         outputScroll_.y = std::min(0.0f, -(content.height - (area.height - 2)));
         scrollLogToBottom_ = false;
@@ -2161,19 +2424,23 @@ void Editor::drawOutput(Rectangle r) {
     Rectangle view{};
     GuiScrollPanel(area, nullptr, content, &outputScroll_, &view);
     beginClip(view);
-    for (size_t i = 0; i < logLines_.size(); ++i) {
-        float y = view.y + outputScroll_.y + 4 + i * lineH;
-        if (y + lineH < view.y || y > view.y + view.height) continue;
-        drawText(logLines_[i].text, view.x + 8, y, logLines_[i].color);
-        const LogLine& l = logLines_[i];
-        if (!l.file.empty() && !GuiIsLocked() && mouseIn(view) && mouseIn({view.x, y, view.width, lineH})) {
-            DrawLineEx({view.x + 8, y + 17}, {view.x + 8 + textWidth(l.text), y + 17}, 1, l.color);
-            mouseCursor_ = MOUSE_CURSOR_POINTING_HAND;
-            if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
-                if (codeEditor_.builtin) openDocument(l.file, l.line, l.column);
-                else openInCodeEditor(l.file);
+    float y = view.y + outputScroll_.y + 4;
+    for (const LogLine& l : logLines_) {
+        float h = l.rows.size() * lineH;
+        if (y + h >= view.y && y <= view.y + view.height) {
+            for (size_t k = 0; k < l.rows.size(); ++k) drawText(l.rows[k], view.x + 8, y + k * lineH, l.color);
+            if (!l.file.empty() && !GuiIsLocked() && mouseIn(view) && mouseIn({view.x, y, view.width, h})) {
+                for (size_t k = 0; k < l.rows.size(); ++k)
+                    DrawLineEx({view.x + 8, y + k * lineH + 17}, {view.x + 8 + textWidth(l.rows[k]), y + k * lineH + 17}, 1,
+                               l.color);
+                mouseCursor_ = MOUSE_CURSOR_POINTING_HAND;
+                if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                    if (codeEditor_.builtin) openDocument(l.file, l.line, l.column);
+                    else openInCodeEditor(l.file);
+                }
             }
         }
+        y += h;
     }
     EndScissorMode();
 }
@@ -2236,6 +2503,7 @@ void Editor::drawAnimationPanel(Rectangle r, AnimatedSprite2D& sprite) {
     // --- Left: the animations ---------------------------------------------
     const float leftW = 240;
     float x = r.x + 8, y = r.y + 6, w = leftW - 16;
+    hint({x, y, (w - 4) / 2, 26}, "Make a new animation");
     if (GuiButton({x, y, (w - 4) / 2, 26}, GuiIconText(ICON_CIRCLE_ADD, "New"))) {
         touch();
         SpriteAnimation a;
@@ -2251,6 +2519,7 @@ void Editor::drawAnimationPanel(Rectangle r, AnimatedSprite2D& sprite) {
         changed = true;
     }
     if (!anim) GuiDisable();
+    hint({x + (w + 4) / 2, y, (w - 4) / 2, 26}, "Delete the selected animation");
     if (GuiButton({x + (w + 4) / 2, y, (w - 4) / 2, 26}, GuiIconText(ICON_BIN, "Delete")) && anim) {
         touch();
         anims.erase(anims.begin() + animSel_);
@@ -2300,7 +2569,7 @@ void Editor::drawAnimationPanel(Rectangle r, AnimatedSprite2D& sprite) {
         if (static_cast<int>(i) == animSel_) DrawRectangleRec(row, kSelect);
         else if (hover) DrawRectangleRec(row, kHover);
         bool startsWith = sprite.autoplay && sprite.animation == anims[i].name;
-        drawText(anims[i].name, row.x + 8, row.y + 4, kText);
+        drawFit(anims[i].name, row.x + 8, row.y + 4, row.width - 16 - (startsWith ? textWidth("(start)") + 8 : 0), kText);
         if (startsWith) drawText("(start)", row.x + row.width - textWidth("(start)") - 8, row.y + 4, kGood);
         if (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
             animSel_ = static_cast<int>(i);
@@ -2330,12 +2599,14 @@ void Editor::drawAnimationPanel(Rectangle r, AnimatedSprite2D& sprite) {
     // --- Middle: toolbar and filmstrip ---------------------------------------
     float mx = r.x + leftW + 10, mw = preview.x - 10 - mx, my = r.y + 6;
     if (!anim) GuiDisable();
+    hint({mx, my, 84, 26}, "Play or stop the animation preview");
     if (GuiButton({mx, my, 84, 26}, GuiIconText(animPreview_ ? ICON_PLAYER_STOP : ICON_PLAYER_PLAY,
                                                  animPreview_ ? "Stop" : "Play"))) {
         animPreview_ = !animPreview_;
         animPreviewStart_ = GetTime();
     }
     float bx = mx + 88;
+    hint({bx, my, 190, 26}, "Pick frames for this animation from the sprite sheet");
     if (GuiButton({bx, my, 190, 26}, GuiIconText(ICON_BOX_GRID, "Add Frames from Sheet")) && anim) {
         if (!tex) {
             log("Pick a sprite sheet as the node's texture first (in the inspector).", kOrange);
@@ -2357,8 +2628,11 @@ void Editor::drawAnimationPanel(Rectangle r, AnimatedSprite2D& sprite) {
         anim->frames = SpriteAnimation::framesText(frames);
         changed = true;
     };
+    hint({bx, my, 30, 26}, "Move the selected frame earlier");
     if (GuiButton({bx, my, 30, 26}, GuiIconText(ICON_ARROW_LEFT_FILL, nullptr))) moveFrame(frameSel_ - 1);
+    hint({bx + 33, my, 30, 26}, "Move the selected frame later");
     if (GuiButton({bx + 33, my, 30, 26}, GuiIconText(ICON_ARROW_RIGHT_FILL, nullptr))) moveFrame(frameSel_ + 1);
+    hint({bx + 66, my, 30, 26}, "Remove the selected frame");
     if (GuiButton({bx + 66, my, 30, 26}, GuiIconText(ICON_BIN, nullptr)) && haveFrame) {
         touch();
         frames.erase(frames.begin() + frameSel_);
@@ -2369,6 +2643,7 @@ void Editor::drawAnimationPanel(Rectangle r, AnimatedSprite2D& sprite) {
     if (!haveFrame) GuiEnable();
     bx += 104;
     bool isStart = anim && sprite.autoplay && sprite.animation == anim->name;
+    hint({bx, my, 120, 26}, "Make this the animation that plays when the game starts");
     if (GuiButton({bx, my, 120, 26}, GuiIconText(ICON_PLAYER_PLAY, isStart ? "Plays first" : "Play at start")) &&
         anim && !isStart) {
         touch();
@@ -2439,7 +2714,7 @@ void Editor::drawSheetDialog() {
     }
     if (GuiButton({x + 404, y, 70, 26}, "Clear")) sheet_.picked.clear();
     y += 36;
-    drawText("Click frames in the order they should play (click again to unpick).", x, y, kDim);
+    drawFit("Click frames in the order they should play (click again to unpick).", x, y, w, kDim);
     y += 24;
 
     // The sheet with its grid; picked frames show their order.
@@ -2496,6 +2771,39 @@ void Editor::drawSheetDialog() {
 // ===========================================================================
 void Editor::openPopup(Vector2 at, std::vector<std::string> items, std::function<void(int)> onPick) {
     popup_ = Popup{true, at, std::move(items), std::move(onPick), true};
+}
+
+void Editor::hint(Rectangle r, const std::string& text) {
+    if (!GuiIsLocked() && mouseIn(r)) hintText_ = text;
+}
+
+void Editor::drawFit(const std::string& text, float x, float y, float maxWidth, Color c, bool fromLeft) {
+    std::string shown = fitText(text, maxWidth, fromLeft);
+    drawText(shown, x, y, c);
+    if (shown != text) hint({x, y - 2, textWidth(shown), 20}, text);
+}
+
+void Editor::drawHint() {
+    std::string text = std::move(hintText_);
+    hintText_.clear();
+    if (text != shownHint_) {
+        shownHint_ = text;
+        hintSince_ = GetTime();
+    }
+    if (text.empty() || popup_.open || GetTime() - hintSince_ < 0.4) return;
+    float sw = screenW(), sh = screenH();
+    // Long hints wrap at about half the window's width
+    std::vector<std::string> lines = wrapText(text, std::min(520.0f, sw / 2));
+    float w = 0;
+    for (auto& l : lines) w = std::max(w, textWidth(l));
+    float lh = 20, bw = w + 16, bh = lines.size() * lh + 8;
+    Vector2 m = GetMousePosition();
+    float bx = std::clamp(m.x + 12, 4.0f, std::max(4.0f, sw - bw - 4));
+    float by = m.y + 22;
+    if (by + bh > sh - 4) by = m.y - bh - 6;
+    DrawRectangleRec({bx, by, bw, bh}, kPanel);
+    DrawRectangleLinesEx({bx, by, bw, bh}, 1, kBorder);
+    for (size_t i = 0; i < lines.size(); ++i) drawText(lines[i], bx + 8, by + 4 + i * lh, kText);
 }
 
 void Editor::drawPopup() {
@@ -2577,11 +2885,18 @@ void Editor::fileMenu(size_t index, Vector2 at) {
             if (!external.empty()) add(external, [this, full] { openInCodeEditor(full); });
             if (selected_ && !f.scriptClass.empty())
                 add("Attach to " + selected_->name, [this, index] { activateFile(index); });
+            if (!f.scriptClass.empty())
+                add("Add as Autoload...", [this, cls = f.scriptClass] { openAutoloadsDialog(cls, ""); });
             break;
         case FileEntry::Scene:
             add("Open Scene", [this, path = f.path] { requestOpenScene(path); });
+            add("Add as Autoload...", [this, path = f.path] { openAutoloadsDialog("", path); });
             add("Edit JSON in Script Tab", [this, full] { openDocument(full); });
             if (!external.empty()) add(external + " (JSON)", [this, full] { openInCodeEditor(full); });
+            break;
+        case FileEntry::Shader:
+            add("Edit in Script Tab", [this, full] { openDocument(full); });
+            if (takesShader(selected_)) add("Use on " + selected_->name, [this, index] { activateFile(index); });
             break;
         case FileEntry::Texture:
             add("Open in Image Viewer", [this, full] {
@@ -2593,7 +2908,233 @@ void Editor::fileMenu(size_t index, Vector2 at) {
         if (!platform::showInFileManager(full)) log("Couldn't open the folder of " + full.string(), kBad);
     });
     if (f.kind != FileEntry::Texture) add("Choose Code Editor...", [this] { openCodeEditorDialog(); });
+    if (!playTree_) add("Delete...", [this, index] { deleteFile(index); });
     openPopup(at, items, [actions](int i) { actions[i](); });
+}
+
+void Editor::openAutoloadsDialog(const std::string& script, const std::string& scene) {
+    activeField_.clear();
+    autoloadsDialog_ = AutoloadsDialog{};
+    autoloadsDialog_.open = true;
+    autoloadsDialog_.script = script;
+    autoloadsDialog_.scene = scene;
+    // A name to start from: the script's, or the scene file's in PascalCase
+    std::string name = !script.empty() ? script : !scene.empty() ? pascalCase(fs::path(scene).stem().stem().string()) : "";
+    std::snprintf(autoloadsDialog_.name, sizeof autoloadsDialog_.name, "%s", name.c_str());
+    autoloadsDialog_.nameEdit = !name.empty();
+    if (autoloadsDialog_.nameEdit) moveTextCursorToEnd();
+}
+
+void Editor::drawAutoloadsDialog() {
+    AutoloadsDialog& d = autoloadsDialog_;
+    float sw = screenW(), sh = screenH();
+    DrawRectangle(0, 0, static_cast<int>(sw), static_cast<int>(sh), Fade(BLACK, 0.5f));
+    float w = std::min(660.0f, sw - 20), h = std::min(520.0f, sh - 20);
+    Rectangle box{std::floor(sw / 2 - w / 2), std::floor(sh / 2 - h / 2), w, h};
+    bool close = GuiWindowBox(box, "Autoloads") != 0;
+    float x = box.x + 14, y = box.y + 38, iw = box.width - 28;
+    y += drawWrapped("Nodes made when the game starts and kept until it stops, whatever scene is on: for the score, "
+                     "the inventory, music, saving... In a script: autoload<GameState>(\"GameState\"). They're made in "
+                     "this order, before the main scene.",
+                     x, y, iw, kDim) +
+         8;
+
+    // The list
+    auto& list = settings_.autoloads;
+    Rectangle area{x, y, iw, std::max(80.0f, box.y + box.height - 170 - y)};
+    Rectangle content{0, 0, area.width - 16, std::max(1.0f, list.size() * 30.0f + 4)};
+    Rectangle view{};
+    GuiScrollPanel(area, nullptr, content, &d.scroll, &view);
+    beginClip(view);
+    int moveUp = -1, moveDown = -1, remove = -1;
+    for (size_t i = 0; i < list.size(); ++i) {
+        float ry = view.y + d.scroll.y + 2 + i * 30;
+        const Autoload& a = list[i];
+        bool loaded = !a.script.empty() ? ScriptRegistry::has(a.script) : fs::exists(projectDir_ / a.scene);
+        drawText(std::to_string(i + 1) + ".", view.x + 8, ry + 5, kDim);
+        drawFit(a.name, view.x + 32, ry + 5, 170, kText);
+        std::string what = !a.script.empty() ? "script " + a.script + (loaded ? "" : "  (not loaded)")
+                                             : "scene " + a.scene + (loaded ? "" : "  (missing)");
+        drawFit(what, view.x + 210, ry + 5, view.width - 210 - 104, loaded ? kDim : kOrange, true);
+        float bx = view.x + view.width - 98;
+        hint({bx, ry, 30, 24}, "Earlier: made (and ready) before the ones below it");
+        if (GuiButton({bx, ry, 30, 24}, GuiIconText(ICON_ARROW_UP_FILL, nullptr))) moveUp = static_cast<int>(i);
+        hint({bx + 33, ry, 30, 24}, "Later");
+        if (GuiButton({bx + 33, ry, 30, 24}, GuiIconText(ICON_ARROW_DOWN_FILL, nullptr))) moveDown = static_cast<int>(i);
+        hint({bx + 66, ry, 30, 24}, "Remove this autoload (its file stays)");
+        if (GuiButton({bx + 66, ry, 30, 24}, GuiIconText(ICON_CROSS_SMALL, nullptr))) remove = static_cast<int>(i);
+    }
+    EndScissorMode();
+    if (list.empty()) drawText("None yet: add one below.", area.x + 10, area.y + 10, kDim);
+    bool changed = false;
+    if (moveUp > 0) {
+        std::swap(list[moveUp], list[moveUp - 1]);
+        changed = true;
+    }
+    if (moveDown >= 0 && moveDown + 1 < static_cast<int>(list.size())) {
+        std::swap(list[moveDown], list[moveDown + 1]);
+        changed = true;
+    }
+    if (remove >= 0) {
+        log("Removed autoload " + list[remove].name, kAccent);
+        list.erase(list.begin() + remove);
+        changed = true;
+    }
+    y = area.y + area.height + 12;
+
+    // Adding one: a script or a scene, and its name
+    drawText("Add", x, y + 5, kAccent);
+    std::string pick = !d.script.empty() ? "script " + d.script : !d.scene.empty() ? "scene " + d.scene : "Pick a script or scene...";
+    hint({x + 60, y, iw - 60, 26}, "A script (it goes on a plain node) or a scene file");
+    if (GuiButton({x + 60, y, iw - 60, 26}, fitText(pick, iw - 76, true).c_str())) {
+        std::vector<std::string> items;
+        std::vector<std::pair<std::string, std::string>> choices;  // (script, scene)
+        for (const std::string& n : ScriptRegistry::names()) {
+            items.push_back("script " + n);
+            choices.push_back({n, ""});
+        }
+        for (auto& f : files_)
+            if (f.kind == FileEntry::Scene) {
+                items.push_back("scene " + f.path);
+                choices.push_back({"", f.path});
+            }
+        if (items.empty()) {
+            d.error = "No scripts or scenes yet: make a script first (New Script).";
+        } else {
+            openPopup({x + 60, y + 28}, items, [this, choices](int i) {
+                autoloadsDialog_.script = choices[i].first;
+                autoloadsDialog_.scene = choices[i].second;
+                if (std::string(autoloadsDialog_.name).empty()) {
+                    std::string n = !choices[i].first.empty() ? choices[i].first
+                                                              : pascalCase(fs::path(choices[i].second).stem().stem().string());
+                    std::snprintf(autoloadsDialog_.name, sizeof autoloadsDialog_.name, "%s", n.c_str());
+                }
+            });
+        }
+    }
+    y += 34;
+    drawText("Name", x, y + 5, kDim);
+    if (GuiTextBox({x + 60, y, iw - 60 - 100, 26}, d.name, sizeof d.name, d.nameEdit)) d.nameEdit = !d.nameEdit;
+    static const std::regex identifier("[A-Za-z_][A-Za-z0-9_]*");
+    std::string name = d.name;
+    bool taken = std::any_of(list.begin(), list.end(), [&](const Autoload& a) { return a.name == name; });
+    bool ready = std::regex_match(name, identifier) && !taken && (!d.script.empty() || !d.scene.empty());
+    if (!ready) GuiDisable();
+    hint({x + iw - 96, y, 96, 26}, "Add it to the list (saved in project.json)");
+    bool add = GuiButton({x + iw - 96, y, 96, 26}, GuiIconText(ICON_CIRCLE_ADD, "Add"));
+    if (!ready) GuiEnable();
+    y += 34;
+    if (taken) d.error = "There's already an autoload called " + name + ".";
+    else if (!name.empty() && !std::regex_match(name, identifier)) d.error = "The name needs letters, digits and _ only.";
+    else if (d.error.rfind("There's already", 0) == 0 || d.error.rfind("The name needs", 0) == 0) d.error.clear();
+    if (add && ready) {
+        list.push_back({name, d.script, d.scene});
+        log("Added autoload " + name + " (" + (!d.script.empty() ? "script " + d.script : "scene " + d.scene) + ")",
+            kGood);
+        d.script.clear();
+        d.scene.clear();
+        d.name[0] = '\0';
+        d.error.clear();
+        changed = true;
+    }
+    if (!d.error.empty()) drawWrapped(d.error, x, y, iw - 110, kOrange);
+    if (changed && !settings_.save(projectDir_)) log("Couldn't save project.json.", kBad);
+
+    if (GuiButton({box.x + box.width - 104, box.y + box.height - 42, 90, 30}, "Close") ||
+        (!d.nameEdit && IsKeyPressed(KEY_ESCAPE)))
+        close = true;
+    if (close) d.open = false;
+}
+
+void Editor::newShader(Node2D* forNode) {
+    std::string suggested = snakeCase(forNode ? pascalCase(forNode->name) : std::string("NewShader")) + ".shader";
+    Node* target = forNode;
+    openTextDialog("New Shader", "File name (in shaders/):", suggested, [this, target](const std::string& typed) {
+        std::string name = typed;
+        if (name.empty()) return;
+        if (fs::path(name).extension() != ".shader") name += ".shader";
+        fs::path file = projectDir_ / "shaders" / fs::path(name).filename();
+        std::error_code ec;
+        if (fs::exists(file, ec)) {
+            log(file.filename().string() + " already exists in shaders/.", kBad);
+            return;
+        }
+        fs::create_directories(file.parent_path(), ec);
+        std::ofstream(file) << Shaders::templateText();
+        std::string rel = "shaders/" + file.filename().string();
+        if (Node2D* n = takesShader(target); n && n == takesShader(selected_)) {
+            touch();
+            n->shader = rel;
+        }
+        rescanFiles();
+        log("Created " + rel + ". Change it and save: the node updates straight away.", kGood);
+        openInCodeEditor(file);
+    });
+}
+
+void Editor::checkShader(TextDocument& doc) {
+    if (doc.language != Language::Shader) return;
+    std::error_code ec;
+    std::string rel = fs::relative(doc.path, projectDir_, ec).generic_string();
+    doc.diagnostics.clear();
+    for (const ShaderProblem& p : Shaders::check(rel)) doc.diagnostics.push_back({p.line, p.column, true, p.message});
+    if (doc.diagnostics.empty()) log("Shader " + rel + " compiles.", kGood);
+    else log("Shader " + rel + " has " + std::to_string(doc.diagnostics.size()) + " problem(s): see the Script tab.", kBad);
+}
+
+void Editor::askFirst(std::string title, std::string message, std::string yes, std::function<void()> onYes) {
+    activeField_.clear();
+    ask_ = AskDialog{true, std::move(title), std::move(message), std::move(yes), std::move(onYes)};
+}
+
+void Editor::deleteFile(size_t index) {
+    if (index >= files_.size() || playTree_) return;
+    const FileEntry f = files_[index];
+    fs::path full = f.kind == FileEntry::Script ? fs::path(f.path) : projectDir_ / f.path;
+#if defined(_WIN32)
+    const std::string trash = "Recycle Bin";
+#else
+    const std::string trash = "Trash";
+#endif
+    // What in this scene uses it, so the question can say so
+    int users = 0;
+    std::function<void(Node*)> count = [&](Node* n) {
+        if (!n) return;
+        if (f.kind == FileEntry::Script && !f.scriptClass.empty() && n->scriptName == f.scriptClass) ++users;
+        if (auto* sp = n->as<Sprite2D>(); f.kind == FileEntry::Texture && sp && sp->texture == f.path)
+            ++users;  // (AnimatedSprite2D is a Sprite2D too)
+        for (auto& c : n->children()) count(c.get());
+    };
+    count(editTree_.root());
+    std::string message = "Move " + full.filename().string() + " to the " + trash + "? You can get it back from there.";
+    if (users > 0)
+        message += " " + std::to_string(users) + (users == 1 ? " node" : " nodes") + " in this scene use" +
+                   (users == 1 ? "s" : "") + " it; they'll keep its name, but it won't be found.";
+    if (f.kind == FileEntry::Scene && f.path == scenePath_)
+        message += " It's the scene open now: it stays open here, so Save would make the file again.";
+    if (f.kind == FileEntry::Scene && f.path == settings_.mainScene)
+        message += " It's the game's main scene (set another in the Export window).";
+    askFirst("Delete File", message, "Delete", [this, full] {
+        // An open copy of it goes too (it's what's being deleted)
+        for (auto& d : docs_)
+            if (std::error_code ec; fs::equivalent(d->path, full, ec)) {
+                closeDocument(d.get(), true);
+                break;
+            }
+        std::string error;
+        if (!platform::moveToTrash(full, error)) {
+            log("Couldn't delete " + full.string() + ": " + error, kBad);
+            return;
+        }
+        log("Deleted " + full.filename().string() + " (it's in the " +
+#if defined(_WIN32)
+                std::string("Recycle Bin)"),
+#else
+                std::string("Trash)"),
+#endif
+            kAccent);
+        rescanFiles();
+    });
 }
 
 void Editor::openCodeEditorDialog() {
@@ -2615,7 +3156,7 @@ void Editor::drawCodeEditorDialog() {
     float sw = screenW(), sh = screenH();
     DrawRectangle(0, 0, static_cast<int>(sw), static_cast<int>(sh), Fade(BLACK, 0.5f));
     float listH = (editors.size() + 1) * kRowH + 8;
-    float w = 560, h = 96 + listH + 96;
+    float w = std::min(560.0f, sw - 20), h = 96 + listH + 96;
     Rectangle box{std::floor(sw / 2 - w / 2), std::floor(std::max(8.0f, sh / 2 - h / 2)), w, h};
     bool cancel = GuiWindowBox(box, "Code Editor") != 0;
     float x = box.x + 14, y = box.y + 36, iw = box.width - 28;
@@ -2639,7 +3180,12 @@ void Editor::drawCodeEditorDialog() {
                            : editors[i].builtin         ? "the Script tab, inside Sprout"
                            : editors[i].command.empty() ? "whatever the system opens the file with"
                                                         : editors[i].command;
-        if (!hint.empty()) drawText(hint, row.x + row.width - textWidth(hint) - 8, row.y + 4, kDim);
+        if (!hint.empty()) {
+            // Right-aligned, in the room the name leaves
+            float room = row.width - 28 - textWidth(label) - 24;
+            std::string shown = fitText(hint, room);
+            if (room > 30) drawFit(hint, row.x + row.width - textWidth(shown) - 8, row.y + 4, room, kDim);
+        }
         if (mouseIn(row) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !GuiIsLocked()) {
             d.selected = static_cast<int>(i);
             if (!isCustom) std::snprintf(d.command, sizeof d.command, "%s", editors[i].command.c_str());
@@ -2656,9 +3202,9 @@ void Editor::drawCodeEditorDialog() {
     // Typing a command of your own makes it a custom one.
     if (before != d.command) d.selected = static_cast<int>(editors.size());
     y += 34;
-    drawText("{file} = the file, {project} = the project folder.", x, y, kDim);
+    drawFit("{file} = the file, {project} = the project folder.", x, y, iw, kDim);
     y += 20;
-    drawText("Saved for you on this computer (all projects).", x, y, kDim);
+    drawFit("Saved for you on this computer (all projects).", x, y, iw, kDim);
 
     bool ok = (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER));
     if (GuiButton({box.x + box.width - 200, box.y + box.height - 42, 90, 30}, "OK")) ok = true;
@@ -2715,8 +3261,8 @@ TextDocument* Editor::openDocument(const fs::path& file, int line, int column) {
             fresh->completer = &completions_;
             if (!checker_)
                 checker_ = std::make_unique<ScriptChecker>(ScriptChecker::Setup{
-                    SPROUT_EDITOR_CLANGD, SPROUT_EDITOR_CXX, SPROUT_EDITOR_CXX_ID, scriptsDir_, workDir_,
-                    fs::path(SPROUT_EDITOR_DIR) / "src", SPROUT_EDITOR_DEPS_DIR});
+                    editorPaths().clangd, editorPaths().cxx, editorPaths().cxxId, scriptsDir_, workDir_,
+                    editorPaths().srcDir, editorPaths().depsDir});
         }
         doc = fresh.get();
         docs_.push_back(std::move(fresh));
@@ -2735,6 +3281,7 @@ void Editor::setDiagnostics(TextDocument& doc) const {
     std::error_code ec;
     for (const BuildMessage& m : buildMessages_)
         if (fs::equivalent(m.file, doc.path, ec)) doc.diagnostics.push_back(m.diagnostic);
+    for (Diagnostic& d : lintScript(doc.text())) doc.diagnostics.push_back(std::move(d));  // mistakes that compile
 }
 
 bool Editor::saveDocument(TextDocument& doc) {
@@ -2800,10 +3347,11 @@ bool Editor::saveDocument(TextDocument& doc) {
             else log("The scene in the 2D view has unsaved changes; saving it there will replace these edits.", kOrange);
         }
     }
+    if (doc.language == Language::Shader) checkShader(doc);  // its errors, on its lines
     return true;
 }
 
-void Editor::closeDocument(TextDocument* doc) {
+void Editor::closeDocument(TextDocument* doc, bool discard) {
     auto remove = [this, doc] {
         auto it = std::find_if(docs_.begin(), docs_.end(), [doc](auto& d) { return d.get() == doc; });
         if (it == docs_.end()) return;
@@ -2814,7 +3362,7 @@ void Editor::closeDocument(TextDocument* doc) {
         if (currentDoc_ == doc) currentDoc_ = docs_.empty() ? nullptr : docs_[std::min(index, docs_.size() - 1)].get();
         if (!currentDoc_) codeFocused_ = false;
     };
-    if (!doc->dirty()) {
+    if (!doc->dirty() || discard) {
         remove();
         return;
     }
@@ -2866,7 +3414,10 @@ void Editor::updateChecker() {
     for (auto& d : docs_) {
         ScriptChecker::Result r;
         if (d->language != Language::Cpp || !checker_->take(d->path, r) || r.version != d->version()) continue;
-        if (r.hasDiagnostics) d->diagnostics = std::move(r.diagnostics);
+        if (r.hasDiagnostics) {
+            d->diagnostics = std::move(r.diagnostics);
+            for (Diagnostic& lint : lintScript(d->text())) d->diagnostics.push_back(std::move(lint));  // mistakes that compile
+        }
         if (r.hasTokens) d->setSemanticSpans(r.version, std::move(r.tokens));
     }
 }
@@ -2997,15 +3548,19 @@ void Editor::drawFindBar(Rectangle r, TextDocument& doc) {
     }
     if (before != find_.find) doc.findNext(find_.find, false, find_.matchCase, true);  // as you type
     float bx = box.x + box.width + 6;
+    hint({bx, y, 30, 26}, "Previous match (Shift+F3)");
     if (GuiButton({bx, y, 30, 26}, GuiIconText(ICON_ARROW_LEFT, nullptr))) doc.findNext(find_.find, true, find_.matchCase);
+    hint({bx + 34, y, 30, 26}, "Next match (F3)");
     if (GuiButton({bx + 34, y, 30, 26}, GuiIconText(ICON_ARROW_RIGHT, nullptr))) doc.findNext(find_.find, false, find_.matchCase);
     Rectangle caseBox{bx + 68, y, 36, 26};
+    hint(caseBox, "Match upper and lower case exactly");
     if (GuiButton(caseBox, "Aa")) find_.matchCase = !find_.matchCase;
     if (find_.matchCase) DrawRectangleLinesEx(caseBox, 2, kAccent);
     int count = find_.find[0] ? doc.countMatches(find_.find, find_.matchCase) : 0;
     if (find_.find[0])
         drawText(count == 0 ? "No matches" : std::to_string(count) + (count == 1 ? " match" : " matches"), bx + 112,
                  y + 5, count ? kDim : kBad);
+    hint({r.x + r.width - 34, y, 28, 26}, "Close the find bar (Esc)");
     if (GuiButton({r.x + r.width - 34, y, 28, 26}, GuiIconText(ICON_CROSS_SMALL, nullptr))) {
         find_.open = find_.findEdit = find_.withEdit = false;
         codeFocused_ = true;
@@ -3047,12 +3602,19 @@ void Editor::drawScriptView(Rectangle r) {
         bx -= 4;
         return hit;
     };
+    {
+        Rectangle nb{bx - 112, r.y + 3, 112, tabH - 6};
+        hint(nb, "Make a new script, or a base class for scripts to inherit from");
+        if (button(112, ICON_FILE_ADD, "New Script")) openNewScriptDialog(false, "NewScript");
+    }
     if (doc) {
+        hint({bx - 30, r.y + 3, 30, tabH - 6}, "Find and replace (Ctrl+F)");
         if (button(30, ICON_LENS, nullptr)) {
             find_.open = true;
             find_.findEdit = true;
             codeFocused_ = false;
         }
+        hint({bx - 74, r.y + 3, 74, tabH - 6}, "Save this file (Ctrl+S)");
         if (button(74, ICON_FILE_SAVE_CLASSIC, "Save")) saveDocument(*doc);
     }
 
@@ -3095,8 +3657,10 @@ void Editor::drawScriptView(Rectangle r) {
         float cy = std::floor(r.y + r.height / 2 - 30);
         const char* lines[] = {"No files open.",
                                "Open a script with the Edit button in the Inspector, or right-click",
-                               "a script or scene in the FileSystem dock. New scripts open here too."};
-        for (const char* line : lines) {
+                               "a script or scene in the FileSystem dock. New Script (above) makes one."};
+        std::string text;
+        for (const char* line : lines) text += std::string(text.empty() ? "" : text == "No files open." ? "\n" : " ") + line;
+        for (const std::string& line : wrapText(text, r.width - 40)) {  // centred, wrapped to the panel
             drawText(line, std::floor(r.x + (r.width - textWidth(line)) / 2), cy, kDim);
             cy += 22;
         }
@@ -3116,10 +3680,12 @@ void Editor::drawScriptView(Rectangle r) {
         Rectangle banner{r.x, y, r.width, 34};
         DrawRectangleRec(banner, Fade(kOrange, 0.22f));
         drawText("This file was changed outside the editor, and it has unsaved changes here.", r.x + 10, y + 9, kText);
+        hint({r.x + r.width - 220, y + 4, 100, 26}, "Load the file as it is on disk now (your unsaved changes are lost)");
         if (GuiButton({r.x + r.width - 220, y + 4, 100, 26}, "Reload")) {
             doc->reloadFromDisk();
             doc->diskConflict = false;
         }
+        hint({r.x + r.width - 114, y + 4, 106, 26}, "Keep your version here (saving will overwrite the file on disk)");
         if (GuiButton({r.x + r.width - 114, y + 4, 106, 26}, "Keep Mine")) {
             doc->acceptDiskVersion();
             doc->diskConflict = false;
@@ -3160,19 +3726,31 @@ void Editor::drawScriptView(Rectangle r) {
         drawText("compiling...", sx, sy, kOrange);
         sx += textWidth("compiling...") + 24;
     }
+    float statusEnd = status.x + status.width - 10;
     if (doc->language == Language::Cpp && checker_) {
         std::string engine = checker_->engine();
         std::string text = engine.empty()     ? "errors shown when saved"
                            : checker_->busy() ? "checking (" + engine + ")..."
                                               : "checked live (" + engine + ")";
-        drawText(text, sx, sy, kDim);
+        if (sx + textWidth(text) <= statusEnd) {
+            drawText(text, sx, sy, kDim);
+            sx += textWidth(text) + 24;
+        }
     }
+    // The file on the right, in whatever room is left (its path shortened from the left)
     std::error_code ec;
     std::string rel = fs::relative(doc->path, projectDir_, ec).generic_string();
     if (ec || rel.empty() || rel.rfind("..", 0) == 0) rel = doc->path.string();
-    std::string right = std::string(doc->language == Language::Cpp ? "C++" : doc->language == Language::Json ? "JSON" : "Text") +
+    std::string right = std::string(doc->language == Language::Cpp      ? "C++"
+                                    : doc->language == Language::Json   ? "JSON"
+                                    : doc->language == Language::Shader ? "Shader"
+                                                                        : "Text") +
                         "   " + rel;
-    drawText(right, status.x + status.width - textWidth(right) - 10, sy, kDim);
+    if (statusEnd - sx < textWidth(right)) right = rel;
+    if (statusEnd - sx >= 60) {
+        right = fitText(right, statusEnd - sx, true);
+        drawText(right, statusEnd - textWidth(right), sy, kDim);
+    }
 
     if (toClose) closeDocument(toClose);
 }
@@ -3228,7 +3806,7 @@ void Editor::openProjectManager() {
         if (projects_.list[i] == current) projects_.selected = static_cast<int>(i);
     std::snprintf(projects_.location, sizeof projects_.location, "%s",
                   projects::defaultProjectsFolder().string().c_str());
-    projects_.templates = projects::projectTemplates(SPROUT_EDITOR_DIR);
+    projects_.templates = projects::projectTemplates(editorPaths().editorDir);
 }
 
 void Editor::switchProject(const fs::path& project) {
@@ -3275,14 +3853,15 @@ void Editor::drawProjectManager() {
             else if (hover) DrawRectangleRec(row, kHover);
             const fs::path& p = projects_.list[i];
             std::string name = projects::projectName(p) + (p == current ? "   (open now)" : "");
-            drawText(name, row.x + 10, row.y + 5, p == current ? kGood : kText);
-            drawText(p.string(), row.x + 10, row.y + 25, kDim);
+            drawFit(name, row.x + 10, row.y + 5, row.width - 20, p == current ? kGood : kText);
+            drawFit(p.string(), row.x + 10, row.y + 25, row.width - 20, kDim, true);
             if (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
                 if (projects_.selected == static_cast<int>(i)) switchProject(p);  // a second click opens it
                 projects_.selected = static_cast<int>(i);
             }
         }
-        if (projects_.list.empty()) drawText("No projects yet: make one with New Project.", view.x + 10, view.y + 10, kDim);
+        if (projects_.list.empty())
+            drawWrapped("No projects yet: make one with New Project.", view.x + 10, view.y + 10, view.width - 20, kDim);
         EndScissorMode();
 
         // Buttons on the right
@@ -3312,14 +3891,14 @@ void Editor::drawProjectManager() {
             }
         }
         if (!hasSel) GuiDisable();
+        hint({bx, y + 130, bw2, 30}, "Forget this project in the list (its files stay on disk)");
         if (GuiButton({bx, y + 130, bw2, 30}, GuiIconText(ICON_CROSS, "Remove from List"))) {
             projects::forget(projects_.list[projects_.selected]);
             projects_.list.erase(projects_.list.begin() + projects_.selected);
             projects_.selected = -1;
         }
         if (!hasSel) GuiEnable();
-        drawText("Removing only forgets it here;", bx, y + 168, kDim);
-        drawText("its files stay on disk.", bx, y + 186, kDim);
+        drawWrapped("Removing only forgets it here; its files stay on disk.", bx, y + 168, bw2, kDim, 18);
         if (GuiButton({box.x + box.width - 106, by, 90, 30}, "Close")) close = true;
     } else if (projects_.mode == 1) {
         const float labelW = 110;
@@ -3357,14 +3936,18 @@ void Editor::drawProjectManager() {
         y += 32;
         const projects::ProjectTemplate* chosen =
             projects_.templateIndex < static_cast<int>(templates.size()) ? &templates[projects_.templateIndex] : nullptr;
-        if (chosen) drawText(chosen->description, x + labelW, y, kDim);
+        if (chosen) y += drawWrapped(chosen->description, x + labelW, y, w - labelW, kDim) - 20;
         y += 34;
         std::string folder;
         for (char c : std::string(projects_.name)) folder += (c == '/' || c == '\\' || c == ':') ? '_' : c;
+        // No spaces or dots at the ends (Windows can't have a folder named "My Game ")
+        while (!folder.empty() && (folder.back() == ' ' || folder.back() == '.')) folder.pop_back();
+        while (!folder.empty() && folder.front() == ' ') folder.erase(0, 1);
         fs::path target = fs::path(projects_.location) / folder;
         drawText("The project will be made in:", x, y, kDim);
-        drawText(target.string(), x, y + 20, kAccent);
-        drawText("with scenes/, assets/ and scripts/ folders and a first scene.", x, y + 44, kDim);
+        y += 20;
+        y += drawWrapped(target.string(), x, y, w, kAccent);
+        drawWrapped("with scenes/, assets/ and scripts/ folders and a first scene.", x, y + 4, w, kDim);
         if (GuiButton({box.x + box.width - 210, by, 100, 30}, "Back")) projects_.mode = 0;
         if (GuiButton({box.x + box.width - 106, by, 90, 30}, "Create")) {
             std::string error;
@@ -3388,7 +3971,7 @@ void Editor::drawProjectManager() {
             });
         }
         y += 40;
-        drawText("Type or paste the path of a project folder (the one with project.json in it).", x, y, kDim);
+        drawWrapped("Type or paste the path of a project folder (the one with project.json in it).", x, y, w, kDim);
         if (GuiButton({box.x + box.width - 210, by, 100, 30}, "Back")) projects_.mode = 0;
         if (GuiButton({box.x + box.width - 106, by, 90, 30}, "Open")) {
             fs::path p = projects_.path;
@@ -3400,7 +3983,13 @@ void Editor::drawProjectManager() {
             }
         }
     }
-    if (!projects_.error.empty()) drawText(projects_.error, x, by + 6, kBad);
+    // An error goes left of the buttons at the bottom (wrapping upwards if it's long)
+    if (!projects_.error.empty()) {
+        float errW = box.x + box.width - 222 - x;
+        std::vector<std::string> lines = wrapText(projects_.error, errW);
+        for (size_t i = 0; i < lines.size(); ++i)
+            drawText(lines[i], x, by + 6 - (lines.size() - 1 - i) * 18.0f, kBad);
+    }
 
     if (close || (IsKeyPressed(KEY_ESCAPE) && !editing)) {
         if (projects_.mode != 0) projects_.mode = 0;
@@ -3439,7 +4028,7 @@ void Editor::openExportDialog() {
 void Editor::drawExportDialog() {
     float sw = screenW(), sh = screenH();
     DrawRectangle(0, 0, static_cast<int>(sw), static_cast<int>(sh), Fade(BLACK, 0.5f));
-    float bw = std::min(640.0f, sw - 40), bh = std::min(560.0f, sh - 40);
+    float bw = std::min(720.0f, sw - 40), bh = std::min(620.0f, sh - 40);
     Rectangle box{std::floor((sw - bw) / 2), std::floor((sh - bh) / 2), bw, bh};
     bool close = GuiWindowBox(box, "Export Game") != 0;
     bool editing = export_.nameEdit || export_.dirEdit || export_.widthEdit || export_.heightEdit;
@@ -3454,7 +4043,7 @@ void Editor::drawExportDialog() {
     y += 34;
 
     label("Main scene");
-    if (GuiButton({x + labelW, y, w - labelW, 26}, settings_.mainScene.c_str())) {
+    if (GuiButton({x + labelW, y, w - labelW, 26}, fitText(settings_.mainScene, w - labelW - 16, true).c_str())) {
         std::vector<std::string> scenes;
         for (auto& f : files_)
             if (f.kind == FileEntry::Scene) scenes.push_back(f.path);
@@ -3473,6 +4062,11 @@ void Editor::drawExportDialog() {
 
     drawText("Platforms", x, y, kAccent);
     y += 26;
+    // Columns sized by their text; each platform's note wraps in the last one.
+    float nameW = 0;
+    for (const ExportTarget& t : export_.targets) nameW = std::max(nameW, textWidth(t.label));
+    float statusX = x + 32 + nameW + 16;
+    float noteX = statusX + std::max(textWidth("ready"), textWidth("not available")) + 16;
     for (size_t i = 0; i < export_.targets.size(); ++i) {
         const ExportTarget& t = export_.targets[i];
         bool on = export_.chosen[i];
@@ -3481,13 +4075,9 @@ void Editor::drawExportDialog() {
         if (!t.available) GuiEnable();
         export_.chosen[i] = on && t.available;
         drawText(t.label, x + 32, y + 4, t.available ? kText : kDim);
-        drawText(t.available ? "ready" : "not available", x + 120, y + 4, t.available ? kGood : kOrange);
-        // The note, shortened to fit
-        std::string note = t.note;
-        float room = w - 250;
-        while (note.size() > 4 && textWidth(note) > room) note = note.substr(0, note.size() - 4) + "...";
-        drawText(note, x + 240, y + 4, kDim);
-        y += 30;
+        drawText(t.available ? "ready" : "not available", statusX, y + 4, t.available ? kGood : kOrange);
+        float noteH = t.note.empty() ? 20 : drawWrapped(t.note, noteX, y + 4, x + w - noteX, kDim, 18);
+        y += std::max(30.0f, noteH + 10);
     }
     y += 4;
 
@@ -3498,18 +4088,18 @@ void Editor::drawExportDialog() {
         label("Emscripten");
         std::string where = emsdk.empty() ? "emsdk not found" : emsdk.string() + (ready ? "" : "  (not set up yet)");
         float buttonsW = (platform::canPickFolder() ? 104 : 0) + (!emsdk.empty() && !ready ? 104 : 0);
-        float room = w - labelW - buttonsW - 8;
-        while (where.size() > 4 && textWidth(where) > room) where = "..." + where.substr(4);
-        drawText(where, x + labelW, y + 5, ready ? kText : kOrange);
+        float whereH = drawWrapped(where, x + labelW, y + 5, w - labelW - buttonsW - 8, ready ? kText : kOrange, 18);
         float bx = x + w - buttonsW;
         if (!emsdk.empty() && !ready) {
             if (exporter_->busy()) GuiDisable();
+            hint({bx, y, 100, 26}, "Install and activate Emscripten in that folder (needs the internet; takes a while)");
             if (GuiButton({bx, y, 100, 26}, "Set Up")) {
                 if (exporter_->setUpEmsdk(emsdk)) log("Setting up Emscripten (see below)...", kAccent);
             }
             if (exporter_->busy()) GuiEnable();
             bx += 104;
         }
+        if (platform::canPickFolder()) hint({bx, y, 100, 26}, "Pick the folder emsdk is in");
         if (platform::canPickFolder() && GuiButton({bx, y, 100, 26}, "Choose...")) {
             std::error_code ec;
             pickFolder("Emscripten's emsdk folder", emsdk.empty() ? fs::path() : emsdk, [this](const fs::path& p) {
@@ -3526,7 +4116,7 @@ void Editor::drawExportDialog() {
                     export_.chosen[i] = chosen[i] && export_.targets[i].available;
             });
         }
-        y += 34;
+        y += std::max(34.0f, whereH + 14);
     }
 
     label("Export to");
@@ -3541,7 +4131,7 @@ void Editor::drawExportDialog() {
         });
     }
     y += 34;
-    drawText("Each platform goes in its own folder inside it (linux/, windows/, macos/, web/).", x, y, kDim);
+    drawWrapped("Each platform goes in its own folder inside it (linux/, windows/, macos/, web/).", x, y, w, kDim);
 
     // Bottom row
     float by = box.y + box.height - 44;
@@ -3552,19 +4142,22 @@ void Editor::drawExportDialog() {
         for (size_t i = 0; i < export_.targets.size(); ++i) export_.chosen[i] = chosen[i] && export_.targets[i].available;
     }
     export_.wasBusy = busy;
+    float statusW = box.x + box.width - 16 - 290 - 8 - x;  // left of the three buttons
     if (busy) {
-        drawText("Exporting " + exporter_->currentLabel() + "... (see Output)", x, by + 6, kOrange);
+        drawFit("Exporting " + exporter_->currentLabel() + "... (see Output)", x, by + 6, statusW, kOrange);
     } else if (std::none_of(export_.chosen.begin(), export_.chosen.end(), [](bool b) { return b; })) {
-        drawText("Tick a platform to export.", x, by + 6, kDim);
+        drawFit("Tick a platform to export.", x, by + 6, statusW, kDim);
     }
     float bx = box.x + box.width - 16;
     bx -= 90;
     if (GuiButton({bx, by, 90, 30}, "Close")) close = true;
     bx -= 100;
     if (busy) GuiDisable();
+    hint({bx, by, 96, 30}, "Export the ticked platforms (progress shows in Output)");
     if (GuiButton({bx, by, 96, 30}, GuiIconText(ICON_FILE_EXPORT, "Export"))) startExport();
     if (busy) GuiEnable();
     bx -= 100;
+    hint({bx, by, 96, 30}, "Check again which platforms can be exported (after installing something)");
     if (GuiButton({bx, by, 96, 30}, GuiIconText(ICON_ROTATE_FILL, "Recheck"))) {
         auto chosen = export_.chosen;
         export_.targets = exporter_->detectTargets();
@@ -3631,6 +4224,8 @@ void Editor::drawModal() {
     if (codeEditorDialog_.open) drawCodeEditorDialog();
     if (instancesDialog_.open) drawRunInstancesDialog();
     if (connectDialog_.open) drawConnectDialog();
+    if (newScript_.open) drawNewScriptDialog();
+    if (autoloadsDialog_.open) drawAutoloadsDialog();
     bool picking = folderPick_.valid();
     if (picking) GuiLock();  // the folder window is open: everything here waits
     if (export_.open) drawExportDialog();
@@ -3646,16 +4241,43 @@ void Editor::drawModal() {
         drawText(text, box.x + 20, box.y + 15, kText);
         return;
     }
+    if (ask_.open) {
+        float sw = screenW(), sh = screenH();
+        DrawRectangle(0, 0, static_cast<int>(sw), static_cast<int>(sh), Fade(BLACK, 0.5f));
+        float bw = std::min(480.0f, sw - 20);
+        std::vector<std::string> lines = wrapText(ask_.message, bw - 28);
+        float bh = 116 + lines.size() * 20.0f;
+        Rectangle box{std::floor(sw / 2 - bw / 2), std::floor(sh / 2 - bh / 2), bw, bh};
+        bool cancel = GuiWindowBox(box, ask_.title.c_str()) != 0;
+        for (size_t i = 0; i < lines.size(); ++i) drawText(lines[i], box.x + 14, box.y + 42 + i * 20.0f, kText);
+        float buttonsY = box.y + box.height - 46;
+        float yesW = textWidth(ask_.yes) + 40;
+        bool yes = GuiButton({box.x + box.width - 110 - yesW, buttonsY, yesW, 30}, ask_.yes.c_str());
+        if (GuiButton({box.x + box.width - 100, buttonsY, 86, 30}, "Cancel") || IsKeyPressed(KEY_ESCAPE)) cancel = true;
+        if (cancel) {
+            ask_.open = false;
+        } else if (yes) {
+            auto onYes = std::move(ask_.onYes);
+            ask_ = AskDialog{};
+            if (onYes) onYes();
+        }
+        return;
+    }
     if (confirm_.open) {
         float sw = screenW(), sh = screenH();
         DrawRectangle(0, 0, static_cast<int>(sw), static_cast<int>(sh), Fade(BLACK, 0.5f));
-        Rectangle box{sw / 2 - 230, sh / 2 - 70, 460, 140};
+        float bw = std::min(460.0f, sw - 20);
+        std::vector<std::string> lines = wrapText(confirm_.message, bw - 28);
+        float bh = 116 + lines.size() * 20.0f;
+        Rectangle box{std::floor(sw / 2 - bw / 2), std::floor(sh / 2 - bh / 2), bw, bh};
         bool cancel = GuiWindowBox(box, "Unsaved changes") != 0;
-        GuiLabel({box.x + 14, box.y + 40, box.width - 28, 24}, confirm_.message.c_str());
+        for (size_t i = 0; i < lines.size(); ++i) drawText(lines[i], box.x + 14, box.y + 42 + i * 20.0f, kText);
         int choice = -1;
-        if (GuiButton({box.x + box.width - 318, box.y + 94, 96, 30}, "Save")) choice = 0;
-        if (GuiButton({box.x + box.width - 216, box.y + 94, 110, 30}, "Don't Save")) choice = 1;
-        if (GuiButton({box.x + box.width - 100, box.y + 94, 86, 30}, "Cancel") || IsKeyPressed(KEY_ESCAPE)) cancel = true;
+        float buttonsY = box.y + box.height - 46;
+        if (GuiButton({box.x + box.width - 318, buttonsY, 96, 30}, "Save")) choice = 0;
+        hint({box.x + box.width - 216, buttonsY, 110, 30}, "Go on and lose the changes");
+        if (GuiButton({box.x + box.width - 216, buttonsY, 110, 30}, "Don't Save")) choice = 1;
+        if (GuiButton({box.x + box.width - 100, buttonsY, 86, 30}, "Cancel") || IsKeyPressed(KEY_ESCAPE)) cancel = true;
         if (cancel) {
             confirm_.open = false;
         } else if (choice >= 0) {
@@ -3678,13 +4300,17 @@ void Editor::drawModal() {
     if (!dialog_.open) return;
     float sw = screenW(), sh = screenH();
     DrawRectangle(0, 0, static_cast<int>(sw), static_cast<int>(sh), Fade(BLACK, 0.5f));
-    Rectangle box{sw / 2 - 220, sh / 2 - 85, 440, 170};
+    float bw = std::min(440.0f, sw - 20);
+    std::vector<std::string> lines = wrapText(dialog_.message, bw - 28);
+    float extra = (lines.size() - 1) * 20.0f;
+    Rectangle box{std::floor(sw / 2 - bw / 2), std::floor(sh / 2 - (170 + extra) / 2), bw, 170 + extra};
     bool cancel = GuiWindowBox(box, dialog_.title.c_str()) != 0;
-    GuiLabel({box.x + 14, box.y + 36, box.width - 28, 24}, dialog_.message.c_str());
-    GuiTextBox({box.x + 14, box.y + 64, box.width - 28, 30}, dialog_.text, sizeof dialog_.text, true);
+    for (size_t i = 0; i < lines.size(); ++i) drawText(lines[i], box.x + 14, box.y + 40 + i * 20.0f, kText);
+    GuiTextBox({box.x + 14, box.y + 64 + extra, box.width - 28, 30}, dialog_.text, sizeof dialog_.text, true);
     bool ok = IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER);
-    if (GuiButton({box.x + box.width - 200, box.y + 124, 90, 30}, "OK")) ok = true;
-    if (GuiButton({box.x + box.width - 104, box.y + 124, 90, 30}, "Cancel") || IsKeyPressed(KEY_ESCAPE)) cancel = true;
+    if (GuiButton({box.x + box.width - 200, box.y + 124 + extra, 90, 30}, "OK")) ok = true;
+    if (GuiButton({box.x + box.width - 104, box.y + 124 + extra, 90, 30}, "Cancel") || IsKeyPressed(KEY_ESCAPE))
+        cancel = true;
 
     if (ok && !cancel) {
         auto onOk = dialog_.onOk;
@@ -3783,6 +4409,17 @@ void Editor::saveScene() {
 
 void Editor::play(bool mainScene) {
     if (playTree_) return;
+    // Scripts still compiling (e.g. just saved): play once they're done, so the
+    // game runs the code that was just written. (While the game is already
+    // running, saving a script reloads it as usual.)
+    if (ScriptReloader::supported() && scripts_->busy(GetTime())) {
+        if (!playWhenBuilt_) log("Waiting for the scripts to finish compiling, then playing...", kOrange);
+        playWhenBuilt_ = mainScene;
+        return;
+    }
+    playWhenBuilt_.reset();
+    if (ScriptReloader::supported() && scripts_->lastBuildFailed())
+        log("The scripts have errors (see above): playing with the last version that compiled.", kOrange);
     // The main scene, unless it's the one open here (then play it with any unsaved edits).
     std::string scene = mainScene ? settings_.mainScene : scenePath_;
     std::unique_ptr<Node> root;
@@ -3815,6 +4452,7 @@ void Editor::play(bool mainScene) {
     playTree_ = std::make_unique<SceneTree>();
     playTree_->gameSize = editTree_.gameSize;
     playTree_->clearColor = editTree_.clearColor;
+    playTree_->setAutoloads(settings_.autoloads);  // (Project Settings > Autoloads)
     playTree_->setRoot(std::move(root));
     playTree_->setCurrentScene(scene);
     log("Playing " + scene + " ...", kAccent);
@@ -3827,6 +4465,11 @@ void Editor::play(bool mainScene) {
 }
 
 void Editor::stop() {
+    if (playWhenBuilt_ && !playTree_) {
+        playWhenBuilt_.reset();
+        log("Play cancelled.", kDim);
+        return;
+    }
     if (!playTree_) return;
     multiplayer().close();  // before the scripts go: peers hear that we left
     stopInstances();
@@ -3861,9 +4504,17 @@ void Editor::updateScripts() {
         std::stringstream ss(output);
         std::string line;
         int shown = 0, context = 0;
+        bool inCmakeError = false;  // CMake's own errors go on for several lines, all needed
         while (std::getline(ss, line) && shown < 40) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
             bool isError = line.find("error") != std::string::npos || line.find("Error") != std::string::npos;
-            if (isError) context = 3;
+            if (line.rfind("CMake Error", 0) == 0) inCmakeError = true;
+            else if (line.rfind("-- ", 0) == 0 || line.rfind("CMake ", 0) == 0) inCmakeError = false;
+            if (inCmakeError) {
+                if (line.find_first_not_of(" \t") == std::string::npos) continue;  // its blank lines
+                context = std::max(context, 1);
+            }
+            if (isError) context = std::max(context, 3);
             if (context > 0) {
                 log("  " + line, isError ? kBad : kDim);
                 --context;
@@ -3871,9 +4522,18 @@ void Editor::updateScripts() {
             }
         }
         if (shown == 0) log(output, kDim);
+        if (playWhenBuilt_) {
+            playWhenBuilt_.reset();
+            log("Not playing: fix the errors above and press Play again.", kBad);
+        }
         return;
     }
     reloadScripts();
+    if (playWhenBuilt_) {
+        bool mainScene = *playWhenBuilt_;
+        playWhenBuilt_.reset();
+        play(mainScene);
+    }
 }
 
 void Editor::reloadScripts() {
@@ -4071,19 +4731,209 @@ void Editor::createSpriteAt(const std::string& texture, Vector2 world) {
     log("Added Sprite2D '" + raw->name + "' using " + texture);
 }
 
-void Editor::createScript(const std::string& className) {
+std::vector<Editor::BaseClass> Editor::scriptBaseClasses() const {
+    // Classes in scripts/*.hpp that are scripts (inherit from Script, or from
+    // another of these): what a new script can inherit from.
+    static const std::regex classRe(R"(class\s+(\w+)\s*(?:final\s*)?:\s*(?:public\s+)?(?:s2d::)?(\w+))");
+    struct Found {
+        std::string name, base, header;
+    };
+    std::vector<Found> found;
+    std::error_code ec;
+    for (auto it = fs::directory_iterator(scriptsDir_, ec); !ec && it != fs::directory_iterator(); it.increment(ec)) {
+        auto ext = it->path().extension();
+        if (!it->is_regular_file(ec) || (ext != ".hpp" && ext != ".h")) continue;
+        std::ifstream in(it->path());
+        std::stringstream ss;
+        ss << in.rdbuf();
+        std::string text = ss.str();
+        for (auto m = std::sregex_iterator(text.begin(), text.end(), classRe); m != std::sregex_iterator(); ++m)
+            found.push_back({(*m)[1].str(), (*m)[2].str(), it->path().filename().string()});
+    }
+    std::vector<BaseClass> out;
+    auto known = [&](const std::string& n) {
+        return n == "Script" || std::any_of(out.begin(), out.end(), [&](auto& b) { return b.name == n; });
+    };
+    for (bool more = true; more;) {  // (a base of a base may come later in the list)
+        more = false;
+        for (const Found& f : found)
+            if (!known(f.name) && known(f.base)) {
+                out.push_back({f.name, f.header});
+                more = true;
+            }
+    }
+    std::sort(out.begin(), out.end(), [](auto& a, auto& b) { return a.name < b.name; });
+    return out;
+}
+
+void Editor::openNewScriptDialog(bool attach, const std::string& suggestedName) {
+    activeField_.clear();
+    newScript_ = NewScriptDialog{};
+    newScript_.open = true;
+    newScript_.attach = attach;
+    newScript_.bases = scriptBaseClasses();
+    std::snprintf(newScript_.name, sizeof newScript_.name, "%s", suggestedName.c_str());
+    moveTextCursorToEnd();
+}
+
+void Editor::drawNewScriptDialog() {
+    NewScriptDialog& d = newScript_;
+    float sw = screenW(), sh = screenH();
+    DrawRectangle(0, 0, static_cast<int>(sw), static_cast<int>(sh), Fade(BLACK, 0.5f));
+    float w = std::min(620.0f, sw - 20), h = std::min(500.0f, sh - 20);
+    Rectangle box{std::floor(sw / 2 - w / 2), std::floor(sh / 2 - h / 2), w, h};
+    bool cancel = GuiWindowBox(box, "New Script") != 0;
+    float x = box.x + 14, y = box.y + 38, iw = box.width - 28;
+    const float labelW = 110;
+
+    // What kind: a script to put on nodes, or a base class to inherit from
+    drawText("Make", x, y + 5, kDim);
+    float kx = x + labelW;
+    const char* kinds[] = {"A script", "A base class"};
+    for (int i = 0; i < 2; ++i) {
+        float kw = textWidth(kinds[i]) + 24;
+        bool on = d.baseClass == (i == 1);
+        if (on) GuiSetState(STATE_PRESSED);
+        hint({kx, y, kw, 26}, i == 0 ? "A script you attach to nodes (a .cpp file)"
+                                     : "Shared code other scripts inherit from (a .hpp file); not attached by itself");
+        if (GuiButton({kx, y, kw, 26}, kinds[i])) d.baseClass = i == 1;
+        if (on) GuiSetState(STATE_NORMAL);
+        kx += kw + 6;
+    }
+    y += 36;
+
+    drawText("Class name", x, y + 5, kDim);
+    if (GuiTextBox({x + labelW, y, iw - labelW, 28}, d.name, sizeof d.name, d.nameEdit)) d.nameEdit = !d.nameEdit;
+    y += 38;
+
+    // Inherits: Script, or one of the project's base classes
+    drawText("Inherits", x, y + 5, kDim);
+    Rectangle list{x + labelW, y, iw - labelW, std::max(60.0f, box.y + box.height - 150 - y)};
+    Rectangle content{0, 0, list.width - 16, (d.bases.size() + 1) * kRowH + 4};
+    Rectangle view{};
+    GuiScrollPanel(list, nullptr, content, &d.scroll, &view);
+    beginClip(view);
+    for (size_t i = 0; i <= d.bases.size(); ++i) {
+        Rectangle row{view.x, view.y + d.scroll.y + 2 + i * kRowH, view.width, kRowH};
+        bool chosen = d.base == static_cast<int>(i);
+        bool hover = !GuiIsLocked() && mouseIn(row) && mouseIn(view);
+        if (chosen) DrawRectangleRec(row, kSelect);
+        else if (hover) DrawRectangleRec(row, kHover);
+        std::string name = i == 0 ? "Script" : d.bases[i - 1].name;
+        std::string where = i == 0 ? "(the start: every script inherits from it)" : "scripts/" + d.bases[i - 1].header;
+        drawText(name, row.x + 8, row.y + 4, kText);
+        drawFit(where, row.x + 20 + textWidth(name), row.y + 4, row.width - 28 - textWidth(name), kDim, true);
+        if (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) d.base = static_cast<int>(i);
+    }
+    EndScissorMode();
+    y = list.y + list.height + 10;
+
+    // What will be made
+    static const std::regex identifier("[A-Za-z_][A-Za-z0-9_]*");
+    std::string name = d.name;
+    bool valid = std::regex_match(name, identifier);
+    std::string file = "scripts/" + snakeCase(name) + (d.baseClass ? ".hpp" : ".cpp");
+    std::string baseName = d.base == 0 ? "Script" : d.bases[d.base - 1].name;
+    std::string note;
+    Color noteColor = kDim;
+    if (!valid) {
+        note = "The class name needs to be a C++ name: letters, digits and _, not starting with a digit.";
+        noteColor = kOrange;
+    } else if (fs::exists(projectDir_ / file)) {
+        note = file + " already exists: pick another name.";
+        noteColor = kOrange;
+        valid = false;
+    } else if (d.baseClass) {
+        note = "Makes " + file + ": class " + name + " : public " + baseName +
+               ". Then make scripts that inherit from it (pick " + name + " under Inherits).";
+    } else {
+        note = "Makes " + file + ": class " + name + " : public " + baseName +
+               (d.attach && selected_ ? ", and attaches it to " + selected_->name + "." : ".");
+    }
+    drawWrapped(note, x, y, iw, noteColor);
+
+    if (!valid) GuiDisable();
+    bool ok = GuiButton({box.x + box.width - 214, box.y + box.height - 42, 104, 30}, "Create") ||
+              (valid && (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER)));
+    if (!valid) GuiEnable();
+    if (GuiButton({box.x + box.width - 104, box.y + box.height - 42, 90, 30}, "Cancel") || IsKeyPressed(KEY_ESCAPE))
+        cancel = true;
+    if (cancel) {
+        d.open = false;
+    } else if (ok && valid) {
+        d.open = false;
+        createScript(name, baseName, d.base == 0 ? "" : d.bases[d.base - 1].header, d.baseClass, d.attach);
+    }
+}
+
+void Editor::createScript(const std::string& className, const std::string& base, const std::string& baseHeader,
+                          bool baseClass, bool attach) {
     static const std::regex identifier("[A-Za-z_][A-Za-z0-9_]*");
     if (!std::regex_match(className, identifier)) {
         log("'" + className + "' isn't a valid C++ class name.", kBad);
         return;
     }
-    fs::path file = scriptsDir_ / (snakeCase(className) + ".cpp");
+    fs::path file = scriptsDir_ / (snakeCase(className) + (baseClass ? ".hpp" : ".cpp"));
     if (fs::exists(file)) {
         log(file.filename().string() + " already exists.", kBad);
         return;
     }
-    std::string code = kScriptTemplate;
-    for (size_t pos; (pos = code.find("$NAME")) != std::string::npos;) code.replace(pos, 5, className);
+    bool fromScript = base == "Script" || baseHeader.empty();
+    std::string code;
+    if (baseClass) {
+        code = kBaseClassTemplate;
+        auto put = [&](const std::string& key, const std::string& value) {
+            for (size_t pos; (pos = code.find(key)) != std::string::npos;) code.replace(pos, key.size(), value);
+        };
+        put("$EXPORTS", fromScript ? "    // Variables every script that inherits this gets (shown in the inspector):\n"
+                                     "    EXPORT(float, speed, 100);\n\n"
+                                   : "");
+        put("$SUPER_PROCESS", fromScript ? "" : base + "::process(delta);  // what " + base + " does first\n        ");
+        put("$INCLUDE", fromScript ? "script.hpp" : baseHeader);
+        put("$BASE", fromScript ? "Script" : base);
+        put("$NAME", className);
+    } else if (fromScript) {
+        code = kScriptTemplate;
+        for (size_t pos; (pos = code.find("$NAME")) != std::string::npos;) code.replace(pos, 5, className);
+    } else {
+        // The base's functions it leaves to fill in (= 0) are written out, ready
+        // to fill; the others it may change are listed.
+        std::string overrides;
+        {
+            std::ifstream in(scriptsDir_ / baseHeader);
+            std::stringstream ss;
+            ss << in.rdbuf();
+            std::string text = ss.str();
+            static const std::regex virtualRe(R"(virtual\s+([\w:<>\*& ]+?)\s+(\w+)\s*\(([^)]*)\)\s*(const)?\s*(=\s*0)?)");
+            std::string must, may;
+            for (auto m = std::sregex_iterator(text.begin(), text.end(), virtualRe); m != std::sregex_iterator(); ++m) {
+                std::string ret = (*m)[1].str(), fn = (*m)[2].str(), params = (*m)[3].str();
+                std::string cnst = (*m)[4].matched ? " const" : "";
+                std::string sig = ret + " " + fn + "(" + params + ")" + cnst + " override";
+                if ((*m)[5].matched) {
+                    must += "\n    // (" + base + " leaves this for you to write)\n    " + sig + " {\n        \n    }\n";
+                } else {
+                    may += "    //   " + ret + " " + fn + "(" + params + ")" + cnst + "\n";
+                }
+            }
+            if (must.empty() && may.empty()) {
+                overrides = "\n    // To change what " + base + " does every frame, write process(float delta)\n"
+                            "    // here (call " + base + "::process(delta) inside it to keep " + base + "'s part).\n";
+            } else {
+                if (!must.empty()) overrides += "\nprotected:" + must;
+                if (!may.empty())
+                    overrides += "\n    // " + base + " also lets you change these (write one here with override):\n" + may;
+            }
+        }
+        code = kDerivedTemplate;
+        auto put = [&](const std::string& key, const std::string& value) {
+            for (size_t pos; (pos = code.find(key)) != std::string::npos;) code.replace(pos, key.size(), value);
+        };
+        put("$OVERRIDES", overrides);
+        put("$INCLUDE", baseHeader);
+        put("$BASE", base);
+        put("$NAME", className);
+    }
     std::ofstream out(file);
     if (!out) {
         log("Couldn't write " + file.string(), kBad);
@@ -4091,7 +4941,7 @@ void Editor::createScript(const std::string& className) {
     }
     out << code;
     out.close();
-    if (selected_) {
+    if (attach && selected_ && !baseClass) {
         touch();
         selected_->scriptName = className;
     }
@@ -4099,7 +4949,9 @@ void Editor::createScript(const std::string& className) {
     rescanFiles();
     log("Created " + file.string(), kGood);
     openInCodeEditor(file);
-    if (ScriptReloader::supported()) {
+    if (baseClass) {
+        log("To use it: New Script, and pick " + className + " under Inherits.", kGood);
+    } else if (ScriptReloader::supported()) {
         log("It compiles and loads by itself; edit it and save to reload.", kGood);
     } else {
         log("Rebuild the editor (cmake --build build) to compile it, then press Play.", kOrange);
@@ -4119,9 +4971,10 @@ void Editor::signalRows(float x, float& y, float w) {
     bool editable = !selected_->inInstance && !playTree_;
     for (const SignalInfo& s : signals) {
         GuiDrawIcon(ICON_LINK_NET, static_cast<int>(x), static_cast<int>(y + 3), 1, kAccent);
-        drawText(s.name, x + 22, y + 4, kText);
+        drawFit(s.name, x + 22, y + 4, w - 22 - (editable ? 86 : 0), kText);
         if (!s.args.empty() && x + 22 + textWidth(s.name) + 6 + textWidth("(" + s.args + ")") < x + w - 84)
             drawText("(" + s.args + ")", x + 22 + textWidth(s.name) + 6, y + 4, kDim);
+        if (editable) hint({x + w - 80, y, 80, 24}, "Call a script function when this signal is sent");
         if (editable && GuiButton({x + w - 80, y, 80, 24}, "Connect...")) openConnectDialog(s);
         y += 28;
         // Its connections: click one to see the function, x to remove it
@@ -4134,9 +4987,10 @@ void Editor::signalRows(float x, float& y, float w) {
             Rectangle row{x + 18, y, w - 18 - (editable ? 30 : 0), 22};
             bool hover = mouseIn(row) && !GuiIsLocked();
             if (hover) DrawRectangleRec(row, kHover);
-            drawText(label, row.x + 4, y + 3, target ? kGood : kBad);
+            drawFit(label, row.x + 4, y + 3, row.width - 8, target ? kGood : kBad);
             if (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && target)
                 addCallableToScript(target->scriptName, c.method, s.args, "");  // (opens it; adds it if it's missing)
+            if (editable) hint({x + w - 26, y, 26, 22}, "Remove this connection");
             if (editable && GuiButton({x + w - 26, y, 26, 22}, GuiIconText(ICON_CROSS_SMALL, nullptr))) {
                 touch();
                 selected_->connections.erase(selected_->connections.begin() + static_cast<long>(i));
@@ -4146,9 +5000,9 @@ void Editor::signalRows(float x, float& y, float w) {
             y += 24;
         }
     }
-    drawText(selected_->inInstance ? "Connect this in its own scene file." : "Or in a script: connect(node, \"name\", ...)",
-             x, y + 2, kDim);
-    y += 26;
+    y += drawWrapped(selected_->inInstance ? "Connect this in its own scene file." : "Or in a script: connect(node, \"name\", ...)",
+                     x, y + 2, w, kDim) +
+         6;
 }
 
 void Editor::openConnectDialog(const SignalInfo& signal) {
@@ -4177,9 +5031,10 @@ void Editor::drawConnectDialog() {
     bool cancel = GuiWindowBox(box, ("Connect a Signal: " + d.signal.name).c_str()) != 0;
     float x = box.x + 14, y = box.y + 38, iw = box.width - 28;
 
-    drawText("When '" + d.emitter->name + "' sends " + d.signal.name + "(" + d.signal.args + "), call a function of:", x, y,
-             kText);
-    y += 26;
+    y += drawWrapped("When '" + d.emitter->name + "' sends " + d.signal.name + "(" + d.signal.args +
+                         "), call a function of:",
+                     x, y, iw, kText) +
+         6;
 
     // The scene's nodes: pick the one whose script gets the call
     struct Row {
@@ -4253,7 +5108,7 @@ void Editor::drawConnectDialog() {
         note = "Adds  void " + method + "(" + d.signal.args + ")  to " + d.target->scriptName +
                " if it isn't there, and shows it.";
     }
-    drawText(note, x, y, noteColor);
+    drawWrapped(note, x, y, iw, noteColor);
 
     bool ok = hasScript && validName && !inInstance;
     if (!ok) GuiDisable();
@@ -4373,7 +5228,7 @@ void Editor::drawRunInstancesDialog() {
     RunInstancesDialog& d = instancesDialog_;
     float sw = screenW(), sh = screenH();
     DrawRectangle(0, 0, static_cast<int>(sw), static_cast<int>(sh), Fade(BLACK, 0.5f));
-    float w = 600, h = 236 + ProjectSettings::kMaxInstances * 34;
+    float w = std::min(600.0f, sw - 20), h = 236 + ProjectSettings::kMaxInstances * 34;
     Rectangle box{std::floor(sw / 2 - w / 2), std::floor(std::max(8.0f, sh / 2 - h / 2)), w, h};
     bool cancel = GuiWindowBox(box, "Run Instances") != 0;
     float x = box.x + 14, y = box.y + 38, iw = box.width - 28;
@@ -4384,7 +5239,8 @@ void Editor::drawRunInstancesDialog() {
     std::string n = std::to_string(d.count);
     drawText(n, cx + 36 + (12 - textWidth(n)) / 2, y + 5, kAccent);
     if (GuiButton({cx + 56, y, 28, 26}, "+") && d.count < ProjectSettings::kMaxInstances) ++d.count;
-    drawText(d.count == 1 ? "copy of the game." : "copies of the game, to test multiplayer.", cx + 94, y + 5, kText);
+    drawFit(d.count == 1 ? "copy of the game." : "copies of the game, to test multiplayer.", cx + 94, y + 5,
+            x + iw - cx - 94, kText);
     y += 40;
 
     drawText("Each copy's command line (for its scripts):", x, y, kDim);
@@ -4400,8 +5256,9 @@ void Editor::drawRunInstancesDialog() {
         y += 34;
     }
     y += 4;
-    drawText("e.g. --host on one and --join 127.0.0.1 on the others. Scripts read them", x, y, kDim);
-    drawText("with hasArg(\"--host\") and argValue(\"--join\"). --server: no window.", x, y + 20, kDim);
+    drawWrapped("e.g. --host on one and --join 127.0.0.1 on the others. Scripts read them with hasArg(\"--host\") "
+                "and argValue(\"--join\"). --server: no window.",
+                x, y, iw, kDim);
 
     bool ok = d.editing < 0 && (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER));
     if (GuiButton({box.x + box.width - 200, box.y + box.height - 42, 90, 30}, "OK")) ok = true;
@@ -4426,12 +5283,7 @@ void Editor::drawRunInstancesDialog() {
 
 void Editor::startInstances(const std::string& scene) {
     stopInstances();
-    fs::path exe = fs::path(GetApplicationDirectory()) /
-#if defined(_WIN32)
-                   "sprout_editor.exe";
-#else
-                   "sprout_editor";
-#endif
+    fs::path exe = platform::executablePath();
     if (!fs::exists(exe)) {
         log("Can't start the other copies: " + exe.string() + " is missing.", kBad);
         return;

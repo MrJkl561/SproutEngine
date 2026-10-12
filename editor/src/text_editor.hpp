@@ -13,7 +13,7 @@
 
 namespace s2d {
 
-enum class Language { Text, Cpp, Json };
+enum class Language { Text, Cpp, Json, Shader };
 
 // A compiler message about one line (1-based) of the file.
 struct Diagnostic {
@@ -155,6 +155,11 @@ private:
     void acceptCompletion();
     void drawCompletion(Rectangle r, const TextStyle& style);
     bool acOpen_ = false, acForced_ = false;
+    // Closing brackets and quotes typed for you (on this line): typing one of
+    // them again steps over it instead of adding another.
+    int autoCloseLine_ = -1, autoClosed_ = 0;
+    bool autoPair(int codepoint);   // brackets and quotes; true if it handled the key
+    bool deletePair();              // Backspace between ( and ): both go
     std::vector<Completion> acItems_;
     int acSel_ = 0, acTop_ = 0;
     Pos acStart_;

@@ -25,8 +25,9 @@ A game made with one can't be opened by the other. Not sure which to pick? See
 |---|---|---|
 | 1 | [Installing and building](01-installing.md) | Installing the tools and building Sprout (the same for both parts) |
 | 2 | [Your first game in the editor](editor/getting-started.md) | A step-by-step tutorial: projects, nodes, a script, Play, Export |
-| 3 | [Multiplayer in the editor](editor/multiplayer.md) | Hosting and joining, synced nodes, spawners, RPCs, prediction, lag compensation, testing with several windows, dedicated servers |
-| 4 | [The Sprout Editor manual](../editor/README.md) | Everything else: every dock and shortcut, nodes, the script API, signals, scenes inside scenes, animation, exporting, themes |
+| 3 | [Signals, step by step](editor/signals.md) | What a signal is, connecting one in the editor and in code, signals of your own, common mistakes |
+| 4 | [Multiplayer in the editor](editor/multiplayer.md) | Hosting and joining, synced nodes, spawners, RPCs, prediction, lag compensation, testing with several windows, dedicated servers |
+| 5 | [The Sprout Editor manual](../editor/README.md) | Everything else: every dock and shortcut, nodes, the script API, signals, scenes inside scenes, animation, exporting, themes |
 
 ## Learning the Engine
 

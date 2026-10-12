@@ -1,0 +1,1 @@
+{"format":"sprout-editor-scene","version":1,"root":{"type":"Label","name":"HudRoot","script":"HudScript","properties":{"text":"Coins"},"children":[]}}

@@ -1,0 +1,6 @@
+{
+  "name": "Shaders Test",
+  "main_scene": "scenes/main.scene.json",
+  "width": 320,
+  "height": 90
+}

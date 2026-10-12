@@ -1,0 +1,10 @@
+{
+  "name": "Autoload Test",
+  "main_scene": "scenes/level1.scene.json",
+  "width": 320,
+  "height": 180,
+  "autoloads": [
+    { "name": "GameState", "script": "GameState" },
+    { "name": "Hud", "scene": "scenes/hud.scene.json" }
+  ]
+}

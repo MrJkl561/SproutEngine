@@ -1,14 +1,17 @@
 #include "game_runner.hpp"
 
 #include <raylib-cpp.hpp>
+#include <rlgl.h>
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
+#include <string>
 #include <thread>
 
 #include "assets.hpp"
@@ -18,6 +21,7 @@
 #include "scene_io.hpp"
 #include "scene_tree.hpp"
 #include "script.hpp"
+#include "shaders.hpp"
 
 #if defined(PLATFORM_WEB)
 #include <emscripten/emscripten.h>
@@ -33,7 +37,34 @@ struct Game {
     SceneTree tree;
     std::unique_ptr<raylib::RenderTexture> target;  // the game is drawn here, then scaled to the window
     long frame = 0;
+    long screenshotAt = -1;   // SPROUT_GAME_SCREENSHOT=file.png (with --frames): a picture of the last frame
+    std::string screenshot;
+    std::string pixelTest;    // SPROUT_TEST_PIXELS="x,y=r,g,b;..." (with --frames): check the last frame's colours
 };
+
+// The tests' pixel check: each "x,y=r,g,b" (in game pixels) within 12 of what's drawn
+void checkPixels(Game& g) {
+    Image img = LoadImageFromTexture(g.target->texture);
+    ImageFlipVertical(&img);  // (render textures are upside down)
+    bool ok = true;
+    std::string spec = g.pixelTest;
+    for (size_t start = 0; start < spec.size();) {
+        size_t end = spec.find(';', start);
+        if (end == std::string::npos) end = spec.size();
+        int x = 0, y = 0, r = 0, gr = 0, b = 0;
+        if (std::sscanf(spec.substr(start, end - start).c_str(), "%d,%d=%d,%d,%d", &x, &y, &r, &gr, &b) == 5) {
+            Color c = GetImageColor(img, x, y);
+            bool good = std::abs(c.r - r) <= 12 && std::abs(c.g - gr) <= 12 && std::abs(c.b - b) <= 12;
+            std::printf("PIXEL %d,%d is %d,%d,%d (wanted %d,%d,%d): %s\n", x, y, c.r, c.g, c.b, r, gr, b,
+                        good ? "OK" : "WRONG");
+            ok = ok && good;
+        }
+        start = end + 1;
+    }
+    std::printf(ok ? "PIXELS OK\n" : "PIXELS WRONG\n");
+    std::fflush(stdout);
+    UnloadImage(img);
+}
 
 Game* gGame = nullptr;
 std::atomic<bool> gStop{false};
@@ -60,6 +91,13 @@ void drawFrame(Game& g) {
     float s = std::min(GetScreenWidth() / gw, GetScreenHeight() / gh);
     Rectangle dst{(GetScreenWidth() - gw * s) / 2, (GetScreenHeight() - gh * s) / 2, gw * s, gh * s};
     DrawTexturePro(g.target->texture, {0, 0, gw, -gh}, dst, {0, 0}, 0, WHITE);
+    if (g.frame + 1 == g.screenshotAt && !g.pixelTest.empty()) checkPixels(g);
+    if (g.frame + 1 == g.screenshotAt && !g.screenshot.empty()) {
+        rlDrawRenderBatchActive();  // (what's drawn so far, into the picture)
+        Image shot = LoadImageFromScreen();
+        ExportImage(shot, g.screenshot.c_str());
+        UnloadImage(shot);
+    }
     EndDrawing();
 }
 
@@ -151,6 +189,12 @@ int runGame(const GameOptions& o) {
         if (!o.headless) CloseWindow();
         return 1;
     }
+    if (o.testFrames > 0) {
+        game.screenshotAt = o.testFrames;
+        if (const char* shot = std::getenv("SPROUT_GAME_SCREENSHOT")) game.screenshot = shot;
+        if (const char* pixels = std::getenv("SPROUT_TEST_PIXELS")) game.pixelTest = pixels;
+    }
+    game.tree.setAutoloads(settings.autoloads);  // (Project Settings > Autoloads)
     game.tree.setRoot(std::move(root));
     game.tree.setCurrentScene(scene);
     game.tree.start();
@@ -185,6 +229,7 @@ int runGame(const GameOptions& o) {
     multiplayer().close();          // tell the other players we're going
     game.tree.setRoot(nullptr);     // scripts and nodes go before the window does
     game.target.reset();
+    Shaders::clear();
     Assets::clear();
     if (!o.headless) CloseWindow();
 #endif
