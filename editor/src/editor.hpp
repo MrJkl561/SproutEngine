@@ -34,6 +34,7 @@
 #include "projects.hpp"
 #include "scene_tree.hpp"
 #include "script_checker.hpp"
+#include "tilemap.hpp"
 #include "text_editor.hpp"
 #include "theme.hpp"
 
@@ -76,6 +77,19 @@ private:
     void drawSheetDialog();
     void syncAnimationToGame();  // edits made while playing reach the running game
     bool animationTabShown() const;
+    // The TileMap panel (bottom tab 2): its pictures, a palette to pick tiles
+    // from, and the tools that paint with them in the viewport.
+    void drawTileMapPanel(Rectangle r, TileMap& map);
+    bool tileMapTabShown() const;
+    TileMap* paintingTileMap() const;  // the TileMap being painted on in the viewport, if any
+    bool updateTilePainting(Rectangle viewport);  // true: the mouse was used for painting
+    void drawTilePaintPreview();                  // (in the viewport's world space)
+    void paintStamp(TileMap& map, int cellX, int cellY);
+    void fillRect(TileMap& map, int x0, int y0, int x1, int y1, bool erase);
+    void floodFill(TileMap& map, int x, int y);
+    void addTileSource(TileMap& map, const std::string& texture);
+    // Tiled maps (.tmx/.tmj): makes nodes for one, under parent (or as the scene's root)
+    void importTiledMap(const std::filesystem::path& file, const Vector2* world);
     void drawViewport(Rectangle r);
     void drawGameView(Rectangle r);
     void drawPopup();
@@ -243,6 +257,7 @@ private:
     std::unique_ptr<SceneTree> playTree_;
     std::unique_ptr<ScriptReloader> scripts_;
     std::unique_ptr<raylib::RenderTexture> gameTexture_;
+    Rectangle gameRect_{0, 0, 0, 0};  // where the running game is shown (for its mouse)
     Node* selected_ = nullptr;
 
     raylib::Camera2D viewCam_{{0, 0}, {400, 225}, 0.0f, 1.0f};
@@ -310,7 +325,7 @@ private:
     int dropZone_ = 0;  // -1 before, 0 inside, 1 after
 
     struct FileEntry {
-        enum Kind { Texture, Scene, Shader, Script } kind;  // (the FileSystem dock's groups, in this order)
+        enum Kind { Texture, Scene, Shader, Map, Script } kind;  // (the FileSystem dock's groups, in this order)
         std::string path;         // textures/scenes: relative to the project; scripts: full path
         std::string label;        // what the FileSystem dock shows
         std::string scriptClass;  // scripts: the class REGISTER_SCRIPT names
@@ -335,6 +350,7 @@ private:
         std::vector<std::string> items;
         std::function<void(int)> onPick;
         bool justOpened = false;
+        float scroll = 0;  // (a list taller than the window scrolls with the wheel)
     } popup_;
 
     struct TextDialog {
@@ -380,7 +396,23 @@ private:
     } projects_;
 
     // The Animation panel (like Godot's SpriteFrames panel)
-    int bottomTab_ = 0;  // 0 Output, 1 Animation
+    int bottomTab_ = 0;  // 0 Output, 1 Animation, 2 TileMap
+    // The TileMap panel
+    enum class TileTool { Select, Paint, Rect, Fill, Erase, Pick } tileTool_ = TileTool::Paint;
+    int tileSource_ = 0;                  // the picture picked in the panel
+    int tileSelX_ = 0, tileSelY_ = 0;     // the tiles picked in the palette (a rectangle, in tiles)
+    int tileSelW_ = 1, tileSelH_ = 1;
+    bool tileFlipH_ = false, tileFlipV_ = false;
+    bool tileSolidMode_ = false;          // clicking the palette marks tiles solid
+    bool tileStroke_ = false;             // painting with a mouse button held down
+    bool tileRectDrag_ = false;           // the Rect tool (or right-drag) is dragging out a rectangle
+    bool tileRectErase_ = false;
+    int tileRectX0_ = 0, tileRectY0_ = 0;
+    int lastPaintX_ = 1 << 30, lastPaintY_ = 1 << 30;
+    bool paletteDrag_ = false;
+    int paletteX0_ = 0, paletteY0_ = 0;
+    raylib::Vector2 paletteScroll_{0, 0};
+    int paletteZoom_ = 0;                 // 0: fit
     int animSel_ = 0;    // the animation picked in the panel's list
     int frameSel_ = 0;   // the frame picked in its filmstrip
     bool animPreview_ = true;  // playing the preview (else showing frameSel_)

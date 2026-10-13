@@ -244,5 +244,7 @@ Everything the editor can do is in the **[Sprout Editor manual](../../editor/REA
 - [Animation](../../editor/README.md#animation)
 - [Exporting your game](../../editor/README.md#exporting-your-game)
 - [Signals, step by step](signals.md): making one part of your game react to another
+- [Tile maps and Tiled](tilemaps.md): painting whole levels from a tile sheet
+- [Menus and HUDs](ui.md): buttons, a score on screen, a title menu
 - [Multiplayer](multiplayer.md): playing together over a network
 - [Customizing the editor](../../editor/README.md#customizing-the-editor): themes and layout

@@ -44,6 +44,8 @@ be opened by the engine or the other way round. See
 - [Autoloads (global scripts)](#autoloads-global-scripts): game state, music and services kept across scenes
 - [Animation](#animation)
 - [Shaders](#shaders): custom shaders for sprites, rectangles and text
+- [Tile maps](#tile-maps): painting levels from tile sheets, and importing maps made in Tiled
+- [UI: buttons, menus and HUDs](#ui-buttons-menus-and-huds): the Control nodes and CanvasLayer
 - [Multiplayer](#multiplayer): hosting, joining, synced nodes, RPCs, dedicated servers
 - [Nodes](#nodes): what each node type is for
 - [C++ scripts](#c-scripts): the script editor, script variables (`EXPORT`), signals, hot reloading
@@ -529,6 +531,123 @@ Things to know:
 - Not there yet: `vertex()` (moving the corners), reading the screen behind the
   node (`SCREEN_TEXTURE`), and lights.
 
+## Tile maps
+
+A `TileMap` is a grid of tiles cut from pictures, for building levels quickly
+(like Godot's TileMap). The step-by-step guide is
+**[Tile maps and Tiled](../docs/editor/tilemaps.md)**; the short version:
+
+- **Add a TileMap** (Add > TileMap) and select it: the **TileMap** panel opens
+  at the bottom. Press **Add Picture...** and pick a tile sheet (any PNG in the
+  project). Set the **tile size**, and the **margin** and **gap** if the sheet
+  has empty pixels around or between its tiles.
+- **Pick tiles** in the palette on the right (drag across it to pick several
+  at once, like a stamp) and **paint** in the viewport.
+- **Tools:** Select (click nodes as usual), Paint (left drag paints, right
+  drag erases, Shift + drag fills a rectangle), Rectangle, Fill (fills the area
+  of matching cells), Erase and Pick (click a cell to paint with its tile).
+  The two flip buttons mirror what you paint. Middle drag or Space + drag pans
+  while a paint tool is on. Each stroke is one undo step.
+- **Collision:** press **Collision** and click tiles in the palette to make
+  them solid (they turn red). A `CharacterBody2D`'s `moveAndSlide()` stops at
+  solid tiles, just as it does at a `StaticBody2D`. Turn a whole map's
+  collision off with its `collision` property.
+- **Tile types:** pick one tile and give it a type name ("spikes",
+  "ladder") under the tools; scripts ask for it with `getCellType()`.
+- A TileMap can use several pictures. Its `cell_size` is the grid's spacing;
+  tiles bigger than a cell stick out of the top of it (like in Tiled).
+  Rotation is ignored for collisions, like the other bodies.
+
+From a script:
+
+```cpp
+auto* map = getNode("TileMap")->as<TileMap>();
+Vector2 cell = map->worldToMap(player->globalPosition());  // (column, row)
+int below = map->getCell(cell.x, cell.y + 1);              // the tile there, -1 if empty
+if (map->getCellType(cell) == "spikes") hurt();            // (cells work as Vector2s too)
+map->setCell(3, 4, 7);           // tile 7 of the first picture at column 3, row 4
+map->eraseCell(3, 4);
+map->isSolid(3, 5);              // a solid tile is there
+map->mapToWorld(3, 4);           // the middle of that cell, in the world
+map->getUsedCells();             // every cell with a tile
+```
+
+### Importing maps from Tiled
+
+[Tiled](https://www.mapeditor.org) is a free map editor. **Drop a `.tmx` or
+`.tmj` map onto the editor window** (or keep your Tiled files in the project's
+`maps/` folder and drag one from the FileSystem into the viewport, or
+right-click it > **Import into This Scene**). The map becomes a `Node2D` with
+a node for each layer:
+
+| In Tiled | In Sprout |
+|---|---|
+| A tile layer | A `TileMap` (with its offset, opacity, tint and visibility) |
+| Tiles with a `solid`, `collision` or `collides` property, or collision shapes drawn in Tiled's tile collision editor | Solid tiles |
+| A layer named or classed `Collision`, `Solid` or `Walls` (or with a `solid` property) | A TileMap whose tiles are all solid |
+| A tile's class (or type) | Its type name, for `getCellType()` |
+| Flipped and rotated tiles | Flipped tiles |
+| A rectangle (or ellipse) object | An `Area2D` with a `CollisionShape2D` (a `StaticBody2D` if it or its layer is called or classed `solid`, `collision` or `wall`) |
+| A tile object | A `Sprite2D` |
+| A text object | A `Label` |
+| A point, polygon or line | A `Node2D` marking the spot (use its position in scripts) |
+| An image layer | A `Sprite2D` |
+| A group | A `Node2D` with its layers inside |
+
+Tile sets can be inside the map or in their own `.tsx` / `.tsj` files, and
+every tile layer format works except zstd compression (save as CSV or Base64
+zlib instead). Infinite maps work too. Pictures outside the project are copied
+into `assets/tiles/`. Only orthogonal (square-grid) maps are supported, and
+only tile sets made from one picture; tile animations show their first frame.
+Importing again makes a fresh copy (delete the old one first). From the
+command line: `sprout_editor --project "My Game" --import-tiled level1.tmx`
+writes `scenes/level1.scene.json`.
+
+## UI: buttons, menus and HUDs
+
+The UI nodes (Godot's Control nodes) are rectangles: `position` is the top-left
+corner and `size` how big. The guide is
+**[Menus and HUDs](../docs/editor/ui.md)**.
+
+| Node | What it's for | Signals |
+|---|---|---|
+| `CanvasLayer` | Its children stay put on the screen while the camera moves: put your HUD and menus inside one. `layer`: higher ones are drawn on top | |
+| `Panel` | A box: a color with a border and rounded corners, or a picture stretched with nine-slicing (`texture`, `patch_margin`) | |
+| `Button` | Text in a box that can be clicked; `toggle_mode` makes it stay down | `pressed`, `button_down`, `button_up`, `toggled(bool)` |
+| `CheckBox` | On or off, with a label | `toggled(bool)` |
+| `HSlider` | Drag to pick a number from `min_value` to `max_value` in `step`s | `value_changed(float)` |
+| `ProgressBar` | Shows `value` as a bar (health, loading...) | |
+| `TextureRect` | A picture: stretched (`stretch_mode` 0), fitted (1), tiled (2) or centred (3) | |
+| `LineEdit` | A box to type in (click it first); `placeholder`, `max_length` | `text_changed(std::string)`, `text_submitted(std::string)` |
+| `VBoxContainer` / `HBoxContainer` | Puts its children under each other / side by side, `separation` apart, stretching them across (`fill`) and growing to fit | |
+
+Every UI node also has `disabled`, and sends `mouse_entered` and
+`mouse_exited`. The `Label` node works inside containers too. Connect the
+signals in the Inspector, or in code:
+
+```cpp
+void ready() override {
+    connect(getNode("Hud/Menu/Start"), "pressed", [this] { changeScene("scenes/level1.scene.json"); });
+    connect(getNode("Hud/Menu/Volume"), "value_changed", [](float v) { SetMasterVolume(v / 100); });
+}
+void process(float) override {
+    getNode("Hud/Health")->as<ProgressBar>()->value = health;
+    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !isMouseOverUi()) shoot(getGlobalMousePosition());
+}
+```
+
+- **The mouse in scripts:** `getMousePosition()` is the mouse in game pixels
+  (where CanvasLayer nodes are), `getGlobalMousePosition()` in the world
+  (through the camera), and `isMouseOverUi()` is true when it's over a button,
+  panel or other UI node, so a click there isn't also a click in the game.
+  Use these instead of raylib's `GetMousePosition()`: the game is scaled to
+  fit its window (and the editor).
+- **Without a CanvasLayer,** UI nodes are part of the world: the camera moves
+  them, like a sign with a button on it.
+- In the editor, a CanvasLayer's nodes show where they'll be on the screen:
+  the game window's frame starts at 0,0.
+- Rotation is ignored for UI nodes (scale works).
+
 ## Multiplayer
 
 Games can be played together over a network, like in Godot: one copy of the
@@ -589,6 +708,8 @@ other libraries. Web exports can't use it (browsers have no UDP).
 | `Timer` | Counts down `wait_time` seconds and sends `timeout` (again and again, or once with `one_shot`); `autostart`, `start()`, `stop()`, `timeLeft()` |
 | `MultiplayerSynchronizer` | Keeps properties (`position`, ...) the same in every player's game ([Multiplayer](#multiplayer)) |
 | `MultiplayerSpawner` | Copies the scenes the server adds below a node to every player's game ([Multiplayer](#multiplayer)) |
+| `TileMap` | A grid of tiles from tile sheets; paint it in the TileMap panel, solid tiles collide ([Tile maps](#tile-maps)) |
+| `CanvasLayer`, `Panel`, `Button`, `CheckBox`, `HSlider`, `ProgressBar`, `TextureRect`, `LineEdit`, `VBoxContainer`, `HBoxContainer` | The UI nodes ([UI](#ui-buttons-menus-and-huds)) |
 
 Physics is simple arcade physics: shapes are axis-aligned rectangles (rotation
 is ignored for collisions).
@@ -642,6 +763,8 @@ or one of your own base classes (see
 | `node()->addChild(createNode("Sprite2D"))` | Makes a new node while playing |
 | `node()->addChild(instantiate("scenes/coin.scene.json"))` | Makes a new copy of a scene while playing |
 | `changeScene("scenes/level2.scene.json")`, `reloadScene()` | Switch scenes at the end of the frame ([more](#changing-scenes-while-the-game-runs)) |
+| `quit()` | Ends the game after this frame (in the editor: stops playing) |
+| `getMousePosition()`, `getGlobalMousePosition()`, `isMouseOverUi()` | The mouse on the screen and in the world, and whether it's over a UI node ([more](#ui-buttons-menus-and-huds)) |
 | `tree()->currentScene()` | The path of the scene that's running |
 | `tree()->values["coins"]` | Numbers that last from one scene to the next |
 | `autoload<GameState>("GameState")` | An [autoload](#autoloads-global-scripts): kept for the whole game |
@@ -1108,6 +1231,9 @@ editor/
 │   ├── main.cpp          <- opens the window and runs the editor; the command-line tools
 │   ├── editor.*          <- the editor's panels, viewport, undo, dialogs
 │   ├── nodes.*           <- the node types
+│   ├── tilemap.*         <- the TileMap node
+│   ├── ui_nodes.*        <- the UI nodes (Button, Panel...) and the mouse for them
+│   ├── tiled_import.*    <- reads Tiled maps (.tmx, .tmj) and makes nodes from them
 │   ├── scene_tree.*      <- runs a scene: scripts, process, queueFree, drawing
 │   ├── script.hpp        <- the Script base class, EXPORT, SIGNAL, CALLABLE, RPC, INPUT, REGISTER_SCRIPT
 │   ├── signals.*         <- signals: connections, sending, the values they carry
@@ -1141,6 +1267,7 @@ editor/
 ├── tests/lint/           <- the script checks' test (scripts/test-lint.sh)
 ├── tests/autoload/       <- the autoloads test (scripts/test-autoload.sh)
 ├── tests/shaders/        <- the shaders test (scripts/test-shaders.sh)
+├── tests/tilemap/        <- the tile maps and UI test (scripts/test-tilemap.sh), with Tiled maps
 ├── scripts_module/       <- builds a project's scripts into the hot reload library
 └── project/              <- the demo project
     ├── project.json      <- game name, main scene, window size, export settings
@@ -1156,5 +1283,6 @@ node has them), so they're easy to read and to diff.
 ## Not there yet
 
 This is the bare minimum. Not included: animating other properties (like
-Godot's AnimationPlayer), sound nodes, UI (Control) nodes,
-tilemaps, and Android/iOS exports.
+Godot's AnimationPlayer), sound nodes, UI anchors and themes (UI nodes are
+placed in game pixels, and each sets its own colors), autotiling (terrains),
+and Android/iOS exports.

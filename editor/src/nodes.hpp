@@ -15,6 +15,9 @@
 //   MultiplayerSynchronizer - keeps properties the same on every player's game
 //   MultiplayerSpawner      - copies the scenes the server adds to every player's game
 //   Timer             - counts down and sends its "timeout" signal
+//   TileMap           - a grid of tiles (tilemap.hpp)
+//   CanvasLayer, Panel, Button, CheckBox, HSlider, ProgressBar, TextureRect,
+//   LineEdit, VBoxContainer, HBoxContainer - the UI nodes (ui_nodes.hpp)
 //
 // Nodes send signals when things happen (see signals.hpp): every node sends
 // "ready" and "tree_exiting"; Area2D "body_entered"..., Timer "timeout"...
@@ -38,12 +41,12 @@ class Script;
 // Properties: each node lists its editable fields, which is all the inspector
 // and the scene files need to know about it.
 // ---------------------------------------------------------------------------
-enum class PropKind { Section, Bool, Int, Float, Vec2, Color, String, Texture, Scene, Animations, AnimationName, Shader };
+enum class PropKind { Section, Bool, Int, Float, Vec2, Color, String, Texture, Scene, Animations, AnimationName, Shader, Tiles };
 
 struct Property {
     std::string name;
     PropKind kind = PropKind::Section;
-    void* ptr = nullptr;  // points at the field inside the node
+    void* ptr = nullptr;  // points at the field inside the node (Tiles: at the TileMap)
     float step = 1.0f;    // how much one pixel of mouse drag changes a number
 };
 
@@ -71,6 +74,7 @@ struct SpriteAnimation {
 struct DrawOptions {
     bool editor = false;  // true: also draw gizmos (camera frames, collision shapes)
     float zoom = 1.0f;    // view zoom, used to keep gizmo lines one pixel wide
+    Rectangle view{0, 0, 0, 0};  // the part of the world on screen (width 0: unknown), to skip what's off it
 };
 
 // A signal connection made in the editor (the Inspector's Signals list),
@@ -218,6 +222,9 @@ public:
 
     // The node's clickable area in its own space (width 0 = just a point).
     virtual Rectangle localRect() const { return {0, 0, 0, 0}; }
+    // True for a CanvasLayer: it starts a space of its own (the screen), so the
+    // nodes above it don't move it.
+    virtual bool startsOwnSpace() const { return false; }
 
 protected:
     // "shader" and its parameters, for the nodes that draw something

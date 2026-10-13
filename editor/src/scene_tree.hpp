@@ -27,7 +27,10 @@ public:
     // Game loop
     void start();                // creates every node's script and calls ready()
     void process(float delta);   // process() on every script, then removes freed nodes
+    // Draws the scene. In the game (options.editor false) the CanvasLayers are
+    // left out: draw them with drawCanvasLayers() after the camera is done.
     void draw(const DrawOptions& options);
+    void drawCanvasLayers(const DrawOptions& options);
     bool isPlaying() const { return playing_; }
     float delta() const { return delta_; }
 
@@ -38,6 +41,9 @@ public:
     // e.g. "scenes/level2.scene.json".
     void changeScene(const std::string& scenePath);
     void reloadScene();  // start the current scene again (e.g. after the player dies)
+    // Ends the game after this frame (in the editor: stops playing).
+    void quit() { quitRequested_ = true; }
+    bool quitRequested() const { return quitRequested_; }
     const std::string& currentScene() const { return currentScene_; }
     void setCurrentScene(const std::string& scenePath) { currentScene_ = scenePath; }
 
@@ -60,6 +66,29 @@ public:
 
     // The Camera2D the game looks through (the first one marked "current").
     Camera2D* currentCamera() const;
+    // The view the game is drawn with: that camera, centred on the screen.
+    raylib::Camera2D view() const;
+
+    // The mouse, in game pixels (0,0 = the game window's top-left corner),
+    // set every frame by whatever runs the game (the window may be scaled).
+    raylib::Vector2 mouseScreen{-100000, -100000};
+    raylib::Vector2 mouseWorld() const;  // where it is in the world, through the camera
+    bool isMouseOverGui() const { return guiHot.get() != nullptr; }
+
+    // (Used by ui_nodes.cpp: the UI node under the mouse, the one being
+    // clicked, and the one being typed in.)
+    struct NodeRef {
+        Node* get() const { return life.expired() ? nullptr : node; }
+        void set(Node* n) {
+            node = n;
+            life = n ? n->lifetime() : std::weak_ptr<void>();
+        }
+        Node* node = nullptr;
+        std::weak_ptr<void> life;
+    };
+    NodeRef guiHot, guiActive, guiFocus;
+    int testMouse = -1;            // (tests) -1: the real mouse button; 0 up, 1 down
+    bool testMouseWasDown = false;
 
     // Called by Node::addChild so nodes added while playing get their scripts.
     void nodeAdded(Node* node);
@@ -79,6 +108,7 @@ private:
     std::string currentScene_;
     std::string pendingScene_;  // set by changeScene(), done at the end of process()
     bool playing_ = false;
+    bool quitRequested_ = false;
     float delta_ = 1.0f / 60.0f;
 };
 

@@ -80,6 +80,8 @@ Everything is written for beginners. Every guide is one click away from here.
 |---|---|
 | [Your first game in the editor](docs/editor/getting-started.md) | A character that runs and jumps, step by step |
 | [Signals, step by step](docs/editor/signals.md) | Making one part of your game react to another |
+| [Tile maps and Tiled](docs/editor/tilemaps.md) | Painting levels from a tile sheet, and importing maps made in Tiled |
+| [Menus and HUDs](docs/editor/ui.md) | Buttons, sliders, health bars and a HUD that stays on screen |
 | [Multiplayer](docs/editor/multiplayer.md) | Playing together over a network |
 | [The Editor manual](editor/README.md) | Everything below, in one place |
 
@@ -99,6 +101,9 @@ Jump straight to a part of the manual:
 [Autoloads (global scripts)](editor/README.md#autoloads-global-scripts) ·
 [Animation](editor/README.md#animation) ·
 [Shaders](editor/README.md#shaders) ·
+[Tile maps](editor/README.md#tile-maps) ·
+[Importing from Tiled](editor/README.md#importing-maps-from-tiled) ·
+[UI nodes](editor/README.md#ui-buttons-menus-and-huds) ·
 [Multiplayer](editor/README.md#multiplayer) ·
 [Exporting your game](editor/README.md#exporting-your-game) ·
 [Portable editor](editor/README.md#moving-the-editor-or-a-portable-copy) ·
@@ -260,6 +265,12 @@ My Game/
 - **Godot-style nodes**: `Node2D`, `Sprite2D`, `AnimatedSprite2D`, `ColorRect`,
   `Label`, `Camera2D`, `StaticBody2D`, `CharacterBody2D` (with
   `moveAndSlide()`), `Area2D`, `CollisionShape2D` and `Timer`.
+- **Tile maps**: paint levels from a tile sheet, mark tiles solid, and
+  **import maps made in [Tiled](https://www.mapeditor.org)** (`.tmx`,
+  `.tmj`) by dropping them on the editor.
+- **UI nodes**: `Button`, `Panel`, `CheckBox`, `HSlider`, `ProgressBar`,
+  `TextureRect`, `LineEdit`, `VBoxContainer` and `HBoxContainer`, and a
+  `CanvasLayer` that keeps a HUD on screen.
 - **A live viewport**: drag, rotate, snap, zoom and pan; drop pictures in
   from your desktop.
 - **C++ scripts on nodes** with `ready()` and `process(delta)`, which **hot
@@ -377,6 +388,7 @@ folder:
 | Test the Script tab's checks | `scripts\test-lint.bat` | `scripts/test-lint.sh` |
 | Test autoloads | `scripts\test-autoload.bat` | `scripts/test-autoload.sh` |
 | Test shaders | `scripts\test-shaders.bat` | `scripts/test-shaders.sh` |
+| Test tile maps, Tiled import and the UI nodes | `scripts\test-tilemap.bat` | `scripts/test-tilemap.sh` |
 | Export a game | `scripts\export.bat windows,web [project] [folder]` | `scripts/export.sh linux,web [project] [folder]` |
 | Set up web exports (once) | `scripts\setup-web.bat [emsdk folder]` | `scripts/setup-web.sh [emsdk folder]` |
 

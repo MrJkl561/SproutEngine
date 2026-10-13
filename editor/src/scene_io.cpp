@@ -8,6 +8,7 @@
 
 #include "assets.hpp"
 #include "script.hpp"
+#include "tilemap.hpp"
 
 namespace fs = std::filesystem;
 
@@ -51,6 +52,7 @@ json propertyListToJson(const std::vector<Property>& props) {
                 out[p.name] = list;
                 break;
             }
+            case PropKind::Tiles: out[p.name] = tilesToJson(*static_cast<TileMap*>(p.ptr)); break;
         }
     }
     return out;
@@ -128,6 +130,7 @@ void applyPropertyList(const std::vector<Property>& props, const json& in) {
                     *static_cast<std::vector<SpriteAnimation>*>(p.ptr) = list;
                     break;
                 }
+                case PropKind::Tiles: tilesFromJson(*static_cast<TileMap*>(p.ptr), v); break;
             }
         } catch (const json::exception&) {
             // A badly written value keeps its default.

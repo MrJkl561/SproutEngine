@@ -10,6 +10,7 @@
 #include <fstream>
 #include <optional>
 #include <regex>
+#include <set>
 #include <sstream>
 
 #include <nlohmann/json.hpp>
@@ -29,6 +30,7 @@
 #include "script_lint.hpp"
 #include "script.hpp"
 #include "theme.hpp"
+#include "tiled_import.hpp"
 #include "ui_scale.hpp"
 
 namespace fs = std::filesystem;
@@ -309,6 +311,10 @@ Node2D* takesShader(Node* n) {
     if (auto* sp = n->as<Sprite2D>()) return sp;
     if (auto* cr = n->as<ColorRect>()) return cr;
     if (auto* lb = n->as<Label>()) return lb;
+    if (auto* tm = n->as<TileMap>()) return tm;
+    if (auto* pn = n->as<Panel>()) return pn;
+    if (auto* bt = n->as<Button>()) return bt;
+    if (auto* tr = n->as<TextureRect>()) return tr;
     return nullptr;
 }
 
@@ -706,8 +712,19 @@ void Editor::frame() {
         FilePathList dropped = LoadDroppedFiles();
         for (unsigned i = 0; i < dropped.count; ++i) {
             fs::path src = dropped.paths[i];
+            if (isTiledMap(src)) {  // a map made in Tiled: its layers become nodes
+                raylib::Vector2 world = viewCam_.GetScreenToWorld(GetMousePosition());
+                importTiledMap(src, mouseIn(viewportRect_) ? &world : nullptr);
+                continue;
+            }
+            std::string ext = src.extension().string();
+            if (ext == ".tsx" || ext == ".tsj") {
+                log(src.filename().string() + " is a Tiled tile set: drop the map that uses it (.tmx or .tmj) instead.",
+                    kOrange);
+                continue;
+            }
             if (!isImageFile(src)) {
-                log("Only pictures can be dropped in: " + src.filename().string(), kBad);
+                log("Only pictures and Tiled maps (.tmx, .tmj) can be dropped in: " + src.filename().string(), kBad);
                 continue;
             }
             std::error_code ec;
@@ -730,7 +747,16 @@ void Editor::frame() {
 
     if (playTree_) {
         try {
+            if (gameRect_.width > 0) {  // the mouse, in game pixels
+                raylib::Vector2 m = GetMousePosition();
+                playTree_->mouseScreen = raylib::Vector2((m.x - gameRect_.x) * playTree_->gameSize.x / gameRect_.width,
+                                                         (m.y - gameRect_.y) * playTree_->gameSize.y / gameRect_.height);
+            }
             playTree_->process(std::min(GetFrameTime(), 1.0f / 20.0f));
+            if (playTree_->quitRequested()) {
+                log("The game called quit().", kDim);
+                stop();
+            }
         } catch (const std::exception& e) {
             log(std::string("A script threw an exception: ") + e.what(), kBad);
             stop();
@@ -1276,6 +1302,8 @@ void Editor::rescanFiles() {
     scanProject("assets", FileEntry::Texture, isImageFile);
     scanProject("scenes", FileEntry::Scene, [](const fs::path& p) { return p.extension() == ".json"; });
     scanProject("shaders", FileEntry::Shader, [](const fs::path& p) { return p.extension() == ".shader"; });
+    scanProject("maps", FileEntry::Map, isTiledMap);  // Tiled maps kept in the project
+    scanProject("assets", FileEntry::Map, isTiledMap);
 
     std::vector<FileEntry> scripts;
     static const std::regex registerRe(R"(REGISTER_SCRIPT\s*\(\s*(\w+)\s*\))");
@@ -1327,6 +1355,7 @@ void Editor::drawFileSystem(Rectangle r) {
             const char* title = lastKind == FileEntry::Texture  ? "res://assets"
                                 : lastKind == FileEntry::Scene  ? "res://scenes"
                                 : lastKind == FileEntry::Shader ? "res://shaders"
+                                : lastKind == FileEntry::Map    ? "Tiled maps (drag in to import)"
                                                                 : "res://scripts (C++)";
             rows.push_back({true, title, 0});
         }
@@ -1364,9 +1393,12 @@ void Editor::drawFileSystem(Rectangle r) {
                                {0, 0}, 0, WHITE);
             }
         } else {
-            int icon = f.kind == FileEntry::Scene ? ICON_LAYERS : f.kind == FileEntry::Shader ? ICON_FX : ICON_FILETYPE_TEXT;
+            int icon = f.kind == FileEntry::Scene    ? ICON_LAYERS
+                       : f.kind == FileEntry::Shader ? ICON_FX
+                       : f.kind == FileEntry::Map    ? ICON_GRID
+                                                     : ICON_FILETYPE_TEXT;
             bool header = f.kind == FileEntry::Script && fs::path(f.path).extension() != ".cpp";
-            Color c = f.kind == FileEntry::Scene || f.kind == FileEntry::Shader ? kAccent
+            Color c = f.kind == FileEntry::Scene || f.kind == FileEntry::Shader || f.kind == FileEntry::Map ? kAccent
                       : header                    ? kText  // a base class or helpers: nothing to load
                       : ScriptRegistry::has(f.scriptClass) ? kGood
                                                            : kOrange;
@@ -1399,6 +1431,9 @@ void Editor::activateFile(size_t index) {
             }
             break;
         case FileEntry::Scene: requestOpenScene(f.path); break;
+        case FileEntry::Map:
+            log("Drag " + f.label + " into the viewport to import it (a TileMap for each layer), or right-click it.", kDim);
+            break;
         case FileEntry::Shader:
             if (auto* n2d = takesShader(selected_)) {
                 touch();
@@ -1464,6 +1499,8 @@ void Editor::finishDrag() {
             createSpriteAt(f.path, world);
         } else if (f.kind == FileEntry::Scene) {
             instanceScene(f.path, editTree_.root(), &world);  // drop a scene in: instance it there
+        } else if (f.kind == FileEntry::Map) {
+            importTiledMap(projectDir_ / f.path, &world);
         } else if (Node2D* hit = pickNode(world)) {
             select(selectableFor(hit));
             activateFile(d.file);
@@ -1567,11 +1604,12 @@ void Editor::updateViewportInput(Rectangle r) {
 
     // Pan with the middle or right mouse button, or Space + left drag
     bool spaceDrag = IsKeyDown(KEY_SPACE) && !isTyping();
-    if (inside && (IsMouseButtonPressed(MOUSE_BUTTON_MIDDLE) || IsMouseButtonPressed(MOUSE_BUTTON_RIGHT) ||
+    bool rightPans = !paintingTileMap();  // (the right button erases tiles while painting)
+    if (inside && (IsMouseButtonPressed(MOUSE_BUTTON_MIDDLE) || (rightPans && IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)) ||
                    (spaceDrag && IsMouseButtonPressed(MOUSE_BUTTON_LEFT))))
         panning_ = true;
     if (panning_) {
-        if (IsMouseButtonDown(MOUSE_BUTTON_MIDDLE) || IsMouseButtonDown(MOUSE_BUTTON_RIGHT) ||
+        if (IsMouseButtonDown(MOUSE_BUTTON_MIDDLE) || (rightPans && IsMouseButtonDown(MOUSE_BUTTON_RIGHT)) ||
             (spaceDrag && IsMouseButtonDown(MOUSE_BUTTON_LEFT))) {
             viewCam_.target = raylib::Vector2(viewCam_.target) - raylib::Vector2(GetMouseDelta()) / viewCam_.zoom;
             mouseCursor_ = MOUSE_CURSOR_RESIZE_ALL;
@@ -1579,6 +1617,8 @@ void Editor::updateViewportInput(Rectangle r) {
         }
         panning_ = false;
     }
+
+    if (updateTilePainting(r)) return;  // a TileMap paint tool has the mouse
 
     auto* sel = selected_ ? selected_->as<Node2D>() : nullptr;
     if (inside && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && drag_.kind == DragKind::None) {
@@ -1678,7 +1718,11 @@ void Editor::drawViewport(Rectangle r) {
     float px = 1.0f / viewCam_.zoom;  // one screen pixel in world units
     DrawRectangleLinesEx({-px, -px, editTree_.gameSize.x + 2 * px, editTree_.gameSize.y + 2 * px}, 2 * px,
                          theme().viewport.gameFrame);  // the game window
-    editTree_.draw({true, viewCam_.zoom});
+    {
+        raylib::Vector2 a = viewCam_.GetScreenToWorld({r.x, r.y});
+        raylib::Vector2 b = viewCam_.GetScreenToWorld({r.x + r.width, r.y + r.height});
+        editTree_.draw({true, viewCam_.zoom, {a.x, a.y, b.x - a.x, b.y - a.y}});
+    }
 
     // Nodes with no size get a small cross so they can be seen and clicked
     forEachNode(editTree_.root(), [&](Node* n) {
@@ -1692,8 +1736,10 @@ void Editor::drawViewport(Rectangle r) {
         DrawLineEx({p.x, p.y - 6 * px}, {p.x, p.y + 6 * px}, 2 * px, c);
     });
 
+    drawTilePaintPreview();
+
     auto* sel = selected_ ? selected_->as<Node2D>() : nullptr;
-    if (sel) {
+    if (sel && !paintingTileMap()) {
         Rectangle lr = sel->localRect();
         Color selColor = theme().viewport.selection;
         if (lr.width > 0 && lr.height > 0) drawLocalRect(*sel, lr, BLANK, selColor, 2 * px);
@@ -1703,7 +1749,7 @@ void Editor::drawViewport(Rectangle r) {
     applyUiScale();
 
     // Move/rotate handle, drawn in screen space so it's the same size at any zoom
-    if (sel) {
+    if (sel && !paintingTileMap()) {
         raylib::Vector2 o = viewCam_.GetWorldToScreen(sel->globalPosition());
         raylib::Vector2 h = rotateHandlePos();
         bool hot = overRotateHandle(GetMousePosition()) || viewDrag_ == ViewDrag::Rotate;
@@ -1751,15 +1797,12 @@ void Editor::renderGame() {
 
     gameTexture_->BeginMode();
     ClearBackground(playTree_->clearColor);
-    raylib::Camera2D cam({0, 0}, {0, 0}, 0, 1);
-    if (Camera2D* c = playTree_->currentCamera()) {
-        cam.offset = playTree_->gameSize / 2;
-        cam.target = c->globalPosition();
-        cam.zoom = c->zoom > 0.01f ? c->zoom : 0.01f;
-    }
+    raylib::Camera2D cam = playTree_->view();
+    raylib::Vector2 a = cam.GetScreenToWorld({0, 0}), b = cam.GetScreenToWorld(playTree_->gameSize);
     cam.BeginMode();
-    playTree_->draw({false, cam.zoom});
+    playTree_->draw({false, cam.zoom, {a.x, a.y, b.x - a.x, b.y - a.y}});
     cam.EndMode();
+    playTree_->drawCanvasLayers({false, 1});  // the HUD and menus, on the screen
     gameTexture_->EndMode();
 }
 
@@ -1771,6 +1814,7 @@ void Editor::drawGameView(Rectangle r) {
         float s = std::min((r.width - 20) / gw, (r.height - 50) / gh);
         Rectangle dst{r.x + (r.width - gw * s) / 2, r.y + 36 + (r.height - 36 - gh * s) / 2, gw * s, gh * s};
         DrawTexturePro(gameTexture_->texture, {0, 0, gw, -gh}, dst, {0, 0}, 0, WHITE);
+        gameRect_ = dst;  // (for the mouse, next frame)
     }
     drawText("Game running - press F8 or Esc (or Stop) to go back to editing. Edits made while playing are not kept.",
              r.x + 10, r.y + 10, kOrange);
@@ -1967,6 +2011,14 @@ void Editor::propertyRow(Property& p, float x, float& y, float width, const std:
                         storeScriptVars();
                     });
             }
+            break;
+        }
+        case PropKind::Tiles: {
+            auto* map = static_cast<TileMap*>(p.ptr);
+            std::string what = std::to_string(map->cells.size()) + " tiles, " + std::to_string(map->sources.size()) +
+                               (map->sources.size() == 1 ? " picture" : " pictures");
+            hint({fx, y, fw, 24}, "Paint tiles, and add pictures to cut into tiles, in the TileMap panel");
+            if (GuiButton({fx, y, fw, 24}, fitText(what + "  (Edit)", fw - 12).c_str())) bottomTab_ = 2;
             break;
         }
         case PropKind::Animations: {
@@ -2395,10 +2447,16 @@ void Editor::drawOutput(Rectangle r) {
         drawText(text, x + 10, r.y + 6, active ? kText : kDim);
         if (!GuiIsLocked() && mouseIn(t) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) bottomTab_ = index;
     };
+    auto* tileMap = selected_ ? selected_->as<TileMap>() : nullptr;
     tab(r.x + 2, 80, "Output", 0);
     if (sprite) tab(r.x + 84, 100, "Animation", 1);
+    if (tileMap) tab(r.x + 84, 90, "TileMap", 2);
     if (animationTabShown()) {
         drawAnimationPanel({r.x, r.y + kHeaderH, r.width, r.height - kHeaderH}, *sprite);
+        return;
+    }
+    if (tileMapTabShown()) {
+        drawTileMapPanel({r.x, r.y + kHeaderH, r.width, r.height - kHeaderH}, *tileMap);
         return;
     }
     hint({r.x + r.width - 64, r.y + 2, 58, 24}, "Clear the Output panel");
@@ -2810,23 +2868,33 @@ void Editor::drawPopup() {
     if (!popup_.open) return;
     float w = 160;
     for (auto& s : popup_.items) w = std::max(w, textWidth(s) + 32);
-    float h = popup_.items.size() * kRowH + 8;
+    float full = popup_.items.size() * kRowH + 8;
     float sw = screenW(), sh = screenH();
-    Rectangle box{std::min(popup_.pos.x, sw - w - 4), std::min(popup_.pos.y, sh - h - 4), w, h};
+    float h = std::min(full, sh - 8);  // too tall for the window: it scrolls
+    Rectangle box{std::min(popup_.pos.x, sw - w - 4), std::max(4.0f, std::min(popup_.pos.y, sh - h - 4)), w, h};
+    if (full > h && mouseIn(box)) popup_.scroll -= GetMouseWheelMove() * kRowH * 3;
+    popup_.scroll = std::clamp(popup_.scroll, 0.0f, full - h);
 
     DrawRectangleRec({box.x + 4, box.y + 4, box.width, box.height}, Fade(BLACK, 0.4f));
     DrawRectangleRec(box, kPanel);
     DrawRectangleLinesEx(box, 1, kAccent);
+    if (full > h) {  // a scroll bar
+        float bar = h * h / full, at = box.y + (h - bar) * popup_.scroll / (full - h);
+        DrawRectangleRec({box.x + box.width - 5, at, 3, bar}, kDim);
+    }
+    beginClip({box.x + 1, box.y + 1, box.width - 2, box.height - 2});
     int picked = -1;
     for (size_t i = 0; i < popup_.items.size(); ++i) {
-        Rectangle row{box.x + 4, box.y + 4 + i * kRowH, box.width - 8, kRowH};
-        bool hover = mouseIn(row);
+        Rectangle row{box.x + 4, box.y + 4 + i * kRowH - popup_.scroll, box.width - 8, kRowH};
+        if (row.y + row.height < box.y || row.y > box.y + box.height) continue;
+        bool hover = mouseIn(row) && mouseIn(box);
         if (hover) {
             DrawRectangleRec(row, kSelect);
             if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT) && !popup_.justOpened) picked = static_cast<int>(i);
         }
         drawText(popup_.items[i], row.x + 10, row.y + 4, kText);
     }
+    EndScissorMode();
 
     if (picked >= 0) {
         auto onPick = popup_.onPick;
@@ -2893,6 +2961,12 @@ void Editor::fileMenu(size_t index, Vector2 at) {
             add("Add as Autoload...", [this, path = f.path] { openAutoloadsDialog("", path); });
             add("Edit JSON in Script Tab", [this, full] { openDocument(full); });
             if (!external.empty()) add(external + " (JSON)", [this, full] { openInCodeEditor(full); });
+            break;
+        case FileEntry::Map:
+            add("Import into This Scene", [this, full] { importTiledMap(full, nullptr); });
+            add("Open in Tiled", [this, full] {
+                if (!platform::openWithSystem(full)) log("Couldn't open " + full.string(), kBad);
+            });
             break;
         case FileEntry::Shader:
             add("Edit in Script Tab", [this, full] { openDocument(full); });
@@ -4344,6 +4418,15 @@ void Editor::select(Node* node) {
         animPreview_ = true;
         animPreviewStart_ = GetTime();
     }
+    if (node && node->as<TileMap>()) {
+        // Selecting a TileMap opens its panel, ready to paint (or to add a picture).
+        bottomTab_ = 2;
+        tileSource_ = 0;
+        tileSelX_ = tileSelY_ = 0;
+        tileSelW_ = tileSelH_ = 1;
+        tileSolidMode_ = false;
+        if (tileTool_ == TileTool::Select) tileTool_ = TileTool::Paint;
+    }
     activeField_.clear();
     scrubField_.clear();
     openColorPicker_.clear();
@@ -5389,6 +5472,588 @@ void Editor::redo() {
     restore(redoStack_.back());
     redoStack_.pop_back();
     dirty_ = true;
+}
+
+
+// ===========================================================================
+// TileMap panel (like Godot's TileMap / TileSet editors)
+// ===========================================================================
+bool Editor::tileMapTabShown() const { return bottomTab_ == 2 && selected_ && selected_->as<TileMap>(); }
+
+TileMap* Editor::paintingTileMap() const {
+    if (!tileMapTabShown() || playTree_ || mainView_ != MainView::View2D || tileTool_ == TileTool::Select) return nullptr;
+    if (selected_->inInstance || !selected_->sceneFile.empty()) return nullptr;  // (edit it in its own scene)
+    auto* map = selected_->as<TileMap>();
+    return map->sources.empty() ? nullptr : map;
+}
+
+void Editor::addTileSource(TileMap& map, const std::string& texture) {
+    touch();
+    // The same tile size as the last picture, or the map's cells
+    int w = static_cast<int>(map.cellSize.x), h = static_cast<int>(map.cellSize.y);
+    if (!map.sources.empty()) {
+        w = map.sources.back().tileWidth;
+        h = map.sources.back().tileHeight;
+    }
+    tileSource_ = map.addSource(texture, std::max(1, w), std::max(1, h));
+    tileSelX_ = tileSelY_ = 0;
+    tileSelW_ = tileSelH_ = 1;
+    if (tileTool_ == TileTool::Select) tileTool_ = TileTool::Paint;
+    log("Added " + texture + " to " + map.name + ": set its tile size if the tiles aren't " + std::to_string(w) + "x" +
+            std::to_string(h) + ", then pick tiles and paint in the viewport.",
+        kGood);
+}
+
+void Editor::drawTileMapPanel(Rectangle r, TileMap& map) {
+    DrawRectangleRec(r, kPanel);
+    float x = r.x + 10, y = r.y + 8;
+    bool canClick = !GuiIsLocked() && mouseIn(r);
+    std::string id = std::to_string(reinterpret_cast<uintptr_t>(&map)) + "/tiles/";
+
+    auto pickPicture = [this, &map](Vector2 at, bool withRemove) {
+        std::vector<std::string> items;
+        std::vector<std::function<void()>> actions;
+        TileMap* target = &map;
+        for (size_t i = 0; i < map.sources.size(); ++i) {
+            items.push_back(std::to_string(i) + ": " + map.sources[i].texture);
+            actions.push_back([this, i] {
+                tileSource_ = static_cast<int>(i);
+                tileSelX_ = tileSelY_ = 0;
+                tileSelW_ = tileSelH_ = 1;
+            });
+        }
+        for (auto& f : files_) {
+            if (f.kind != FileEntry::Texture) continue;
+            items.push_back("Add " + f.path);
+            actions.push_back([this, target, path = f.path] {
+                if (selected_ == target) addTileSource(*target, path);
+            });
+        }
+        if (withRemove && !map.sources.empty()) {
+            items.push_back("Remove Picture " + std::to_string(tileSource_) + " (and its tiles)");
+            actions.push_back([this, target] {
+                if (selected_ != target || tileSource_ >= static_cast<int>(target->sources.size())) return;
+                touch();
+                int gone = tileSource_;
+                for (auto it = target->cells.begin(); it != target->cells.end();) {
+                    if (it->second.source == gone) {
+                        it = target->cells.erase(it);
+                        continue;
+                    }
+                    if (it->second.source > gone) --it->second.source;
+                    ++it;
+                }
+                target->sources.erase(target->sources.begin() + gone);
+                tileSource_ = 0;
+            });
+        }
+        if (items.empty()) {
+            log("There are no pictures in the project yet: drop a PNG onto the editor first.", kOrange);
+            return;
+        }
+        openPopup(at, items, [actions](int i) { actions[i](); });
+    };
+
+    if (map.sources.empty()) {
+        drawText("This TileMap has no tiles yet. Pick a picture to cut into tiles (a tile sheet, or any PNG):", x, y + 4,
+                 kText);
+        hint({x, y + 30, 180, 26}, "Pick a picture from the project's assets");
+        if (GuiButton({x, y + 30, 180, 26}, "Add Picture...")) pickPicture({x, y + 58}, false);
+        drawText("Or drop a Tiled map (.tmx or .tmj) onto the editor to import a whole level, layers and all.", x,
+                 y + 68, kDim);
+        return;
+    }
+    tileSource_ = std::clamp(tileSource_, 0, static_cast<int>(map.sources.size()) - 1);
+    TileSource& src = map.sources[tileSource_];
+    raylib::Texture* tex = Assets::texture(src.texture);
+    int cols = src.columns(), rows = src.rows();
+    float leftW = std::min(360.0f, r.width * 0.45f);
+
+    // --- Left: the picture, its grid, the tools ---------------------------------
+    hint({x, y, leftW - 10, 24}, "The picture being painted with: click to pick another, add one, or remove this one");
+    std::string label = std::to_string(tileSource_) + ": " + src.texture;
+    if (GuiButton({x, y, leftW - 10, 24}, fitText(label + "  v", leftW - 22).c_str())) pickPicture({x, y + 26}, true);
+    y += 30;
+
+    // Tile size, margin and spacing
+    auto intField = [&](const std::string& name, float fx, float fw, int& value, int minimum) {
+        float f = static_cast<float>(value);
+        if (floatField({fx, y, fw, 24}, id + name, f, 0.1f)) value = std::max(minimum, static_cast<int>(std::lround(f)));
+    };
+    float fw = (leftW - 10 - 3 * 6 - 36 - 50 - 52) / 4;
+    drawText("Tile", x, y + 4, kDim);
+    float fx = x + 36;
+    hint({fx, y, fw * 2 + 4, 24}, "The size of one tile in the picture, in pixels");
+    intField("w", fx, fw, src.tileWidth, 1);
+    intField("h", fx + fw + 4, fw, src.tileHeight, 1);
+    fx += fw * 2 + 10;
+    drawText("Margin", fx, y + 4, kDim);
+    hint({fx + 50, y, fw, 24}, "Empty pixels around the edge of the picture");
+    intField("margin", fx + 50, fw, src.margin, 0);
+    fx += 50 + fw + 6;
+    drawText("Gap", fx, y + 4, kDim);
+    hint({fx + 34, y, fw, 24}, "Empty pixels between the tiles");
+    intField("spacing", fx + 34, fw, src.spacing, 0);
+    y += 30;
+    if (map.cellSize.x != src.tileWidth || map.cellSize.y != src.tileHeight) {
+        std::string msg = "The map's cells are " + formatFloat(map.cellSize.x) + "x" + formatFloat(map.cellSize.y) + ".";
+        drawText(msg, x, y + 4, kOrange);
+        hint({x + textWidth(msg) + 8, y, 110, 24}, "Make the map's grid the same size as these tiles");
+        if (GuiButton({x + textWidth(msg) + 8, y, 110, 24}, "Match tiles")) {
+            touch();
+            map.cellSize = raylib::Vector2(static_cast<float>(src.tileWidth), static_cast<float>(src.tileHeight));
+        }
+        y += 30;
+    }
+
+    // Tools
+    struct ToolButton {
+        TileTool tool;
+        int icon;
+        const char* tip;
+    };
+    const ToolButton tools[] = {
+        {TileTool::Select, ICON_CURSOR_CLASSIC, "Select: click nodes in the viewport as usual (no painting)"},
+        {TileTool::Paint, ICON_PENCIL, "Paint (left drag), erase (right drag). Shift+drag: a rectangle"},
+        {TileTool::Rect, ICON_BOX, "Rectangle: drag to fill a rectangle (right drag: erase one)"},
+        {TileTool::Fill, ICON_COLOR_BUCKET, "Fill: click to fill the area of matching cells"},
+        {TileTool::Erase, ICON_RUBBER, "Erase (left drag)"},
+        {TileTool::Pick, ICON_COLOR_PICKER, "Pick: click a cell in the viewport to paint with its tile"},
+    };
+    float tx = x;
+    for (const ToolButton& t : tools) {
+        Rectangle b{tx, y, 30, 26};
+        hint(b, t.tip);
+        bool on = tileTool_ == t.tool;
+        if (on) DrawRectangleRec({b.x - 2, b.y - 2, b.width + 4, b.height + 4}, kAccent);
+        if (GuiButton(b, GuiIconText(t.icon, nullptr))) {
+            tileTool_ = t.tool;
+            tileSolidMode_ = false;
+        }
+        tx += 34;
+    }
+    tx += 6;
+    auto toggle = [&](Rectangle b, int icon, const char* tip, bool& value) {
+        hint(b, tip);
+        if (value) DrawRectangleRec({b.x - 2, b.y - 2, b.width + 4, b.height + 4}, kAccent);
+        if (GuiButton(b, GuiIconText(icon, nullptr))) value = !value;
+    };
+    toggle({tx, y, 30, 26}, ICON_SYMMETRY_HORIZONTAL, "Flip the tiles you paint left-right", tileFlipH_);
+    toggle({tx + 34, y, 30, 26}, ICON_SYMMETRY_VERTICAL, "Flip the tiles you paint upside down", tileFlipV_);
+    y += 34;
+    {
+        Rectangle b{x, y, 120, 24};
+        hint(b, "Click tiles in the palette to make them solid (they collide with CharacterBody2D) or not");
+        if (tileSolidMode_) DrawRectangleRec({b.x - 2, b.y - 2, b.width + 4, b.height + 4}, kBad);
+        if (GuiButton(b, GuiIconText(ICON_BOX_GRID, "Collision"))) tileSolidMode_ = !tileSolidMode_;
+        if (tileSolidMode_) {
+            hint({x + 128, y, 60, 24}, "Make every tile of this picture solid");
+            if (GuiButton({x + 128, y, 60, 24}, "All")) {
+                touch();
+                for (int t = 0; t < std::max(1, cols * rows); ++t) src.solid.insert(t);
+            }
+            hint({x + 192, y, 60, 24}, "Make no tile of this picture solid");
+            if (GuiButton({x + 192, y, 60, 24}, "None")) {
+                touch();
+                src.solid.clear();
+            }
+        }
+    }
+    y += 30;
+    // The picked tile's type name
+    int picked = tileSelY_ * std::max(cols, 1) + tileSelX_;
+    if (tileSelW_ == 1 && tileSelH_ == 1 && y + 24 <= r.y + r.height) {
+        std::string t = "Tile " + std::to_string(picked) + " type";
+        drawText(t, x, y + 4, kDim);
+        float lx = x + textWidth(t) + 8;
+        hint({lx, y, leftW - 10 - (lx - x), 24},
+             "A name for this tile that scripts can ask for: map->getCellType(x, y) == \"spikes\"");
+        std::string& type = src.types[picked];
+        textField({lx, y, leftW - 10 - (lx - x), 24}, id + "type" + std::to_string(tileSource_), type);
+        if (type.empty()) src.types.erase(picked);
+        y += 30;
+    }
+    if (y + 20 <= r.y + r.height) {
+        const char* help = tileSolidMode_                    ? "Click tiles to make them solid (red) or not."
+                           : tileTool_ == TileTool::Select   ? "Pick a tool to paint. Select clicks nodes as usual."
+                           : tileTool_ == TileTool::Rect     ? "Drag in the viewport to fill a rectangle."
+                           : tileTool_ == TileTool::Fill     ? "Click in the viewport to fill an area."
+                           : tileTool_ == TileTool::Erase    ? "Drag in the viewport to erase."
+                           : tileTool_ == TileTool::Pick     ? "Click a tile in the viewport to paint with it."
+                                                             : "Drag in the palette to pick several tiles. Middle drag pans.";
+        drawFit(help, x, y + 2, leftW - 10, kDim);
+    }
+
+    // --- Right: the palette ---------------------------------------------------------
+    Rectangle pal{r.x + leftW + 10, r.y + 6, r.width - leftW - 16, r.height - 12};
+    if (!tex) {
+        drawText("Can't load " + src.texture, pal.x + 8, pal.y + 8, kBad);
+        return;
+    }
+    float fit = std::min((pal.width - 18) / tex->width, (pal.height - 18) / tex->height);
+    float z = paletteZoom_ > 0 ? static_cast<float>(paletteZoom_) : fit >= 1 ? std::min(4.0f, std::floor(fit)) : std::max(0.25f, fit);
+    // Zoom buttons
+    hint({pal.x + pal.width - 84, pal.y - 2, 26, 22}, "Smaller tiles");
+    if (GuiButton({pal.x + pal.width - 84, pal.y - 2, 26, 22}, "-")) paletteZoom_ = std::max(1, static_cast<int>(z) - 1);
+    hint({pal.x + pal.width - 56, pal.y - 2, 26, 22}, "Bigger tiles");
+    if (GuiButton({pal.x + pal.width - 56, pal.y - 2, 26, 22}, "+")) paletteZoom_ = std::min(8, static_cast<int>(z) + 1);
+    hint({pal.x + pal.width - 28, pal.y - 2, 26, 22}, "Fit the picture");
+    if (GuiButton({pal.x + pal.width - 28, pal.y - 2, 26, 22}, GuiIconText(ICON_ZOOM_ALL, nullptr))) paletteZoom_ = 0;
+    pal.y += 22;
+    pal.height -= 22;
+
+    Rectangle content{0, 0, tex->width * z + 8, tex->height * z + 8};
+    Rectangle view{};
+    GuiScrollPanel(pal, nullptr, content, &paletteScroll_, &view);
+    beginClip(view);
+    float ox = view.x + paletteScroll_.x + 4, oy = view.y + paletteScroll_.y + 4;
+    Rectangle img{ox, oy, tex->width * z, tex->height * z};
+    for (float cy = 0; cy < img.height; cy += 8)
+        for (float cx = 0; cx < img.width; cx += 8)
+            DrawRectangleRec({img.x + cx, img.y + cy, std::min(8.0f, img.width - cx), std::min(8.0f, img.height - cy)},
+                             (static_cast<int>(cx / 8) + static_cast<int>(cy / 8)) % 2 ? theme().colors.checkerA
+                                                                                       : theme().colors.checkerB);
+    DrawTexturePro(*tex, {0, 0, (float)tex->width, (float)tex->height}, img, {0, 0}, 0, WHITE);
+    auto tileBox = [&](int col, int row) {
+        Rectangle t = src.tileRect(row * std::max(cols, 1) + col);
+        return Rectangle{img.x + t.x * z, img.y + t.y * z, t.width * z, t.height * z};
+    };
+    for (int row = 0; row < rows; ++row) {
+        for (int col = 0; col < cols; ++col) {
+            Rectangle b = tileBox(col, row);
+            DrawRectangleLinesEx(b, 1, Fade(kAccent, 0.35f));
+            int tile = row * cols + col;
+            if (src.solid.count(tile)) {
+                if (tileSolidMode_) DrawRectangleRec(b, Fade(kBad, 0.45f));
+                else DrawRectangleRec({b.x + 2, b.y + 2, 5, 5}, kBad);
+            }
+            if (src.types.count(tile)) DrawCircleV({b.x + b.width - 5, b.y + 5}, 2.5f, kOrange);
+        }
+    }
+    // The picked tiles
+    if (cols > 0 && rows > 0) {
+        Rectangle a = tileBox(tileSelX_, tileSelY_), b = tileBox(tileSelX_ + tileSelW_ - 1, tileSelY_ + tileSelH_ - 1);
+        Rectangle sel{a.x, a.y, b.x + b.width - a.x, b.y + b.height - a.y};
+        if (!tileSolidMode_) DrawRectangleLinesEx({sel.x - 2, sel.y - 2, sel.width + 4, sel.height + 4}, 2, theme().viewport.selection);
+    } else {
+        drawText("The picture is smaller than one tile: set the tile size.", view.x + 8, view.y + 8, kOrange);
+    }
+    // Clicks: pick tiles (drag for a rectangle of them), or mark them solid
+    raylib::Vector2 m = GetMousePosition();
+    bool over = canClick && mouseIn(view) && cols > 0 && rows > 0;
+    int hc = -1, hr = -1;
+    if (over || paletteDrag_) {
+        float px = (m.x - img.x) / z - src.margin, py = (m.y - img.y) / z - src.margin;
+        hc = std::clamp(static_cast<int>(std::floor(px / (src.tileWidth + src.spacing))), 0, std::max(cols - 1, 0));
+        hr = std::clamp(static_cast<int>(std::floor(py / (src.tileHeight + src.spacing))), 0, std::max(rows - 1, 0));
+        if (over && CheckCollisionPointRec(m, img)) DrawRectangleLinesEx(tileBox(hc, hr), 1, kText);
+    }
+    if (over && CheckCollisionPointRec(m, img) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+        if (tileSolidMode_) {
+            touch();
+            int tile = hr * cols + hc;
+            if (src.solid.count(tile)) src.solid.erase(tile);
+            else src.solid.insert(tile);
+        } else {
+            paletteDrag_ = true;
+            paletteX0_ = hc;
+            paletteY0_ = hr;
+            if (tileTool_ == TileTool::Select || tileTool_ == TileTool::Erase || tileTool_ == TileTool::Pick)
+                tileTool_ = TileTool::Paint;
+        }
+    }
+    if (paletteDrag_) {
+        if (hc >= 0) {
+            tileSelX_ = std::min(paletteX0_, hc);
+            tileSelY_ = std::min(paletteY0_, hr);
+            tileSelW_ = std::abs(hc - paletteX0_) + 1;
+            tileSelH_ = std::abs(hr - paletteY0_) + 1;
+        }
+        if (!IsMouseButtonDown(MOUSE_BUTTON_LEFT)) paletteDrag_ = false;
+    }
+    EndScissorMode();
+}
+
+void Editor::paintStamp(TileMap& map, int cellX, int cellY) {
+    if (tileSource_ >= static_cast<int>(map.sources.size())) return;
+    int cols = std::max(map.sources[tileSource_].columns(), 1);
+    int flags = (tileFlipH_ ? TileMap::FlipH : 0) | (tileFlipV_ ? TileMap::FlipV : 0);
+    for (int j = 0; j < tileSelH_; ++j) {
+        for (int i = 0; i < tileSelW_; ++i) {
+            int dx = tileFlipH_ ? tileSelW_ - 1 - i : i, dy = tileFlipV_ ? tileSelH_ - 1 - j : j;
+            map.setCell(cellX + dx, cellY + dy, (tileSelY_ + j) * cols + tileSelX_ + i, tileSource_, flags);
+        }
+    }
+    dirty_ = true;
+}
+
+void Editor::fillRect(TileMap& map, int x0, int y0, int x1, int y1, bool erase) {
+    int ax = std::min(x0, x1), bx = std::max(x0, x1), ay = std::min(y0, y1), by = std::max(y0, y1);
+    if (static_cast<long>(bx - ax + 1) * (by - ay + 1) > 250000) {
+        log("That rectangle is too big (more than 250,000 cells).", kOrange);
+        return;
+    }
+    int cols = tileSource_ < static_cast<int>(map.sources.size()) ? std::max(map.sources[tileSource_].columns(), 1) : 1;
+    int flags = (tileFlipH_ ? TileMap::FlipH : 0) | (tileFlipV_ ? TileMap::FlipV : 0);
+    for (int y = ay; y <= by; ++y) {
+        for (int x = ax; x <= bx; ++x) {
+            if (erase) {
+                map.eraseCell(x, y);
+                continue;
+            }
+            // The picked tiles repeat across the rectangle
+            int i = (x - ax) % tileSelW_, j = (y - ay) % tileSelH_;
+            if (tileFlipH_) i = tileSelW_ - 1 - i;
+            if (tileFlipV_) j = tileSelH_ - 1 - j;
+            map.setCell(x, y, (tileSelY_ + j) * cols + tileSelX_ + i, tileSource_, flags);
+        }
+    }
+    dirty_ = true;
+}
+
+void Editor::floodFill(TileMap& map, int x, int y) {
+    // Fills the cells joined to (x, y) that hold the same thing, within the
+    // map's used area (or the game window, for an empty map).
+    auto it = map.cells.find({x, y});
+    std::optional<TileCell> target;
+    if (it != map.cells.end()) target = it->second;
+    Rectangle used = map.usedRect();
+    int x0, y0, x1, y1;
+    if (used.width > 0) {
+        x0 = std::min(static_cast<int>(used.x), x);
+        y0 = std::min(static_cast<int>(used.y), y);
+        x1 = std::max(static_cast<int>(used.x + used.width) - 1, x);
+        y1 = std::max(static_cast<int>(used.y + used.height) - 1, y);
+    } else {
+        x0 = y0 = 0;
+        x1 = static_cast<int>(editTree_.gameSize.x / std::max(1.0f, map.cellSize.x));
+        y1 = static_cast<int>(editTree_.gameSize.y / std::max(1.0f, map.cellSize.y));
+    }
+    int cols = std::max(map.sources[tileSource_].columns(), 1);
+    int flags = (tileFlipH_ ? TileMap::FlipH : 0) | (tileFlipV_ ? TileMap::FlipV : 0);
+    TileCell paint{tileSource_, (tileSelY_)*cols + tileSelX_, flags};
+    if (target && *target == paint && tileSelW_ == 1 && tileSelH_ == 1) return;  // already that
+    std::vector<std::pair<int, int>> todo{{x, y}};
+    std::set<std::pair<int, int>> seen;
+    int count = 0;
+    while (!todo.empty() && count < 100000) {
+        auto [cx, cy] = todo.back();
+        todo.pop_back();
+        if (cx < x0 || cx > x1 || cy < y0 || cy > y1 || !seen.insert({cx, cy}).second) continue;
+        auto c = map.cells.find({cx, cy});
+        bool same = target ? (c != map.cells.end() && c->second == *target) : c == map.cells.end();
+        if (!same) continue;
+        int i = ((cx - x) % tileSelW_ + tileSelW_) % tileSelW_, j = ((cy - y) % tileSelH_ + tileSelH_) % tileSelH_;
+        map.setCell(cx, cy, (tileSelY_ + j) * cols + tileSelX_ + i, tileSource_, flags);
+        ++count;
+        todo.push_back({cx + 1, cy});
+        todo.push_back({cx - 1, cy});
+        todo.push_back({cx, cy + 1});
+        todo.push_back({cx, cy - 1});
+    }
+    dirty_ = true;
+}
+
+bool Editor::updateTilePainting(Rectangle viewport) {
+    TileMap* map = paintingTileMap();
+    if (!map || drag_.kind != DragKind::None) {
+        tileStroke_ = tileRectDrag_ = false;
+        return false;
+    }
+    raylib::Vector2 mouse = GetMousePosition();
+    bool inside = CheckCollisionPointRec(mouse, viewport);
+    if (!inside && !tileStroke_ && !tileRectDrag_) return false;
+    if (IsKeyDown(KEY_SPACE) && !isTyping()) return false;  // (Space + drag pans)
+    raylib::Vector2 cell = map->worldToMap(viewCam_.GetScreenToWorld(mouse));
+    int cx = static_cast<int>(cell.x), cy = static_cast<int>(cell.y);
+    bool left = IsMouseButtonDown(MOUSE_BUTTON_LEFT), right = IsMouseButtonDown(MOUSE_BUTTON_RIGHT);
+    bool pressL = inside && IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
+    bool pressR = inside && IsMouseButtonPressed(MOUSE_BUTTON_RIGHT);
+
+    // A rectangle being dragged out (the Rect tool, or Shift with Paint)
+    if (tileRectDrag_) {
+        if (!(tileRectErase_ ? right : left)) {
+            tileRectDrag_ = false;
+            touch();
+            fillRect(*map, tileRectX0_, tileRectY0_, cx, cy, tileRectErase_);
+        }
+        return true;
+    }
+    auto startRect = [&](bool erase) {
+        tileRectDrag_ = true;
+        tileRectErase_ = erase;
+        tileRectX0_ = cx;
+        tileRectY0_ = cy;
+    };
+    switch (tileTool_) {
+        case TileTool::Select: return false;
+        case TileTool::Rect:
+            if (pressL) startRect(false);
+            else if (pressR) startRect(true);
+            return inside;
+        case TileTool::Fill:
+            if (pressL) {
+                touch();
+                floodFill(*map, cx, cy);
+            } else if (pressR && map->hasCell(cx, cy)) {
+                touch();
+                map->eraseCell(cx, cy);
+            }
+            return inside;
+        case TileTool::Pick:
+            if (pressL) {
+                auto it = map->cells.find({cx, cy});
+                if (it != map->cells.end() && it->second.source < static_cast<int>(map->sources.size())) {
+                    const TileCell& c = it->second;
+                    int cols = std::max(map->sources[c.source].columns(), 1);
+                    tileSource_ = c.source;
+                    tileSelX_ = c.tile % cols;
+                    tileSelY_ = c.tile / cols;
+                    tileSelW_ = tileSelH_ = 1;
+                    tileFlipH_ = (c.flags & TileMap::FlipH) != 0;
+                    tileFlipV_ = (c.flags & TileMap::FlipV) != 0;
+                    tileTool_ = TileTool::Paint;
+                }
+            }
+            return inside;
+        case TileTool::Paint:
+        case TileTool::Erase:
+            if (pressL && shiftDown() && tileTool_ == TileTool::Paint) {
+                startRect(false);
+                return true;
+            }
+            if (pressL || pressR) {
+                touch();  // (one undo step for the whole stroke)
+                tileStroke_ = true;
+                lastPaintX_ = lastPaintY_ = 1 << 30;
+            }
+            if (tileStroke_) {
+                if (!left && !right) {
+                    tileStroke_ = false;
+                } else if (cx != lastPaintX_ || cy != lastPaintY_) {
+                    // Every cell on the way from the last one, so a fast drag leaves no gaps
+                    bool first = lastPaintX_ == (1 << 30);
+                    int fromX = first ? cx : lastPaintX_, fromY = first ? cy : lastPaintY_;
+                    int steps = std::max(std::abs(cx - fromX), std::abs(cy - fromY));
+                    for (int k = first ? 0 : 1; k <= steps; ++k) {
+                        int px = fromX + static_cast<int>(std::lround((cx - fromX) * (steps ? k / double(steps) : 0.0)));
+                        int py = fromY + static_cast<int>(std::lround((cy - fromY) * (steps ? k / double(steps) : 0.0)));
+                        if (right || tileTool_ == TileTool::Erase) {
+                            map->eraseCell(px, py);
+                            dirty_ = true;
+                        } else {
+                            paintStamp(*map, px, py);
+                        }
+                    }
+                    lastPaintX_ = cx;
+                    lastPaintY_ = cy;
+                }
+            }
+            return true;
+    }
+    return false;
+}
+
+void Editor::drawTilePaintPreview() {
+    TileMap* map = paintingTileMap();
+    if (!map) {
+        // The Collision button shows what's solid even without a paint tool
+        map = tileMapTabShown() && tileSolidMode_ ? selected_->as<TileMap>() : nullptr;
+        if (!map) return;
+    }
+    float px = 1.0f / viewCam_.zoom;
+    float cw = map->cellSize.x, ch = map->cellSize.y;
+    if (tileSolidMode_) {
+        for (auto& [pos, c] : map->cells)
+            if (map->isSolid(pos.first, pos.second))
+                drawLocalRect(*map, {pos.first * cw, pos.second * ch, cw, ch}, Fade(kBad, 0.35f), BLANK, 0);
+    }
+    if (!paintingTileMap() || !mouseIn(viewportRect_) || drag_.kind != DragKind::None) return;
+    raylib::Vector2 cell = map->worldToMap(viewCam_.GetScreenToWorld(GetMousePosition()));
+    int cx = static_cast<int>(cell.x), cy = static_cast<int>(cell.y);
+    // A faint grid around the mouse
+    Color grid = Fade(kText, 0.18f);
+    for (int gx = cx - 8; gx <= cx + 9; ++gx)
+        DrawLineEx(map->toGlobal({gx * cw, (cy - 8) * ch}), map->toGlobal({gx * cw, (cy + 9) * ch}), px, grid);
+    for (int gy = cy - 8; gy <= cy + 9; ++gy)
+        DrawLineEx(map->toGlobal({(cx - 8) * cw, gy * ch}), map->toGlobal({(cx + 9) * cw, gy * ch}), px, grid);
+
+    if (tileRectDrag_) {
+        int ax = std::min(tileRectX0_, cx), bx = std::max(tileRectX0_, cx);
+        int ay = std::min(tileRectY0_, cy), by = std::max(tileRectY0_, cy);
+        Color c = tileRectErase_ ? kBad : kAccent;
+        drawLocalRect(*map, {ax * cw, ay * ch, (bx - ax + 1) * cw, (by - ay + 1) * ch}, Fade(c, 0.2f), c, 2 * px);
+        return;
+    }
+    bool erasing = tileTool_ == TileTool::Erase || IsMouseButtonDown(MOUSE_BUTTON_RIGHT);
+    if (erasing) {
+        drawLocalRect(*map, {cx * cw, cy * ch, cw, ch}, Fade(kBad, 0.25f), kBad, 2 * px);
+        return;
+    }
+    if (tileTool_ == TileTool::Pick) {
+        drawLocalRect(*map, {cx * cw, cy * ch, cw, ch}, BLANK, kOrange, 2 * px);
+        return;
+    }
+    // The tiles that would be painted, see-through
+    if (tileSource_ < static_cast<int>(map->sources.size())) {
+        const TileSource& src = map->sources[tileSource_];
+        int cols = std::max(src.columns(), 1);
+        int flags = (tileFlipH_ ? TileMap::FlipH : 0) | (tileFlipV_ ? TileMap::FlipV : 0);
+        int w = tileTool_ == TileTool::Paint ? tileSelW_ : 1, h = tileTool_ == TileTool::Paint ? tileSelH_ : 1;
+        for (int j = 0; j < h; ++j)
+            for (int i = 0; i < w; ++i) {
+                int dx = tileFlipH_ ? w - 1 - i : i, dy = tileFlipV_ ? h - 1 - j : j;
+                TileCell c{tileSource_, (tileSelY_ + j) * cols + tileSelX_ + i, flags};
+                map->drawTile(c, raylib::Vector2((cx + dx) * cw, (cy + dy + 1) * ch - src.tileHeight), Fade(WHITE, 0.6f));
+            }
+        drawLocalRect(*map, {cx * cw, cy * ch, w * cw, h * ch}, BLANK, kAccent, 2 * px);
+    }
+}
+
+void Editor::importTiledMap(const fs::path& file, const Vector2* world) {
+    if (playTree_) {
+        log("Stop the game before importing a map.", kOrange);
+        return;
+    }
+    TiledImport result = s2d::importTiledMap(file, projectDir_);
+    for (const std::string& w : result.warnings) log(file.filename().string() + ": " + w, kOrange);
+    if (!result.root) {
+        log("Couldn't import " + file.filename().string() + ": " + result.error, kBad);
+        return;
+    }
+    for (const std::string& c : result.copied) {
+        Assets::reload(c);
+        log("Copied " + c + " into the project (the map uses it)", kDim);
+    }
+    touch();
+    auto* top = result.root->as<Node2D>();
+    if (world && top) {
+        // Where it was dropped, on the map's grid (near the top-left: right at 0,0)
+        raylib::Vector2 grid{16, 16};
+        forEachNode(top, [&](Node* n) {
+            if (auto* m = n->as<TileMap>(); m && grid.x == 16 && grid.y == 16) grid = m->cellSize;
+        });
+        raylib::Vector2 at(std::round(world->x / grid.x) * grid.x, std::round(world->y / grid.y) * grid.y);
+        if (std::fabs(at.x) <= grid.x * 2 && std::fabs(at.y) <= grid.y * 2) at = raylib::Vector2(0, 0);
+        top->position = at;
+    }
+    int layers = static_cast<int>(result.root->children().size());
+    std::string name = result.root->name;
+    Node* raw = nullptr;
+    if (!editTree_.root()) {
+        raw = result.root.get();
+        setRoot(std::move(result.root));
+    } else {
+        Node* parent = editTree_.root();
+        result.root->name = uniqueChildName(parent, name);
+        raw = parent->addChild(std::move(result.root));
+        parent->collapsed = false;
+    }
+    select(raw);
+    rescanFiles();
+    log("Imported the Tiled map " + file.filename().string() + " as '" + raw->name + "' (" + std::to_string(layers) +
+            (layers == 1 ? " layer" : " layers") + "). Select a TileMap in it to paint more tiles.",
+        kGood);
 }
 
 }  // namespace s2d

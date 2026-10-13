@@ -1,0 +1,9 @@
+{
+  "name": "TileMap and UI Test",
+  "main_scene": "scenes/main.scene.json",
+  "width": 320,
+  "height": 180,
+  "autoloads": [
+    { "name": "Checker", "script": "Checker" }
+  ]
+}
