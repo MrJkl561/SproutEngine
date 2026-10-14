@@ -1,0 +1,44 @@
+{
+ "type": "tileset",
+ "name": "tiles",
+ "tilewidth": 16,
+ "tileheight": 16,
+ "tilecount": 4,
+ "columns": 4,
+ "image": "art/tiles.png",
+ "imagewidth": 64,
+ "imageheight": 16,
+ "margin": 0,
+ "spacing": 0,
+ "tiles": [
+  {
+   "id": 0,
+   "properties": [
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 1,
+   "type": "spikes"
+  },
+  {
+   "id": 2,
+   "objectgroup": {
+    "type": "objectgroup",
+    "objects": [
+     {
+      "id": 1,
+      "x": 0,
+      "y": 0,
+      "width": 16,
+      "height": 16
+     }
+    ]
+   }
+  }
+ ]
+}

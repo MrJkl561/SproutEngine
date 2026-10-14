@@ -30,6 +30,11 @@ nlohmann::json propertyListToJson(const std::vector<Property>& props);
 void applyPropertyList(const std::vector<Property>& props, const nlohmann::json& values);
 
 // A node's script variables (Node::scriptVars) as one JSON object, and back.
+// A TileMap's pictures and cells, as saved in scene files (its "tiles" property).
+class TileMap;
+nlohmann::json tilesToJson(const TileMap& map);
+void tilesFromJson(TileMap& map, const nlohmann::json& j);
+
 nlohmann::json scriptVarsToJson(const Node& node);
 void setScriptVars(Node& node, const nlohmann::json& values);
 // Puts the node's saved script variables into its script (before ready()).

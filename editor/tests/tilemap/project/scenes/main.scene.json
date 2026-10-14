@@ -1,0 +1,284 @@
+{
+  "format": "sprout-editor-scene",
+  "version": 1,
+  "root": {
+    "type": "Node2D",
+    "name": "Main",
+    "properties": {},
+    "children": [
+      {
+        "type": "TileMap",
+        "name": "Ground",
+        "properties": {
+          "tiles": {
+            "sources": [
+              {
+                "texture": "assets/tiles.png",
+                "tile_size": [
+                  16,
+                  16
+                ],
+                "solid": [
+                  0
+                ],
+                "types": {
+                  "1": "grass"
+                }
+              }
+            ],
+            "cells": [
+              0,
+              8,
+              0,
+              0,
+              0,
+              1,
+              8,
+              0,
+              0,
+              0,
+              2,
+              8,
+              0,
+              0,
+              0,
+              3,
+              8,
+              0,
+              0,
+              0,
+              4,
+              8,
+              0,
+              0,
+              0,
+              5,
+              8,
+              0,
+              0,
+              0,
+              6,
+              8,
+              0,
+              0,
+              0,
+              7,
+              8,
+              0,
+              0,
+              0,
+              8,
+              8,
+              0,
+              0,
+              0,
+              9,
+              8,
+              0,
+              0,
+              0,
+              12,
+              8,
+              0,
+              1,
+              0,
+              6,
+              2,
+              0,
+              3,
+              1,
+              7,
+              2,
+              0,
+              3,
+              0
+            ]
+          }
+        },
+        "children": []
+      },
+      {
+        "type": "CharacterBody2D",
+        "name": "Faller",
+        "properties": {
+          "position": [
+            80,
+            40
+          ]
+        },
+        "children": [
+          {
+            "type": "CollisionShape2D",
+            "name": "CollisionShape2D",
+            "properties": {
+              "size": [
+                12,
+                12
+              ]
+            },
+            "children": []
+          }
+        ],
+        "script": "Faller"
+      },
+      {
+        "type": "CharacterBody2D",
+        "name": "Ghost",
+        "properties": {
+          "position": [
+            200,
+            40
+          ]
+        },
+        "children": [
+          {
+            "type": "CollisionShape2D",
+            "name": "CollisionShape2D",
+            "properties": {
+              "size": [
+                12,
+                12
+              ]
+            },
+            "children": []
+          }
+        ],
+        "script": "Faller"
+      },
+      {
+        "type": "Camera2D",
+        "name": "Camera",
+        "properties": {
+          "position": [
+            200,
+            90
+          ]
+        },
+        "children": []
+      },
+      {
+        "type": "Button",
+        "name": "WorldButton",
+        "properties": {
+          "position": [
+            130,
+            60
+          ],
+          "size": [
+            40,
+            20
+          ],
+          "text": "W",
+          "font_size": 10
+        },
+        "children": []
+      },
+      {
+        "type": "CanvasLayer",
+        "name": "Hud",
+        "properties": {},
+        "children": [
+          {
+            "type": "VBoxContainer",
+            "name": "Menu",
+            "properties": {
+              "position": [
+                200,
+                10
+              ],
+              "size": [
+                110,
+                0
+              ],
+              "separation": 4
+            },
+            "children": [
+              {
+                "type": "Button",
+                "name": "Play",
+                "properties": {
+                  "size": [
+                    10,
+                    30
+                  ],
+                  "text": "Play"
+                },
+                "children": []
+              },
+              {
+                "type": "Button",
+                "name": "Quit",
+                "properties": {
+                  "size": [
+                    10,
+                    30
+                  ],
+                  "text": "Quit"
+                },
+                "children": []
+              },
+              {
+                "type": "CheckBox",
+                "name": "Sound",
+                "properties": {
+                  "size": [
+                    10,
+                    28
+                  ],
+                  "text": "Sound"
+                },
+                "children": []
+              }
+            ]
+          },
+          {
+            "type": "ProgressBar",
+            "name": "Health",
+            "properties": {
+              "position": [
+                200,
+                150
+              ],
+              "size": [
+                100,
+                10
+              ],
+              "value": 50,
+              "show_percentage": false,
+              "fill_color": [
+                0,
+                255,
+                0,
+                255
+              ],
+              "background_color": [
+                0,
+                0,
+                0,
+                255
+              ]
+            },
+            "children": []
+          },
+          {
+            "type": "Panel",
+            "name": "Hidden",
+            "properties": {
+              "position": [
+                0,
+                0
+              ],
+              "size": [
+                320,
+                180
+              ],
+              "visible": false
+            },
+            "children": []
+          }
+        ]
+      }
+    ],
+    "script": "UiCheck"
+  }
+}

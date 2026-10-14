@@ -13,6 +13,7 @@
 #include <memory>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "assets.hpp"
 #include "console.hpp"
@@ -40,6 +41,13 @@ struct Game {
     long screenshotAt = -1;   // SPROUT_GAME_SCREENSHOT=file.png (with --frames): a picture of the last frame
     std::string screenshot;
     std::string pixelTest;    // SPROUT_TEST_PIXELS="x,y=r,g,b;..." (with --frames): check the last frame's colours
+    // SPROUT_TEST_CLICKS="x,y@frame;...": the left button goes down at x,y (game pixels) on
+    // that frame and up on the next one, instead of the real mouse
+    struct Click {
+        float x, y;
+        long frame;
+    };
+    std::vector<Click> clicks;
 };
 
 // The tests' pixel check: each "x,y=r,g,b" (in game pixels) within 12 of what's drawn
@@ -69,28 +77,30 @@ void checkPixels(Game& g) {
 Game* gGame = nullptr;
 std::atomic<bool> gStop{false};
 
+// Where the game is in the window: as big as fits, with black bars if the shapes differ.
+Rectangle gameRect(const Game& g) {
+    float gw = g.tree.gameSize.x, gh = g.tree.gameSize.y;
+    float s = std::min(GetScreenWidth() / gw, GetScreenHeight() / gh);
+    return {(GetScreenWidth() - gw * s) / 2, (GetScreenHeight() - gh * s) / 2, gw * s, gh * s};
+}
+
 void drawFrame(Game& g) {
     // Draw the game at its own size...
     g.target->BeginMode();
     ClearBackground(g.tree.clearColor);
-    raylib::Camera2D cam({0, 0}, {0, 0}, 0, 1);
-    if (Camera2D* c = g.tree.currentCamera()) {
-        cam.offset = g.tree.gameSize / 2;
-        cam.target = c->globalPosition();
-        cam.zoom = c->zoom > 0.01f ? c->zoom : 0.01f;
-    }
+    raylib::Camera2D cam = g.tree.view();
+    raylib::Vector2 a = cam.GetScreenToWorld({0, 0}), b = cam.GetScreenToWorld(g.tree.gameSize);
     cam.BeginMode();
-    g.tree.draw({false, cam.zoom});
+    g.tree.draw({false, cam.zoom, {a.x, a.y, b.x - a.x, b.y - a.y}});
     cam.EndMode();
+    g.tree.drawCanvasLayers({false, 1});  // the HUD and menus, on the screen
     g.target->EndMode();
 
     // ...then scale it to fit the window, with black bars if the shapes differ.
     BeginDrawing();
     ClearBackground(BLACK);
-    float gw = g.tree.gameSize.x, gh = g.tree.gameSize.y;
-    float s = std::min(GetScreenWidth() / gw, GetScreenHeight() / gh);
-    Rectangle dst{(GetScreenWidth() - gw * s) / 2, (GetScreenHeight() - gh * s) / 2, gw * s, gh * s};
-    DrawTexturePro(g.target->texture, {0, 0, gw, -gh}, dst, {0, 0}, 0, WHITE);
+    Rectangle dst = gameRect(g);
+    DrawTexturePro(g.target->texture, {0, 0, g.tree.gameSize.x, -g.tree.gameSize.y}, dst, {0, 0}, 0, WHITE);
     if (g.frame + 1 == g.screenshotAt && !g.pixelTest.empty()) checkPixels(g);
     if (g.frame + 1 == g.screenshotAt && !g.screenshot.empty()) {
         rlDrawRenderBatchActive();  // (what's drawn so far, into the picture)
@@ -103,6 +113,19 @@ void drawFrame(Game& g) {
 
 void frame() {
     Game& g = *gGame;
+    if (g.clicks.empty()) {
+        Rectangle r = gameRect(g);  // the mouse, in game pixels
+        raylib::Vector2 m = GetMousePosition();
+        g.tree.mouseScreen = raylib::Vector2((m.x - r.x) * g.tree.gameSize.x / r.width, (m.y - r.y) * g.tree.gameSize.y / r.height);
+    } else {
+        g.tree.testMouse = 0;
+        for (const Game::Click& c : g.clicks) {
+            if (g.frame == c.frame) {
+                g.tree.mouseScreen = raylib::Vector2(c.x, c.y);
+                g.tree.testMouse = 1;
+            }
+        }
+    }
     g.tree.process(std::min(GetFrameTime(), 1.0f / 20.0f));
     drawFrame(g);
     ++g.frame;
@@ -193,6 +216,17 @@ int runGame(const GameOptions& o) {
         game.screenshotAt = o.testFrames;
         if (const char* shot = std::getenv("SPROUT_GAME_SCREENSHOT")) game.screenshot = shot;
         if (const char* pixels = std::getenv("SPROUT_TEST_PIXELS")) game.pixelTest = pixels;
+        if (const char* clicks = std::getenv("SPROUT_TEST_CLICKS")) {
+            std::string spec = clicks;
+            for (size_t start = 0; start < spec.size();) {
+                size_t end = spec.find(';', start);
+                if (end == std::string::npos) end = spec.size();
+                Game::Click c{};
+                if (std::sscanf(spec.substr(start, end - start).c_str(), "%f,%f@%ld", &c.x, &c.y, &c.frame) == 3)
+                    game.clicks.push_back(c);
+                start = end + 1;
+            }
+        }
     }
     game.tree.setAutoloads(settings.autoloads);  // (Project Settings > Autoloads)
     game.tree.setRoot(std::move(root));
@@ -210,7 +244,7 @@ int runGame(const GameOptions& o) {
         print("Running without a window. Press Ctrl+C to stop.");
         const auto step = std::chrono::microseconds(16667);
         auto next = std::chrono::steady_clock::now();
-        while (!gStop) {
+        while (!gStop && !game.tree.quitRequested()) {
             game.tree.process(1.0f / 60.0f);
             ++game.frame;
             if (o.testFrames > 0 && game.frame >= o.testFrames) break;
@@ -221,7 +255,7 @@ int runGame(const GameOptions& o) {
         }
     } else {
         std::signal(SIGTERM, [](int) { gStop = true; });
-        while (!WindowShouldClose() && !gStop) {
+        while (!WindowShouldClose() && !gStop && !game.tree.quitRequested()) {
             frame();
             if (o.testFrames > 0 && game.frame >= o.testFrames) break;
         }

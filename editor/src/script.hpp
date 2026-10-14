@@ -31,6 +31,8 @@
 #include "multiplayer.hpp"
 #include "nodes.hpp"
 #include "scene_tree.hpp"
+#include "tilemap.hpp"
+#include "ui_nodes.hpp"
 
 namespace s2d {
 
@@ -312,6 +314,28 @@ public:
     }
     void reloadScene() const {
         if (SceneTree* t = tree()) t->reloadScene();
+    }
+    // Ends the game after this frame (a Quit button). In the editor it stops playing.
+    void quit() const {
+        if (SceneTree* t = tree()) t->quit();
+    }
+
+    // The mouse, in game pixels (0,0 = the top-left of the game window), where
+    // UI nodes in a CanvasLayer are. Use this rather than raylib's
+    // GetMousePosition(): the game may be scaled to fit its window or the editor.
+    Vector2 getMousePosition() const {
+        SceneTree* t = tree();
+        return t ? Vector2(t->mouseScreen) : GetMousePosition();
+    }
+    // The mouse in the world (through the camera), where the nodes are.
+    Vector2 getGlobalMousePosition() const {
+        SceneTree* t = tree();
+        return t ? Vector2(t->mouseWorld()) : GetMousePosition();
+    }
+    // The mouse is over a button, panel... (so a click there isn't meant for the game world).
+    bool isMouseOverUi() const {
+        SceneTree* t = tree();
+        return t && t->isMouseOverGui();
     }
 
 private:

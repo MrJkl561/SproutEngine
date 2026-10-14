@@ -6,6 +6,9 @@
 //                                           opening a window, then exit (used by CI)
 //   sprout_editor [--project folder] --export linux,web [output folder]
 //                                           export the game without opening a window
+//   sprout_editor [--project folder] --import-tiled map.tmx [scenes/map.scene.json]
+//                                           turn a Tiled map into a scene (pictures outside the
+//                                           project are copied into its assets/tiles/)
 //   sprout_editor [--project folder] --play [--scene file] [--server] [--frames n] [-- game arguments]
 //                                           run the game without the editor (what Run Instances
 //                                           starts for each extra window; --server: no window)
@@ -36,7 +39,10 @@
 #include "script.hpp"
 #include "script_checker.hpp"
 #include "script_lint.hpp"
+#include "assets.hpp"
+#include "scene_io.hpp"
 #include "theme.hpp"
+#include "tiled_import.hpp"
 #include "ui_scale.hpp"
 
 
@@ -189,6 +195,27 @@ int exportGame(const fs::path& project, const std::string& targets, const std::s
     return failed ? 1 : 0;
 }
 
+// Turns a Tiled map into a scene file. Exit code 0 if it worked.
+int importTiled(const fs::path& project, const fs::path& map, std::string sceneArg) {
+    s2d::Assets::setProjectDir(project);
+    SetTraceLogLevel(LOG_WARNING);
+    s2d::TiledImport result = s2d::importTiledMap(map, project);
+    for (const std::string& w : result.warnings) std::printf("Warning: %s\n", w.c_str());
+    if (!result.root) {
+        std::printf("Couldn't import %s: %s\n", map.string().c_str(), result.error.c_str());
+        return 1;
+    }
+    for (const std::string& c : result.copied) std::printf("Copied %s\n", c.c_str());
+    if (sceneArg.empty()) sceneArg = "scenes/" + map.stem().string() + ".scene.json";
+    std::string error;
+    if (!s2d::saveScene(*result.root, project / sceneArg, &error)) {
+        std::printf("Couldn't save %s: %s\n", sceneArg.c_str(), error.c_str());
+        return 1;
+    }
+    std::printf("Imported %s as %s\n", map.filename().string().c_str(), sceneArg.c_str());
+    return 0;
+}
+
 // The project to open: the one named on the command line, else the one open
 // last time, else the demo project (else a new one in ~/SproutProjects).
 fs::path startupProject(const std::string& fromCommandLine) {
@@ -210,7 +237,7 @@ int main(int argc, char** argv) {
     //   sprout_editor [--project folder] --export linux,windows,web [output folder]
     //   sprout_editor [--project folder] --check-file scripts/player.cpp   (live checking, as in the Script tab)
     //   sprout_editor [--project folder] --play [game options and arguments]
-    std::string projectArg, exportTargets, exportOut, checkFileArg;
+    std::string projectArg, exportTargets, exportOut, checkFileArg, tiledMap, tiledScene;
     bool check = false, exporting = false, playing = false;
     std::vector<std::string> gameArgs;  // for --play: its options, and everything after --
     for (int i = 1; i < argc; ++i) {
@@ -223,6 +250,10 @@ int main(int argc, char** argv) {
         else if (a == "--play") playing = true;
         else if (a == "--check-scripts") check = true;
         else if (a == "--check-file" && i + 1 < argc) checkFileArg = argv[++i];
+        else if (a == "--import-tiled" && i + 1 < argc) {
+            tiledMap = argv[++i];
+            if (i + 1 < argc && std::string(argv[i + 1]).rfind("--", 0) != 0) tiledScene = argv[++i];
+        }
         else if (a == "--export" && i + 1 < argc) {
             exporting = true;
             exportTargets = argv[++i];
@@ -232,6 +263,8 @@ int main(int argc, char** argv) {
     // The command-line tools use the demo project unless told otherwise.
     if (!checkFileArg.empty())
         return checkFile(projectArg.empty() ? s2d::editorPaths().demoProject : fs::path(projectArg), checkFileArg);
+    if (!tiledMap.empty())
+        return importTiled(projectArg.empty() ? s2d::editorPaths().demoProject : fs::path(projectArg), tiledMap, tiledScene);
     if (playing) return playGame(projectArg.empty() ? s2d::editorPaths().demoProject : fs::path(projectArg), gameArgs);
     if (check) return checkScripts(projectArg.empty() ? s2d::editorPaths().demoProject : fs::path(projectArg));
     if (exporting)

@@ -12,6 +12,8 @@
 #include "scene_tree.hpp"
 #include "script.hpp"
 #include "shaders.hpp"
+#include "tilemap.hpp"
+#include "ui_nodes.hpp"
 
 namespace s2d {
 
@@ -229,7 +231,7 @@ Node2D* Node2D::parent2D() const {
 
 Xform Node2D::globalXform() const {
     Xform local{position, rotation, scale};
-    Node2D* p = parent2D();
+    Node2D* p = startsOwnSpace() ? nullptr : parent2D();
     if (!p) return local;
     Xform pg = p->globalXform();
     Xform g;
@@ -240,7 +242,7 @@ Xform Node2D::globalXform() const {
 }
 
 void Node2D::setGlobalPosition(Vector2 world) {
-    Node2D* p = parent2D();
+    Node2D* p = startsOwnSpace() ? nullptr : parent2D();
     position = p ? p->toLocal(world) : raylib::Vector2(world);
 }
 
@@ -704,19 +706,40 @@ void CharacterBody2D::moveAndSlide() {
     float dt = t ? t->delta() : GetFrameTime();
     onFloor_ = onWall_ = onCeiling_ = false;
 
-    std::vector<Rectangle> solids;
-    forEachNode(root(), [&](Node* n) {
-        if (auto* body = dynamic_cast<StaticBody2D*>(n))
-            for (auto& r : body->shapes()) solids.push_back(r);
-    });
-
     // Our shapes, relative to our global position, so we can move them around.
     raylib::Vector2 pos = globalPosition();
     std::vector<Rectangle> mine = shapes();
+    // Where they could get to this frame (for the tile maps' solid cells)
+    Rectangle reach{0, 0, 0, 0};
+    for (size_t i = 0; i < mine.size(); ++i) {
+        Rectangle r = mine[i];
+        Rectangle moved{r.x + velocity.x * dt, r.y + velocity.y * dt, r.width, r.height};
+        float x0 = std::min(r.x, moved.x), y0 = std::min(r.y, moved.y);
+        float x1 = std::max(r.x + r.width, moved.x + moved.width), y1 = std::max(r.y + r.height, moved.y + moved.height);
+        if (i == 0) reach = {x0, y0, x1 - x0, y1 - y0};
+        else {
+            float rx1 = std::max(reach.x + reach.width, x1), ry1 = std::max(reach.y + reach.height, y1);
+            reach.x = std::min(reach.x, x0);
+            reach.y = std::min(reach.y, y0);
+            reach.width = rx1 - reach.x;
+            reach.height = ry1 - reach.y;
+        }
+    }
     for (auto& r : mine) {
         r.x -= pos.x;
         r.y -= pos.y;
     }
+
+    std::vector<Rectangle> solids;
+    auto gather = [&](Node* top) {
+        forEachNode(top, [&](Node* n) {
+            if (auto* body = dynamic_cast<StaticBody2D*>(n))
+                for (auto& r : body->shapes()) solids.push_back(r);
+            else if (auto* map = dynamic_cast<TileMap*>(n); map && !mine.empty())
+                map->solidRects(reach, solids);
+        });
+    };
+    gather(root());
 
     auto resolve = [&](bool horizontal, float move) {
         if (horizontal) pos.x += move; else pos.y += move;
@@ -831,6 +854,17 @@ const std::vector<std::pair<std::string, std::function<std::unique_ptr<Node>()>>
         {"MultiplayerSynchronizer", [] { return std::make_unique<MultiplayerSynchronizer>(); }},
         {"MultiplayerSpawner", [] { return std::make_unique<MultiplayerSpawner>(); }},
         {"Timer", [] { return std::make_unique<Timer>(); }},
+        {"TileMap", [] { return std::make_unique<TileMap>(); }},
+        {"CanvasLayer", [] { return std::make_unique<CanvasLayer>(); }},
+        {"Panel", [] { return std::make_unique<Panel>(); }},
+        {"Button", [] { return std::make_unique<Button>(); }},
+        {"CheckBox", [] { return std::make_unique<CheckBox>(); }},
+        {"HSlider", [] { return std::make_unique<HSlider>(); }},
+        {"ProgressBar", [] { return std::make_unique<ProgressBar>(); }},
+        {"TextureRect", [] { return std::make_unique<TextureRect>(); }},
+        {"LineEdit", [] { return std::make_unique<LineEdit>(); }},
+        {"VBoxContainer", [] { return std::make_unique<VBoxContainer>(); }},
+        {"HBoxContainer", [] { return std::make_unique<HBoxContainer>(); }},
     };
     return list;
 }

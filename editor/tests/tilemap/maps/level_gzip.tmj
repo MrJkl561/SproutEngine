@@ -1,0 +1,54 @@
+{
+ "type": "map",
+ "version": "1.10",
+ "orientation": "orthogonal",
+ "renderorder": "right-down",
+ "width": 10,
+ "height": 4,
+ "tilewidth": 16,
+ "tileheight": 16,
+ "infinite": false,
+ "tilesets": [
+  {
+   "firstgid": 1,
+   "source": "tiles.tsj"
+  }
+ ],
+ "layers": [
+  {
+   "type": "tilelayer",
+   "name": "Ground",
+   "width": 10,
+   "height": 4,
+   "x": 0,
+   "y": 0,
+   "opacity": 1,
+   "visible": true,
+   "encoding": "base64",
+   "compression": "gzip",
+   "data": "H4sICDm0zWoC/3gAY2FgaGCgIWDCIc5IBGYGYgCimMufoAAAAA=="
+  },
+  {
+   "type": "objectgroup",
+   "name": "Things",
+   "objects": [
+    {
+     "id": 1,
+     "name": "Door",
+     "x": 32,
+     "y": 16,
+     "width": 16,
+     "height": 32,
+     "visible": true
+    },
+    {
+     "id": 2,
+     "name": "Here",
+     "point": true,
+     "x": 5,
+     "y": 6
+    }
+   ]
+  }
+ ]
+}

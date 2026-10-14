@@ -34,7 +34,7 @@ examples/                   example games 01-10, each a folder with main.cpp (+ 
 games/                      user games; every sub-folder with a .cpp becomes a game
 tests/                      doctest unit tests (built with -DSPROUT_BUILD_TESTS=ON)
 editor/                     the Sprout Editor (separate from the engine; see below)
-scripts/                    build, run-editor, test, export, setup-web, test-signals, test-multiplayer
+scripts/                    build, run-editor, test, export, setup-web, and the editor's test-* scripts
 docs/                       the beginner documentation (docs/editor/ for the editor)
 website/                    the sproutengine.dev web page (plain HTML and CSS; images/ has its screenshots)
 .github/workflows/build.yml CI: builds and tests on Windows, macOS and Linux (run by hand)
@@ -196,7 +196,7 @@ editor/
   player/           the game runtime exports are built from (lists its sources by hand!)
   scripts_module/   builds a project's scripts into the hot reload library
   templates/        New Project templates (each with a template.json)
-  tests/            test projects: multiplayer/, signals/
+  tests/            test projects: multiplayer/, signals/, lint/, autoload/, shaders/, tilemap/
   project/          the demo project
   theme/            the editor's themes
 ```

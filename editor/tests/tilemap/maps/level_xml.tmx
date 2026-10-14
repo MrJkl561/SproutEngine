@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- made by hand for Sprout's tests -->
+<map version="1.10" tiledversion="1.11.0" orientation="orthogonal" renderorder="right-down" width="10" height="4" tilewidth="16" tileheight="16" infinite="0" nextlayerid="7" nextobjectid="6">
+ <tileset firstgid="1" source="tiles.tsx"/>
+ <layer id="1" name="Ground" width="10" height="4">
+  <data><tile gid="2147483652"/><tile/><tile/><tile/><tile/><tile/><tile/><tile/><tile/><tile/><tile/><tile/><tile/><tile/><tile/><tile/><tile/><tile/><tile/><tile/><tile/><tile/><tile/><tile/><tile gid="2"/><tile/><tile/><tile/><tile/><tile/><tile gid="1"/><tile gid="1"/><tile gid="1"/><tile gid="1"/><tile gid="1"/><tile gid="1"/><tile gid="1"/><tile gid="1"/><tile gid="1"/><tile gid="3"/></data>
+ </layer>
+ <layer id="2" name="Decor" width="10" height="4" opacity="0.5" offsetx="8" offsety="4">
+  <data encoding="csv">
+0,0,0,0,0,0,0,0,0,0,
+0,4,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0
+</data>
+ </layer>
+</map>

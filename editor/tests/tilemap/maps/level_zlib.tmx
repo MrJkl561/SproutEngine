@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- made by hand for Sprout's tests -->
+<map version="1.10" tiledversion="1.11.0" orientation="orthogonal" renderorder="right-down" width="10" height="4" tilewidth="16" tileheight="16" infinite="0" nextlayerid="7" nextobjectid="6">
+ <tileset firstgid="1" name="tiles" tilewidth="16" tileheight="16" tilecount="4" columns="4">
+ <image source="art/tiles.png" width="64" height="16"/>
+ <tile id="0">
+  <properties>
+   <property name="solid" type="bool" value="true"/>
+  </properties>
+ </tile>
+ <tile id="1" class="spikes"/>
+ <tile id="2">
+  <objectgroup draworder="index" id="2">
+   <object id="1" x="0" y="0" width="16" height="16"/>
+  </objectgroup>
+ </tile>
+</tileset>
+ <layer id="1" name="Ground" width="10" height="4">
+  <data encoding="base64" compression="zlib">
+   eJxjYWBoYKAhYMIhzkgEZgZiAFMEAJM=
+  </data>
+ </layer>
+ <layer id="2" name="Decor" width="10" height="4" opacity="0.5" offsetx="8" offsety="4">
+  <data encoding="csv">
+0,0,0,0,0,0,0,0,0,0,
+0,4,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0
+</data>
+ </layer>
+</map>

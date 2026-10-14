@@ -6,7 +6,7 @@
   <title>Sprout: make your first 2D games in C++</title>
   <meta name="description" content="Sprout is a free, open-source 2D game editor and engine in C++, built on raylib. Place nodes like in Godot, write C++ scripts that reload while the game runs, and export to Windows, macOS, Linux and the web.">
   <meta property="og:title" content="Sprout: make your first 2D games in C++">
-  <meta property="og:description" content="A free, open-source 2D game editor and engine in C++. Godot-style nodes, hot-reloaded C++ scripts, multiplayer, shaders, and exports to Windows, macOS, Linux and the web.">
+  <meta property="og:description" content="A free, open-source 2D game editor and engine in C++. Godot-style nodes, hot-reloaded C++ scripts, tile maps with Tiled import, UI nodes, multiplayer, shaders, and exports to Windows, macOS, Linux and the web.">
   <meta property="og:image" content="https://sproutengine.dev/images/editor.png">
   <meta property="og:url" content="https://sproutengine.dev/">
   <meta name="twitter:card" content="summary_large_image">
@@ -88,6 +88,16 @@
         <h3>Custom shaders</h3>
         <p>Waves, flashes, outlines: write a <code>fragment()</code> shader like in Godot, tweak its
           parameters in the Inspector, and watch it change as you save.</p>
+      </article>
+      <article>
+        <h3>Tile maps, and Tiled</h3>
+        <p>Paint levels from a tile sheet, mark the solid tiles, and drop in maps made in
+          <a href="https://www.mapeditor.org">Tiled</a>: every layer and object comes across.</p>
+      </article>
+      <article>
+        <h3>Menus and HUDs</h3>
+        <p>Buttons, panels, sliders, health bars and text boxes, with a <code>CanvasLayer</code> that keeps
+          the HUD on screen while the camera follows the player.</p>
       </article>
       <article>
         <h3>Autoloads</h3>
@@ -211,6 +221,8 @@ scripts/run-editor.sh</code></pre>
         <ul>
           <li><a href="https://github.com/MrJkl561/SproutEngine/blob/main/docs/editor/getting-started.md">Your first game in the editor</a></li>
           <li><a href="https://github.com/MrJkl561/SproutEngine/blob/main/docs/editor/signals.md">Signals, step by step</a></li>
+          <li><a href="https://github.com/MrJkl561/SproutEngine/blob/main/docs/editor/tilemaps.md">Tile maps and Tiled</a></li>
+          <li><a href="https://github.com/MrJkl561/SproutEngine/blob/main/docs/editor/ui.md">Menus and HUDs</a></li>
           <li><a href="https://github.com/MrJkl561/SproutEngine/blob/main/docs/editor/multiplayer.md">Multiplayer</a></li>
           <li><a href="https://github.com/MrJkl561/SproutEngine/blob/main/editor/README.md">The Sprout Editor manual</a></li>
           <li><a href="https://github.com/MrJkl561/SproutEngine/blob/main/editor/README.md#shaders">Shaders</a> &middot;

@@ -1,5 +1,6 @@
 #include "scene_tree.hpp"
 
+#include <algorithm>
 #include <map>
 #include <set>
 #include <typeinfo>
@@ -10,6 +11,7 @@
 #include "scene_io.hpp"
 #include "script.hpp"
 #include "shaders.hpp"
+#include "ui_nodes.hpp"
 
 namespace s2d {
 
@@ -165,6 +167,8 @@ void SceneTree::process(float delta) {
     if (!root_) return;
     multiplayer().poll(*this);  // messages from other players, and their events
     if (!root_) return;
+    processGui(*this);          // buttons, sliders... get the mouse (and may send signals)
+    if (!root_) return;
 
     // Collect first, so nodes added during this frame start next frame.
     // (The autoloads run before the scene.)
@@ -234,18 +238,61 @@ void SceneTree::switchScene() {
     }
 }
 
-void SceneTree::draw(const DrawOptions& options) {
-    std::function<void(Node*)> drawNode = [&](Node* n) {
-        auto* n2d = dynamic_cast<Node2D*>(n);
-        if (n2d && !n2d->visible) return;  // hides children too
-        bool shaded = n2d && !n2d->shader.empty() && Shaders::begin(*n2d);  // its own shader, if it has one
-        n->draw(options);
-        if (shaded) Shaders::end();
-        for (auto& c : n->children()) drawNode(c.get());
-    };
-    if (root_) drawNode(root_.get());
-    for (auto& a : autoloads_) drawNode(a.get());  // on top of the scene (a HUD, a fade...)
+namespace {
+
+void drawTree(Node* n, const DrawOptions& options, bool skipLayers) {
+    auto* n2d = dynamic_cast<Node2D*>(n);
+    if (n2d && !n2d->visible) return;  // hides children too
+    if (skipLayers && dynamic_cast<CanvasLayer*>(n)) return;  // (drawn on the screen afterwards)
+    bool shaded = n2d && !n2d->shader.empty() && Shaders::begin(*n2d);  // its own shader, if it has one
+    n->draw(options);
+    if (shaded) Shaders::end();
+    for (auto& c : n->children()) drawTree(c.get(), options, skipLayers);
 }
+
+}  // namespace
+
+void SceneTree::draw(const DrawOptions& options) {
+    // In the editor, a CanvasLayer's children show where they'll be on the screen
+    // (the game window's frame starts at 0,0), in among everything else.
+    bool skipLayers = !options.editor;
+    if (root_) drawTree(root_.get(), options, skipLayers);
+    for (auto& a : autoloads_) drawTree(a.get(), options, skipLayers);  // on top of the scene (a HUD, a fade...)
+}
+
+void SceneTree::drawCanvasLayers(const DrawOptions& options) {
+    std::vector<CanvasLayer*> layers;
+    auto look = [&](Node* top) {
+        forEachNode(top, [&](Node* n) {
+            if (auto* layer = dynamic_cast<CanvasLayer*>(n); layer && !canvasLayerOf(layer->parent()))
+                layers.push_back(layer);
+        });
+    };
+    if (root_) look(root_.get());
+    for (auto& a : autoloads_) look(a.get());
+    std::stable_sort(layers.begin(), layers.end(), [](CanvasLayer* a, CanvasLayer* b) { return a->layer < b->layer; });
+    DrawOptions screen = options;
+    screen.zoom = 1;
+    screen.view = {0, 0, gameSize.x, gameSize.y};
+    for (CanvasLayer* layer : layers) {
+        bool hidden = false;  // (a hidden parent hides it too)
+        for (Node* p = layer->parent(); p && !hidden; p = p->parent())
+            if (auto* n2 = dynamic_cast<Node2D*>(p); n2 && !n2->visible) hidden = true;
+        if (!hidden) drawTree(layer, screen, false);
+    }
+}
+
+raylib::Camera2D SceneTree::view() const {
+    raylib::Camera2D cam({0, 0}, {0, 0}, 0, 1);
+    if (Camera2D* c = currentCamera()) {
+        cam.offset = gameSize / 2;
+        cam.target = c->globalPosition();
+        cam.zoom = c->zoom > 0.01f ? c->zoom : 0.01f;
+    }
+    return cam;
+}
+
+raylib::Vector2 SceneTree::mouseWorld() const { return GetScreenToWorld2D(mouseScreen, view()); }
 
 Camera2D* SceneTree::currentCamera() const {
     Camera2D* found = nullptr;

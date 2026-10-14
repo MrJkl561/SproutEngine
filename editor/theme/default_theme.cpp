@@ -111,6 +111,18 @@ Theme makeTheme() {
     t.nodes["Area2D"] = {physics, ICON_BOX_DOTS_SMALL, ""};
     t.nodes["StaticBody2D"] = {physics, ICON_BOX_GRID, ""};
     t.nodes["CharacterBody2D"] = {physics, ICON_PLAYER, ""};
+    t.nodes["TileMap"] = {Color{230, 180, 100, 255}, ICON_GRID, ""};
+    const Color uiColor{120, 210, 140, 255};  // the UI nodes (green, like Godot's)
+    t.nodes["CanvasLayer"] = {uiColor, ICON_LAYERS, ""};
+    t.nodes["Panel"] = {uiColor, ICON_WINDOW, ""};
+    t.nodes["Button"] = {uiColor, ICON_CURSOR_HAND, ""};
+    t.nodes["CheckBox"] = {uiColor, ICON_SQUARE_TOGGLE, ""};
+    t.nodes["HSlider"] = {uiColor, ICON_ARROW_RIGHT, ""};
+    t.nodes["ProgressBar"] = {uiColor, ICON_LIFE_BARS, ""};
+    t.nodes["TextureRect"] = {uiColor, ICON_FILETYPE_IMAGE, ""};
+    t.nodes["LineEdit"] = {uiColor, ICON_TEXT_T, ""};
+    t.nodes["VBoxContainer"] = {uiColor, ICON_VERTICAL_BARS, ""};
+    t.nodes["HBoxContainer"] = {uiColor, ICON_BOX_GRID_BIG, ""};
     t.otherNodes = {blue, ICON_EMPTYBOX_SMALL, ""};
 
     // --- Layout -------------------------------------------------------------------
